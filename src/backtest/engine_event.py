@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -32,6 +33,14 @@ class _MatchContext:
     is_etf: bool
 
 
+@dataclass
+class _OpenPosition:
+    entry_date: datetime
+    quantity: int
+    entry_notional_total: float
+    buy_fee_total: float
+
+
 class EventDrivenBacktester(BacktesterBase):
     """
     Event-driven backtest engine.
@@ -56,6 +65,7 @@ class EventDrivenBacktester(BacktesterBase):
         pending_orders: list[OrderEvent] = []
         equity_records: list[dict[str, Any]] = []
         trade_records: list[dict[str, Any]] = []
+        open_positions: dict[str, _OpenPosition] = {}
 
         bars = list(df.itertuples())
         freq = self._infer_freq(df.index)
@@ -71,7 +81,9 @@ class EventDrivenBacktester(BacktesterBase):
                         continue
                     account.apply_fill(fill)
                     strategy.on_fill(fill, account)
-                    trade_records.append(fill.to_dict())
+                    round_trip = self._update_round_trip_records(fill=fill, open_positions=open_positions)
+                    if round_trip is not None:
+                        trade_records.append(round_trip)
                 pending_orders.clear()
 
             # Step 2: strategy generates orders on current bar.
@@ -89,6 +101,65 @@ class EventDrivenBacktester(BacktesterBase):
 
         # Pending orders generated on the final bar are intentionally discarded.
         return self._build_result(equity_records=equity_records, trade_records=trade_records)
+
+    @staticmethod
+    def _update_round_trip_records(
+        fill: FillEvent,
+        open_positions: dict[str, _OpenPosition],
+    ) -> dict[str, Any] | None:
+        symbol = fill.symbol
+        quantity = int(fill.quantity)
+        notional = float(fill.fill_price) * quantity
+        fees = float(fill.commission + fill.tax)
+
+        if fill.side == "BUY":
+            position = open_positions.get(symbol)
+            if position is None:
+                open_positions[symbol] = _OpenPosition(
+                    entry_date=fill.timestamp,
+                    quantity=quantity,
+                    entry_notional_total=notional,
+                    buy_fee_total=fees,
+                )
+            else:
+                position.quantity += quantity
+                position.entry_notional_total += notional
+                position.buy_fee_total += fees
+            return None
+
+        if fill.side != "SELL":
+            return None
+
+        position = open_positions.get(symbol)
+        if position is None or position.quantity <= 0:
+            return None
+
+        qty_before = position.quantity
+        if quantity > qty_before:
+            return None
+        avg_entry_price = position.entry_notional_total / qty_before
+        avg_buy_fee_per_share = position.buy_fee_total / qty_before
+
+        allocated_entry_notional = avg_entry_price * quantity
+        allocated_buy_fees = avg_buy_fee_per_share * quantity
+        sell_proceeds_net = notional - fees
+        pnl = sell_proceeds_net - allocated_entry_notional - allocated_buy_fees
+
+        position.quantity -= quantity
+        position.entry_notional_total -= allocated_entry_notional
+        position.buy_fee_total -= allocated_buy_fees
+        if position.quantity == 0:
+            open_positions.pop(symbol, None)
+
+        return {
+            "entry_date": position.entry_date,
+            "exit_date": fill.timestamp,
+            "side": "LONG",
+            "quantity": quantity,
+            "entry_price": float(avg_entry_price),
+            "exit_price": float(fill.fill_price),
+            "pnl": float(pnl),
+        }
 
     @staticmethod
     def _prepare_data(data: pd.DataFrame) -> pd.DataFrame:
