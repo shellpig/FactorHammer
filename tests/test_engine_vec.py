@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.backtest.engine_vec import VectorizedBacktester
 from src.strategy.examples.ma_cross import MACrossStrategy
 
 
@@ -51,3 +52,14 @@ def test_signal_values_only_minus1_0_plus1() -> None:
 
     assert not signal.isna().any()
     assert set(signal.unique().tolist()).issubset({-1, 0, 1})
+
+
+def test_vectorized_backtest_basic() -> None:
+    df = _load_fixture()
+    strategy = MACrossStrategy(ma_short=20, ma_long=60)
+    backtester = VectorizedBacktester(initial_capital=1_000_000)
+
+    result = backtester.run(strategy, df)
+
+    assert result.total_trades > 0
+    assert len(result.equity_curve) == len(df)
