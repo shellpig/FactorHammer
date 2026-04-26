@@ -479,6 +479,8 @@ class GridSearch:
 
 使用者以**自然語言**提問，系統自動查詢數據、計算指標，由使用者選定的 LLM provider 生成分析報告。
 
+AI 技術分析為**可選功能**，系統必須允許使用者完全關閉。關閉時，核心資料管道、回測、報表與 Streamlit 非 AI 頁面仍需正常運作，且不得要求設定任何 LLM API key。
+
 **支援問題範例：**
 - 「2330 現在的 RSI 是多少？是否超買？」
 - 「台積電的 MACD 最近有沒有黃金交叉？」
@@ -488,6 +490,15 @@ class GridSearch:
 ### 7.2 LLM Provider Tool Use 設計
 
 採用 Function Calling / Tool Use 模式，讓 LLM 決定要查哪些資料，再整合結果生成自然語言回應。系統需支援 OpenAI / ChatGPT、Anthropic / Claude、Google / Gemini 三類 provider 的設定入口。
+
+#### 功能開關
+
+`config.yaml` 應提供 `ai.enabled`：
+
+- `ai.enabled: false`：不初始化任何 LLM provider、不檢查 AI API key、不顯示可互動的 AI 問答流程。UI 可隱藏 AI 問答頁，或顯示「AI 功能已關閉」狀態頁。
+- `ai.enabled: true`：依 `ai.provider` / `ai.model` 建立 provider adapter，並檢查選定 provider 對應的 API key。
+
+預設建議為 `false`，讓專案可在沒有 AI API key、沒有網路 LLM 依賴的情況下完成資料與回測工作。
 
 #### 定義給 LLM 的工具（Tools）
 
@@ -698,6 +709,15 @@ risk:
 data:
   primary_source: finmind
   fallback_source: yfinance
+
+# AI 技術分析（可完全關閉）
+ai:
+  enabled: false                 # false 時不要求任何 AI API key
+  provider: anthropic            # openai | anthropic | gemini
+  model: claude-...
+  temperature: 0.2
+  max_tokens: 4096
+  timeout_seconds: 30
 ```
 
 `config.yaml` 隨程式碼一起進入 Git，讓每次回測的參數設定都有跡可查，確保結果可重現。Streamlit UI 設定頁可覆蓋 `config.yaml` 的值進行臨時實驗，但不會寫回檔案（除非明確點擊「儲存為預設」）。
@@ -886,6 +906,7 @@ data:
 - 輸入「2330 的 RSI」→ 選定 provider 呼叫正確工具（工具名稱記錄驗證）
 - 工具回傳 mock 資料 → 選定 provider 能整合並生成回應
 - 每次回應底部包含免責聲明文字（字串包含檢查）
+- `ai.enabled: false` 時，`AIAdvisor` 不初始化 provider、不要求 API key，並回傳清楚的停用狀態或由 UI 阻止進入問答流程
 
 #### 4-B　技術指標工具實作（Day 2-3）
 
@@ -903,6 +924,7 @@ data:
 **驗收指標：**
 - `streamlit run src/ui/app.py` 無錯誤啟動，四個頁面皆可切換
 - 設定頁能儲存 API Key 至 `.env`（輸入框遮罩，不明文顯示）
+- 設定頁能切換 `ai.enabled`；關閉時 AI 問答頁不可發出 LLM API 呼叫，並清楚顯示停用狀態
 - 回測頁輸入股票代碼 + 日期範圍 → 顯示 Tearsheet 圖表
 
 #### 4-D　端到端整合測試（Day 4-5）
@@ -994,12 +1016,15 @@ data:
 
 ```yaml
 ai:
+  enabled: false
   provider: anthropic   # openai | anthropic | gemini
   model: claude-...
   temperature: 0.2
   max_tokens: 4096
   timeout_seconds: 30
 ```
+
+`enabled=false` 是合法且建議的預設狀態。此狀態下，系統不得因缺少 AI API key 而影響資料下載、清洗、回測、報表或非 AI UI 頁面。
 
 `.env.example` 應保留下列 key 名稱：
 

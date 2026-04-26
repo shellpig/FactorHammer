@@ -44,6 +44,9 @@ def get_config() -> dict[str, Any]:
     config["secrets"] = {
         "finmind_token": os.getenv("FINMIND_TOKEN", ""),
         "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+        "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
+        "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
+        "google_api_key": os.getenv("GOOGLE_API_KEY", ""),
     }
     _config = config
     return _config

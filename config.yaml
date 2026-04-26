@@ -19,3 +19,8 @@ risk:
 data:
   primary_source: finmind
   fallback_source: yfinance
+
+ai:
+  enabled: false
+  provider: anthropic
+  model: claude-haiku-4-5-20251001
