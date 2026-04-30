@@ -27,7 +27,7 @@ def _make_daily_df(symbol: str, start: str, periods: int, close_base: float = 10
 def _make_splits_df(symbol: str) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "date": pd.to_datetime(["2025-06-18", "2026-01-01"]).tz_localize(TAIPEI_TZ),
+            "date": pd.Series(pd.to_datetime(["2025-06-18", "2026-01-01"]).tz_localize(TAIPEI_TZ)).astype(f"datetime64[ns, {TAIPEI_TZ}]"),
             "before_price": [188.65, 120.0],
             "after_price": [47.16, 60.0],
             "symbol": [symbol, symbol],

@@ -96,7 +96,7 @@ def test_rebuild_symbol_saves_and_updates_meta(tmp_path) -> None:
 def test_rebuild_symbol_applies_split(tmp_path) -> None:
     full_daily = pd.DataFrame(
         {
-            "date": pd.to_datetime(["2025-06-17", "2025-06-18", "2025-06-19"]),
+            "date": pd.Series(pd.to_datetime(["2025-06-17", "2025-06-18", "2025-06-19"]).tz_localize("Asia/Taipei")).astype("datetime64[ns, Asia/Taipei]"),
             "open": [188.65, 47.16, 47.5],
             "high": [189.0, 48.0, 48.0],
             "low": [188.0, 46.5, 47.0],
@@ -107,7 +107,7 @@ def test_rebuild_symbol_applies_split(tmp_path) -> None:
     )[STANDARD_COLUMNS]
     splits = pd.DataFrame(
         {
-            "date": [pd.Timestamp("2025-06-18")],
+            "date": pd.Series(pd.to_datetime(["2025-06-18"]).tz_localize("Asia/Taipei")).astype("datetime64[ns, Asia/Taipei]"),
             "before_price": [188.65],
             "after_price": [47.16],
             "symbol": ["0050"],
@@ -131,8 +131,8 @@ def test_rebuild_symbol_applies_split(tmp_path) -> None:
     split_saved = storage.load_splits("0050")
     assert not adjusted.empty
     assert not split_saved.empty
-    adj_pre_close = adjusted.loc[pd.to_datetime(adjusted["date"]) == pd.Timestamp("2025-06-17"), "close"].iloc[0]
-    adj_split_close = adjusted.loc[pd.to_datetime(adjusted["date"]) == pd.Timestamp("2025-06-18"), "close"].iloc[0]
+    adj_pre_close = adjusted.loc[pd.to_datetime(adjusted["date"]) == pd.Timestamp("2025-06-17", tz="Asia/Taipei"), "close"].iloc[0]
+    adj_split_close = adjusted.loc[pd.to_datetime(adjusted["date"]) == pd.Timestamp("2025-06-18", tz="Asia/Taipei"), "close"].iloc[0]
     assert adj_pre_close == pytest.approx(adj_split_close, abs=0.01)
 
 
