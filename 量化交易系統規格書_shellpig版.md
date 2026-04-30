@@ -9,6 +9,7 @@
 | **V1.2** | 2026/04/25 | 事實性修正：(1) 台股漲跌停 ±15% → ±10%；(2) 修正台股交易時間描述（無午休，09:00–13:30 連續）；(3) 修正撮合假設與滑價模型衝突；(4) FinMind 免費層分K 限制描述；(5) KD↔STOCH 指標映射；(6) `on_bar` 介面 `portfolio`/`account` 命名統一；(7) 補 `.env.example` 範本檔；(8) Phase 1-D 前復權驗收條件嚴謹化；(9) 放寬 Phase 4-D AI 問答時間門檻；(10) §5.4 FinMind naive datetime 處理說明。 |
 | **V1.3** | 2026/04/27 | 新增 Phase 5-A：回測頁個股股價走勢、週/月/季均線、買賣點標記、互動 tooltip，以及近 15 年季度 EPS + 年度 EPS 紀錄。 |
 | **V1.4** | 2026/04/27 | 新增 Phase 5-B：定期定額策略、最小買入單位 1 股、多策略設定架構與策略參數保存格式。 |
+| **V1.5** | 2026/04/30 | 新增 Phase 6（UI/UX 強化）章節與 Phase 6-A：執行期主題切換（light / dark / finance_green）、CSS 注入即時生效、`config.yaml` `ui` 區塊、可選的 `streamlit-extras` 與 `streamlit-option-menu` 元件庫整合。 |
 
 ---
 
@@ -1060,6 +1061,64 @@ strategies:
 
 ---
 
+### Phase 6：UI/UX 強化（彈性）
+
+#### 6-A 主題切換與 UI 美化（1-2 天）
+
+**建置內容：** 在設定頁新增「外觀主題」區塊，使用者可在執行期間切換 UI 主題（淺色 / 深色 / 金融綠），透過 CSS 注入即時生效，不需重啟 Streamlit。同時引入元件庫提升 KPI 卡片與側邊欄選單的視覺品質。
+
+**主題架構規格：**
+- 主題以 CSS 變數與 selector 定義，在 `src/ui/app.py` 載入後第一個 Streamlit 元件之前透過 `st.markdown(..., unsafe_allow_html=True)` 注入。
+- 不依賴 `.streamlit/config.toml` 的 `[theme]` 區塊，因為 `config.toml` 需重啟才能生效。`config.toml` 只保留 `layout`、`runOnSave` 等基礎設定。
+- 預設提供至少三套主題：
+  - `light`（預設淺色）
+  - `dark`（深色）
+  - `finance_green`（深底 + 金融綠強調色，建議 `#00C896` / `#1E2329`）
+- 主題定義集中在 `src/ui/themes.py`，每套主題以 dict 形式提供 CSS 字串與調色盤常數。
+
+**設定保存規格：**
+- `config.yaml` 新增 `ui` 區塊：
+  ```yaml
+  ui:
+    theme: light            # light | dark | finance_green
+    use_extras: true        # 啟用 streamlit-extras 元件
+    use_option_menu: true   # 啟用 streamlit-option-menu 側邊欄
+  ```
+- 缺少 `ui` 區塊或缺少其中欄位時，系統採預設 `theme=light`、`use_extras=true`、`use_option_menu=true`，不報錯。
+- 此設定採 lazy migration：啟動或讀取設定時不自動改寫 `config.yaml`；只在使用者於設定頁儲存時才寫回 `ui:` 區塊。
+- 主題值未在合法清單內時，回退到 `light` 並在 UI 顯示警告。
+
+**設定頁規格：**
+- 在 `src/ui/pages/settings.py` 新增「外觀」區塊，提供：
+  - 主題下拉選單（`light` / `dark` / `finance_green`）
+  - 「使用 streamlit-extras 元件」開關
+  - 「使用 option_menu 側邊欄」開關
+- 「儲存」後同步寫入 `config.yaml` 的 `ui` 區塊並呼叫 `st.rerun()`，下一輪頁面渲染套用新主題，無需重啟 Streamlit。
+
+**元件庫整合規格：**
+- 新增可選依賴（pyproject.toml 不強制安裝；以 try/except import 偵測）：
+  - `streamlit-extras`（提供 metric card、grid、colored_header）
+  - `streamlit-option-menu`（提供帶圖示的側邊欄選單）
+- 任一套件未安裝時，系統 fallback 到原生元件（`st.metric`、`st.radio`），不得 crash，並在啟動或設定頁顯示「未安裝 streamlit-extras / streamlit-option-menu，已退回原生元件」提示。
+- 回測頁績效摘要（總報酬、年化報酬、最大回撤、Sharpe、交易次數等）在 `use_extras=true` 且套件已安裝時，改用 metric card 卡片化顯示。
+- 側邊欄頁面切換在 `use_option_menu=true` 且套件已安裝時，改用 `option_menu` 取代 `st.radio`，否則維持 `st.radio`。
+
+**主題與 Plotly 互動規格：**
+- 主題切換不得影響 Plotly 圖表內部資料；圖表需依當前主題傳入對應 `template`：`light` → `plotly_white`、`dark` 與 `finance_green` → `plotly_dark`。
+- 圖表底色需與主題背景一致，避免「白底圖表貼在深色頁面」破版。
+
+**驗收指標：**
+- 設定頁可選擇主題與兩個元件開關並儲存；切換後立即生效，不需重啟 Streamlit。
+- 主題設定寫入 `config.yaml` 的 `ui` 區塊；其他原有區塊（`ai`、`risk`、`backtest`、`strategies`）不受影響。
+- 缺少 `ui` 區塊時系統使用預設值並可正常啟動，不報錯。
+- 三套主題（`light` / `dark` / `finance_green`）皆能完整渲染四頁（資料管理、回測、AI 問答、設定），無破版、無 console 錯誤。
+- Plotly 圖表（回測股價走勢、Tearsheet 權益曲線）在深色主題下底色一致且可讀。
+- `streamlit-extras` 與 `streamlit-option-menu` 任一未安裝時，系統 fallback 到原生元件並顯示提示，不 crash。
+- 既有功能（資料下載、回測、AI 問答、策略設定儲存讀取）行為與資料不因主題切換而異常。
+- 主題值或元件開關設為非法值時，系統回退到預設並顯示警告，不中斷頁面。
+
+---
+
 ### 子階段總覽
 
 | Phase | 子階段 | 工期 | 有 AI 輔助 |
@@ -1069,7 +1128,8 @@ strategies:
 | **3** 事件驅動引擎 | 3-A → 3-E（5 段） | 12 天 | ✅ |
 | **4** AI 問答 + UI | 4-A → 4-D（4 段） | 5 天 | ✅ |
 | **5** 回測體驗與 UI 補充 | 5-A → 5-B（2 段） | 3-5 天 | ✅ |
-| **合計** | 19 個子階段 | **32-34 天（約 7 週）** | |
+| **6** UI/UX 強化 | 6-A（1 段） | 1-2 天 | ✅ |
+| **合計** | 20 個子階段 | **33-36 天（約 7-8 週）** | |
 
 ---
 
