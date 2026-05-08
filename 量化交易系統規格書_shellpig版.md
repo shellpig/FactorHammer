@@ -12,6 +12,7 @@
 | **V1.5** | 2026/04/30 | 新增 Phase 6（UI/UX 強化）章節與 Phase 6-A：執行期主題切換（light / dark / finance_green）、CSS 注入即時生效、`config.yaml` `ui` 區塊、可選的 `streamlit-extras` 與 `streamlit-option-menu` 元件庫整合。 |
 | **V1.6** | 2026/04/30 | Phase 6-A 主題清單對齊實作：由原訂 3 套（`light` / `dark` / `finance_green`）擴充為 6 套（`arctic_light` / `obsidian_dark` / `finance_green` / `midnight_blue` / `cyberpunk` / `warm_sepia`）；預設主題與 fallback 改為 `arctic_light`；同步更新 Plotly template 對應表。 |
 | **V1.7** | 2026/05/07 | 新增 Phase 7（策略擴充）章節與 Phase 7-A：6 種技術分析策略（RSI 超買超賣、KD 交叉、MACD 交叉、布林通道、乖離率、突破策略），含向量化 + 事件驅動雙介面、`strategy_config.py` preset 正規化、UI 回測頁分派。 |
+| **V1.8** | 2026/05/08 | 新增 Phase 7-B（策略研究工作台）：批次策略比較、結果保存、UI tab 重構、K 線圖升級、Signal/Trade 雙層標記、策略指標副圖。新增 Phase 7-C（參數掃描與防過度最佳化）：Grid Search、參數驗證過濾、組合數限制、樣本不足警告、排序與 Top N。 |
 
 ---
 
@@ -1316,6 +1317,257 @@ strategies:
 
 ---
 
+#### 7-B　策略研究工作台（2-3 天）
+
+**建置內容：** 批次策略比較、結果保存、回測頁 UI tab 重構、K 線圖升級（Candlestick）、Signal/Trade 雙層買賣標記、策略指標副圖。建立「批次跑多組回測 → 收集 metrics → 表格比較 → 選中結果展開圖表」的完整研究流程。
+
+**7-B-1　批次策略比較**
+
+- 新增 `src/backtest/batch.py`，提供 `run_strategy_batch()` 函式。
+- 輸入：symbol、日期區間、初始資金、策略 preset 清單（來自 `config.yaml` 中所有已啟用的 strategies）。
+- 對每個 preset 依序執行回測（預設使用 `VectorizedBacktester`），收集 `BacktestResult`。
+- 回傳：每個策略的 summary row（dict）+ 原始 `BacktestResult` 物件，打包為 `BatchResult`。
+- 某個策略回測失敗時（如 warm-up 不足、資料不足），記錄錯誤訊息並跳過，不中斷整個批次。
+
+**BatchResult 資料結構：**
+
+```python
+@dataclass
+class StrategyRunSummary:
+    preset_name: str
+    strategy_type: str
+    total_return: float
+    annual_return: float
+    max_drawdown: float
+    sharpe_ratio: float
+    win_rate: float
+    profit_factor: float
+    total_trades: int
+    error: str | None           # 回測失敗時的錯誤訊息
+    result: BacktestResult | None  # 回測成功時的完整結果
+
+@dataclass
+class BatchResult:
+    symbol: str
+    start_date: str
+    end_date: str
+    engine: str
+    initial_capital: float
+    summaries: list[StrategyRunSummary]
+```
+
+**比較表欄位：**
+
+| 欄位 | 來源 | 說明 |
+| :--- | :--- | :--- |
+| 策略名稱 | `preset.name` | 顯示中文 label |
+| 策略類型 | `preset.type` | 顯示 `STRATEGY_META[type].label` |
+| 總報酬 | `BacktestResult.total_return` | 百分比格式 |
+| 年化報酬 | `BacktestResult.annual_return` | 百分比格式 |
+| 最大回撤 | `BacktestResult.max_drawdown` | 百分比格式 |
+| Sharpe | `BacktestResult.sharpe_ratio` | 2 位小數 |
+| 勝率 | `BacktestResult.win_rate` | 百分比格式 |
+| Profit Factor | `BacktestResult.profit_factor` | 2 位小數，999.0 顯示 N/A |
+| 交易次數 | `BacktestResult.total_trades` | 整數 |
+
+**7-B-2　結果保存**
+
+- 批次比較結果保存為 CSV 檔案，路徑：`data/backtest/strategy_comparisons/`。
+- 檔名格式：`{symbol}_{start}_{end}_{timestamp}.csv`，例如 `2330_20230101_20260101_20260508T143022.csv`。
+- CSV 欄位與比較表欄位一致，不含 `BacktestResult` 物件（僅 summary 數據）。
+- UI 提供「匯出結果」按鈕，點選後存檔並顯示檔案路徑。
+- 先 CSV 就好，不急著做資料庫 schema。
+
+**7-B-3　UI tab 重構**
+
+- 回測頁 `render()` 改為 `st.tabs` 結構，分三個 tab：
+  - **單次回測**：現有回測流程（選策略 → 跑 → Tearsheet + 圖表），行為不變。
+  - **策略比較**：選 symbol / 日期 → 一次跑全部 config 中的 preset → 顯示比較表 → 選中某列展開詳細圖表。
+  - **歷史結果**：列出 `data/backtest/strategy_comparisons/` 下的 CSV 檔案，點選載入查看。
+- 共用元件：symbol 輸入、日期選擇器抽成共用 helper，三個 tab 共享。
+- 策略比較 tab 中，選中某列策略後，展開該策略的：
+  - Tearsheet 摘要
+  - K 線圖 + Signal/Trade overlay
+  - 策略指標副圖
+
+**7-B-4　K 線圖升級**
+
+- 現有 `_render_price_panel()` 的收盤價折線圖（`go.Scatter`）升級為 K 線圖（`go.Candlestick`）。
+- 使用 `price_df` 的 `open`、`high`、`low`、`close` 四個欄位。
+- 保留既有的 MA5、MA20、MA60 均線疊圖。
+- 若資料缺少 OHLC 欄位（如只有 close），降級回折線圖。
+- K 線顏色：漲（close > open）紅色、跌（close < open）綠色（台股慣例）。
+
+**7-B-5　Signal/Trade 雙層標記**
+
+- 區分兩種標記，可同圖顯示或透過 toggle 切換：
+  - **Signal marker**：策略在該 bar 產生 +1/-1 的原始訊號位置。形狀為菱形（diamond），顏色淺、半透明。
+  - **Trade marker**：引擎實際成交的 entry/exit 位置（既有的買進/賣出三角形標記）。形狀為三角形（triangle-up/down），顏色實、不透明。
+- Signal marker 資料來源：向量化引擎需回傳 `signals` Series（目前已在引擎內部計算，需暴露到 `BacktestResult`）。
+- `BacktestResult` 新增可選欄位 `signals: pd.Series | None`，向量化引擎填入，事件驅動引擎填 `None`。
+- 事件驅動引擎模式下，只顯示 Trade marker（因為 signal 和 trade 在事件驅動中是同一回事）。
+- 用途：向量化引擎有 next-bar 成交語義，signal 和 trade 不在同一 bar，debug 假信號時兩者對照很有價值。
+
+**7-B-6　策略指標副圖**
+
+- 在 K 線圖下方新增指標副圖（Plotly subplot），顯示當前策略對應的技術指標。
+- 副圖與主圖 X 軸對齊（共享 `xaxis`），支援 range slider 連動。
+- 各策略類型的指標副圖內容：
+
+| 策略類型 | 副圖內容 | 視覺元素 |
+| :--- | :--- | :--- |
+| `moving_average_cross` | 不需要獨立副圖 | MA 線已在主圖上，不另加副圖 |
+| `dollar_cost_averaging` | 不需要副圖 | 無技術指標 |
+| `rsi` | RSI 線 + 超買/超賣水平線 | RSI 曲線 + `overbought`/`oversold` 兩條水平虛線，區間填色 |
+| `kd_cross` | K 線 + D 線 | 兩條曲線，交叉點可標記 |
+| `macd_cross` | MACD 線 + Signal 線 + 柱狀圖（Histogram） | MACD/Signal 為曲線，Histogram 為柱狀圖（正綠負紅） |
+| `bollinger_band` | 不需要獨立副圖 | 上軌/下軌/中軌畫在主圖上（與 K 線同座標軸） |
+| `bias` | BIAS 曲線 + 買進/賣出門檻線 | BIAS 曲線 + `buy_bias`/`sell_bias` 兩條水平虛線 |
+| `donchian_breakout` | 不需要獨立副圖 | Upper/Lower channel 畫在主圖上（與 K 線同座標軸） |
+
+- 指標副圖只在「選中單一策略結果」時顯示（單次回測或策略比較中選定某列後）。
+- 指標計算使用 `pandas_ta` 或 pandas rolling，與策略內部計算一致。
+
+**驗收指標：**
+- `run_strategy_batch()` 可對 8 個 preset 批次回測，每個回傳正確的 summary row。
+- 某個策略失敗時不影響其餘策略的結果收集。
+- 比較表 9 個欄位正確顯示，`profit_factor=999.0` 顯示為 N/A。
+- 結果可匯出 CSV，檔案內容與表格一致。
+- UI 三個 tab 可正常切換，互不干擾。
+- 單次回測 tab 行為與 7-A 完全一致（不退化）。
+- K 線圖顯示 OHLC candlestick，漲紅跌綠。
+- Signal marker 和 Trade marker 可同圖顯示，hover 可區分兩者。
+- 至少 RSI、MACD、BIAS 三種策略的指標副圖正確顯示。
+- 布林通道和 Donchian channel 在主圖上疊加顯示。
+- 歷史結果 tab 可載入並顯示之前匯出的 CSV。
+
+---
+
+#### 7-C　參數掃描與防過度最佳化（2-3 天）
+
+**建置內容：** 在 7-B 的批次執行基礎上，新增單策略參數 Grid Search、不合法參數組合過濾、組合數上限控制、樣本不足警告、結果排序與 Top N 顯示。
+
+**7-C-1　Grid Search 引擎**
+
+- 新增 `src/backtest/sweep.py`，提供 `run_parameter_sweep()` 函式。
+- 輸入：symbol、日期區間、初始資金、策略類型（單一 type）、參數掃描範圍（每個參數一組候選值）。
+- 流程：
+  1. 從參數候選值生成所有組合（Cartesian product）。
+  2. 過濾不合法組合（見 7-C-2）。
+  3. 檢查組合數是否超過上限（見 7-C-3）。
+  4. 對每個合法組合建構策略 instance，執行回測（使用 `VectorizedBacktester`）。
+  5. 收集每組的 summary metrics，打包回傳。
+- 回傳 `SweepResult`：
+
+```python
+@dataclass
+class SweepResult:
+    symbol: str
+    start_date: str
+    end_date: str
+    strategy_type: str
+    total_combos: int            # 過濾前的總組合數
+    valid_combos: int            # 過濾後的合法組合數
+    results: list[SweepRunSummary]
+
+@dataclass
+class SweepRunSummary:
+    params: dict[str, Any]       # 本次使用的參數組合
+    total_return: float
+    annual_return: float
+    max_drawdown: float
+    sharpe_ratio: float
+    win_rate: float
+    profit_factor: float
+    total_trades: int
+    error: str | None
+```
+
+**參數掃描範例：**
+
+| 策略類型 | 可掃描參數 | 範例輸入 |
+| :--- | :--- | :--- |
+| `moving_average_cross` | `short_window`, `long_window` | `5,10,20` × `40,60,120` |
+| `rsi` | `period`, `oversold`, `overbought` | `7,14,21` × `20,30` × `70,80` |
+| `kd_cross` | `k_period`, `d_period`, `smooth_k` | `9,14` × `3,5` × `3,5` |
+| `macd_cross` | `fast`, `slow`, `signal` | `8,12` × `20,26` × `7,9` |
+| `bollinger_band` | `period`, `std_dev` | `10,20,30` × `1.5,2.0,2.5` |
+| `bias` | `ma_period`, `buy_bias`, `sell_bias` | `10,20,30` × `-15,-10,-5` × `5,10,15` |
+| `donchian_breakout` | `entry_period`, `exit_period` | `10,20,55` × `5,10,20` |
+
+**7-C-2　參數合法性過濾**
+
+- 在生成組合後、跑回測前，自動過濾不合法的參數組合：
+
+| 策略類型 | 過濾規則 |
+| :--- | :--- |
+| `moving_average_cross` | `short_window >= long_window` → 排除 |
+| `rsi` | `oversold >= overbought` → 排除 |
+| `macd_cross` | `fast >= slow` → 排除 |
+| `bias` | `buy_bias >= sell_bias` → 排除 |
+| 其餘策略 | 所有參數 `<= 0` → 排除 |
+
+- 過濾規則複用各策略的 `_normalize_*_params()` 函式：呼叫後回傳 `None` 的組合即為不合法。
+- 過濾後，在 UI 顯示「{total_combos} 組合中 {valid_combos} 個合法」。
+
+**7-C-3　組合數上限控制**
+
+- 預設上限：**200 組**合法組合。
+- 在 UI 輸入參數後、點「開始掃描」前，即時計算合法組合數。
+- 若超過上限：
+  - 顯示 `st.warning("合法組合數 {valid_combos} 超過上限 200，請縮小參數範圍。")`。
+  - 停用「開始掃描」按鈕，不允許執行。
+- 上限值可在未來設定為 config 項目，目前硬寫。
+
+**7-C-4　防過度最佳化守門**
+
+- 結果表格中，針對潛在過度最佳化的結果加上視覺警告：
+  - **交易次數過少**：`total_trades < 3` 的結果，在交易次數欄標註「⚠ 樣本不足」（黃色背景）。
+  - **最大回撤過深**：`max_drawdown > 50%` 的結果，在最大回撤欄標註「⚠ 回撤過深」。
+  - **Profit Factor 異常**：`profit_factor == 999.0`（sentinel 值）的結果，顯示 N/A 而非 999.0。
+- 結果表格標題顯示「Top N 結果（依 {排序欄位}）」，不使用「最佳策略」、「最佳參數」等用語。
+- 不自動宣稱任何組合是「最佳」，使用者自行判斷。
+
+**7-C-5　結果排序與顯示**
+
+- 掃描結果表格預設依 Sharpe Ratio 降序排列。
+- 使用者可透過 `st.selectbox` 切換排序欄位：Sharpe、總報酬、年化報酬、最大回撤（升序）、勝率、Profit Factor。
+- 顯示 Top 20 筆結果（可在 UI 上以 slider 調整顯示數量，上限 50）。
+- 選中某列後，展開該參數組合的 Tearsheet 摘要 + K 線圖 + 指標副圖（複用 7-B 的圖表元件）。
+
+**7-C-6　掃描結果保存**
+
+- 掃描結果保存為 CSV，路徑：`data/backtest/parameter_sweeps/`。
+- 檔名格式：`{symbol}_{strategy_type}_{timestamp}.csv`。
+- CSV 欄位：各參數值 + 所有 metrics 欄位 + 警告欄位（`sample_warning: bool`）。
+- UI 提供「匯出掃描結果」按鈕。
+
+**7-C-7　UI 整合**
+
+- 在 7-B 的回測頁 tabs 中新增第四個 tab：**參數掃描**。
+- Tab 結構變更為：單次回測 / 策略比較 / 參數掃描 / 歷史結果。
+- 參數掃描 tab 流程：
+  1. 選擇 symbol、日期區間（共用元件）。
+  2. 選擇策略類型（`st.selectbox`，列出所有非 DCA 的策略類型）。
+  3. 根據選中的策略類型，動態顯示該策略的可掃描參數。
+  4. 每個參數一個 `st.text_input`，輸入格式為逗號分隔值（如 `5,10,20`）。
+  5. 即時顯示合法組合數與上限。
+  6. 點「開始掃描」→ 顯示進度條 → 完成後顯示結果表格。
+  7. 選中某列 → 展開圖表。
+- DCA 策略不參與參數掃描（專用回測流程，不適合 grid search）。
+
+**驗收指標：**
+- `run_parameter_sweep()` 可對 MA Cross 的 `short_window=[5,10,20]` × `long_window=[40,60,120]` 完成掃描，正確排除 `short >= long` 的組合。
+- 合法組合數超過 200 時，UI 阻止執行。
+- `total_trades < 3` 的結果標註「⚠ 樣本不足」。
+- 掃描結果可依不同欄位排序切換。
+- 掃描結果可匯出 CSV。
+- 選中某筆結果後，展開的圖表與該參數組合的回測結果一致。
+- 參數掃描 tab 不影響其餘三個 tab 的功能。
+- 不合法參數組合（如 RSI `oversold=80, overbought=30`）被自動過濾，不執行回測。
+
+---
+
 ### 子階段總覽
 
 | Phase | 子階段 | 工期 | 有 AI 輔助 |
@@ -1326,8 +1578,8 @@ strategies:
 | **4** AI 問答 + UI | 4-A → 4-D（4 段） | 5 天 | ✅ |
 | **5** 回測體驗與 UI 補充 | 5-A → 5-B（2 段） | 3-5 天 | ✅ |
 | **6** UI/UX 強化 | 6-A（1 段） | 1-2 天 | ✅ |
-| **7** 策略擴充 | 7-A（1 段） | 2-3 天 | |
-| **合計** | 21 個子階段 | **35-39 天（約 8-9 週）** | |
+| **7** 策略擴充 | 7-A → 7-C（3 段） | 6-9 天 | |
+| **合計** | 23 個子階段 | **39-45 天（約 9-11 週）** | |
 
 ---
 
