@@ -13,6 +13,7 @@
 | **V1.6** | 2026/04/30 | Phase 6-A 主題清單對齊實作：由原訂 3 套（`light` / `dark` / `finance_green`）擴充為 6 套（`arctic_light` / `obsidian_dark` / `finance_green` / `midnight_blue` / `cyberpunk` / `warm_sepia`）；預設主題與 fallback 改為 `arctic_light`；同步更新 Plotly template 對應表。 |
 | **V1.7** | 2026/05/07 | 新增 Phase 7（策略擴充）章節與 Phase 7-A：6 種技術分析策略（RSI 超買超賣、KD 交叉、MACD 交叉、布林通道、乖離率、突破策略），含向量化 + 事件驅動雙介面、`strategy_config.py` preset 正規化、UI 回測頁分派。 |
 | **V1.8** | 2026/05/08 | 新增 Phase 7-B（策略研究工作台）：批次策略比較、結果保存、UI tab 重構、K 線圖升級、Signal/Trade 雙層標記、策略指標副圖。新增 Phase 7-C（參數掃描與防過度最佳化）：Grid Search、參數驗證過濾、組合數限制、樣本不足警告、排序與 Top N。 |
+| **V1.9** | 2026/05/09 | 新增 Phase 7-D（Walk-Forward Analysis）：單標的向量化 WFA、rolling IS/OOS 視窗、IS 參數掃描 + OOS 驗證、OOS 彙總績效、IS/OOS degradation、參數穩定性 CV、執行量上限、UI 中文說明規則與 CSV 匯出。 |
 
 ---
 
@@ -1568,6 +1569,256 @@ class SweepRunSummary:
 
 ---
 
+#### 7-D　Walk-Forward Analysis（3.5-5 天）
+
+**建置內容：** 在 7-C 參數掃描基礎上，新增 Walk-Forward Analysis（WFA，滾動樣本外驗證）。系統將歷史資料切成多段 in-sample（IS，樣本內最佳化區間）與 out-of-sample（OOS，樣本外驗證區間），每段 IS 先執行參數掃描選出最佳參數，再將該參數套用到下一段 OOS 回測，用於檢查參數是否過度擬合單一歷史區間。
+
+**MVP 範圍：**
+
+- 只支援單一 symbol，不做多標的 WFA。
+- 只支援 `VectorizedBacktester`，不做 event-driven WFA。
+- 只支援可參數掃描策略：`moving_average_cross`、`rsi`、`kd_cross`、`macd_cross`、`bollinger_band`、`bias`、`donchian_breakout`。
+- 不支援 `dollar_cost_averaging`，DCA 屬專用回測流程，不適合 grid search + OOS 驗證。
+- 採 rolling calendar window：固定 IS 長度向前滾動，不做 anchored expanding window。
+- 不做 portfolio WFA、Monte Carlo、AI 自動解讀、walk-forward matrix、新資料源或新增策略。
+
+**7-D-1　Rolling 視窗切割**
+
+- 新增 `src/backtest/walk_forward.py`。
+- 預設參數：
+
+| 參數 | 預設 | 說明 |
+| :--- | :--- | :--- |
+| `is_months` | 12 | 用一年資料做樣本內最佳化 |
+| `oos_months` | 6 | 用半年資料做樣本外驗證 |
+| `step_months` | 6 | 每次向前滾動半年 |
+| `max_windows` | 10 | MVP 硬上限，不提供 UI 調高 |
+| `min_windows` | 3 | 少於 3 段則 WFA 可信度不足 |
+| `max_combinations` | 200 | 沿用 7-C 參數掃描上限 |
+
+- 最低資料長度公式：
+
+```text
+最低月數 = is_months + oos_months + (min_windows - 1) × step_months
+```
+
+- 以預設值計算：`12 + 6 + (3 - 1) × 6 = 30 個月`。
+- UI 執行前必須檢查資料長度，不足時直接阻止執行，錯誤訊息：
+
+```text
+資料長度不足：目前資料僅 {actual} 個月，WFA 至少需要 {required} 個月（IS {is_months} + OOS {oos_months} + {min_windows - 1} 段步進 × {step_months}）。
+```
+
+**7-D-2　IS sweep + OOS 驗證**
+
+- 每段 window 流程：
+  1. 切出 IS data。
+  2. 切出 OOS data。
+  3. 以 IS data 呼叫 `run_parameter_sweep()`。
+  4. 依 `optimize_metric` 選出 IS 最佳參數。
+  5. 用最佳參數建立策略，對 OOS data 執行 `VectorizedBacktester`。
+  6. 記錄 IS best result、OOS result、best params、warnings。
+- 支援的最佳化指標限「越高越好」：
+  - `total_return`
+  - `annual_return`
+  - `sharpe_ratio`
+- 不納入 `profit_factor`：目前 metrics 層以 `999.0` 表示 sentinel，會誤導最佳參數選擇。
+- 不納入 `max_drawdown`：屬「越低越好」指標，反向排序與 degradation 定義留待後續。
+- 執行量預估：
+
+```text
+總回測次數 = window_count × combo_count
+```
+
+- UI 點「執行」前顯示：
+
+```text
+將進行 {windows} 段 × {combos} 組 = {total} 次回測
+```
+
+- 執行中顯示 `st.progress`，標示目前跑到第幾段視窗。
+- 若資料可產生超過 10 段，MVP 只取最早 10 段或要求使用者縮短區間。
+
+**7-D-3　WFA 結果模型**
+
+```python
+@dataclass(frozen=True)
+class WalkForwardWindow:
+    window_id: int
+    is_start: pd.Timestamp
+    is_end: pd.Timestamp
+    oos_start: pd.Timestamp
+    oos_end: pd.Timestamp
+
+
+@dataclass(frozen=True)
+class WalkForwardWindowResult:
+    window: WalkForwardWindow
+    best_params: dict[str, Any] | None
+    is_best: SweepRunSummary | None
+    oos_result: BacktestResult | None
+    degradation: float | None
+    skipped: bool
+    warnings: list[str]
+
+
+@dataclass(frozen=True)
+class WalkForwardSummary:
+    strategy_type: str
+    optimize_metric: str
+    windows: list[WalkForwardWindowResult]
+    total_window_count: int
+    valid_window_count: int
+    skipped_window_count: int
+    aggregate: dict[str, Any]
+    parameter_stability: dict[str, Any]
+```
+
+- `best_params`、`is_best`、`oos_result`、`degradation` 在 IS sweep 全部失敗時為 `None`。
+- `skipped=True` 的視窗不計入 aggregate。
+- `valid_window_count` 只計算 `skipped=False` 的視窗。
+
+**7-D-4　WFA 指標與 degradation**
+
+每段 window 明細至少包含：
+
+| 欄位 | 說明 |
+| :--- | :--- |
+| `window_id` | 第幾段 |
+| `is_start` / `is_end` | IS 日期範圍 |
+| `oos_start` / `oos_end` | OOS 日期範圍 |
+| `best_params` | IS 最佳參數 |
+| `is_total_return` / `oos_total_return` | IS / OOS 總報酬 |
+| `is_sharpe` / `oos_sharpe` | IS / OOS Sharpe |
+| `oos_max_drawdown` | OOS 最大回撤 |
+| `oos_total_trades` | OOS 交易次數 |
+| `degradation` | IS 到 OOS 的績效衰退 |
+| `warnings` | 樣本不足、掃描失敗等 |
+
+彙總指標至少包含：
+
+| 欄位 | 說明 |
+| :--- | :--- |
+| `total_window_count` | 產生的視窗總數 |
+| `valid_window_count` | 成功且計入彙總的有效視窗數 |
+| `skipped_window_count` | 被跳過的視窗數 |
+| `oos_win_window_rate` | OOS 報酬為正的視窗比例 |
+| `avg_oos_return` | 平均 OOS 報酬 |
+| `median_oos_return` | OOS 報酬中位數 |
+| `avg_oos_sharpe` | 平均 OOS Sharpe |
+| `worst_oos_drawdown` | 最差 OOS 最大回撤 |
+| `avg_degradation` | 平均 IS/OOS 衰退 |
+| `parameter_stability_score` | 參數穩定性分數 |
+| `warning_count` | 警告數 |
+
+MVP degradation 採絕對差值：
+
+```text
+degradation = oos_metric - is_metric
+```
+
+- `degradation < 0` 表示 OOS 比 IS 差。
+- 絕對差值在不同量級下可能誤導，例如 `IS Sharpe=5.0, OOS Sharpe=4.0` 與 `IS Sharpe=0.5, OOS Sharpe=-0.5` 都是 `-1.0`。比率型 degradation `(oos - is) / abs(is)` 列為 follow-up，MVP 不做。
+
+**7-D-5　參數穩定性**
+
+- 只使用有效 window 的最佳參數，跳過 sweep 失敗視窗。
+- 對每個 numeric parameter 計算 `min`、`max`、`mean`、`median`、`std`、`cv`。
+- 使用 Coefficient of Variation（CV）分類：
+
+```python
+cv = std / abs(mean)  # mean == 0 時直接判 unstable
+
+if cv < 0.15:
+    status = "stable"
+elif cv < 0.40:
+    status = "moderate"
+else:
+    status = "unstable"
+```
+
+- 任一參數為 `unstable` 時，UI 顯示：
+
+```text
+最佳參數在 WFA 視窗間變動過大（{param_name} CV={cv:.2f}），可能代表策略對參數高度敏感。
+```
+
+**7-D-6　警告與失敗處理**
+
+| 條件 | 警告 | 行為 |
+| :--- | :--- | :--- |
+| WFA window 少於 3 段 | 視窗數過少，WFA 可信度有限 | 執行前阻止 |
+| OOS trade 少於 3 筆 | OOS 交易樣本不足 | 該視窗標記警告，仍計入彙總 |
+| 大多數 OOS 報酬為負 | 策略泛化能力不足 | 彙總層警告 |
+| 平均 degradation 大幅為負 | IS 績效無法延續到 OOS | 彙總層警告 |
+| 參數穩定性 unstable | 最佳參數跨視窗跳動過大 | 彙總層警告 |
+| 某 window IS sweep 全部失敗 | 該視窗無法選出有效參數 | 跳過該視窗，不計入彙總 |
+| 資料長度不足 | 無法產生足夠 WFA 視窗 | 執行前阻止 |
+
+- window table 中對 sweep 失敗視窗標記「掃描失敗，跳過」。
+- 若跳過後有效視窗數 `< min_windows`，觸發可信度不足警告。
+
+**7-D-7　UI 整合**
+
+- 在回測頁新增「Walk-Forward」tab；不假設既有 tab 數固定。
+- UI 主要顯示中文；必要英文研究術語需附中文說明：
+  - Walk-Forward（滾動樣本外驗證）
+  - In-sample / IS（樣本內最佳化區間）
+  - Out-of-sample / OOS（樣本外驗證區間）
+  - Optimize metric（最佳化指標）
+  - Degradation（IS 到 OOS 績效衰退）
+- 下拉選單、欄位標題、警告訊息若使用英文縮寫，旁邊需有中文 label、help text 或 tooltip。
+- 表格欄位可保留英文資料欄名，但 UI 顯示名稱需附中文，例如 `oos_sharpe` 顯示為「OOS Sharpe（樣本外夏普值）」。
+- 控制項：
+  - 策略 preset / strategy type
+  - 參數範圍輸入（沿用 7-C）
+  - IS months（樣本內月份）
+  - OOS months（樣本外月份）
+  - Step months（滾動步進月份）
+  - Optimize metric（最佳化指標）
+  - Max combinations（最大參數組合數）
+  - Run button
+- 顯示區塊：
+  1. Summary metrics（有效視窗數、OOS 勝率、平均 OOS return、平均 OOS Sharpe、最差 OOS drawdown、平均 degradation）
+  2. Window table（IS/OOS 起訖、best params、IS/OOS metrics、warnings）
+  3. 參數穩定性表（min / median / max / cv / status）
+  4. CSV export（window summary、parameter stability）
+
+**7-D-8　結果保存**
+
+- WFA 結果保存為 CSV，路徑：`data/backtest/walk_forward/`。
+- 檔名格式：`{symbol}_{strategy_type}_wfa_{timestamp}.csv`。
+- 至少輸出兩份 CSV：
+  - window summary CSV
+  - parameter stability CSV
+- CSV 需包含 window 範圍、best params、IS/OOS metrics、degradation、warnings、skipped flag。
+
+**Follow-up（本 Phase 不做）：**
+
+| 項目 | 說明 |
+| :--- | :--- |
+| Anchored expanding window | IS 起點固定、長度遞增 |
+| Ratio-based degradation | `(oos - is) / abs(is)` 與絕對差並列 |
+| `profit_factor` 納入 optimize metric | 需先解決 metrics 層 sentinel 999.0 |
+| `max_drawdown` 納入 optimize metric | 需處理越低越好的反向邏輯 |
+| Event-driven WFA | 目前只支援 Vectorized engine |
+| 多標的 WFA | 留給 Phase 8 portfolio research |
+
+**驗收指標：**
+
+- 能對單一 symbol + 單一策略執行 WFA。
+- 預設資料長度至少 30 個月才能產生 3 段 WFA；不足時 UI 阻止執行。
+- 每段 IS 會跑參數掃描並選出最佳參數。
+- 每段 OOS 會使用該段最佳參數重新回測。
+- 報表清楚顯示 IS vs OOS degradation。
+- 報表顯示參數穩定性，且 CV 門檻正確。
+- OOS 交易過少、視窗過少、參數不穩定、sweep 失敗時會提示。
+- sweep 全部失敗的視窗被跳過，不計入彙總。
+- UI 有 Walk-Forward tab，英文術語均有中文說明。
+- 結果可匯出 CSV。
+
+---
+
 ### 子階段總覽
 
 | Phase | 子階段 | 工期 | 有 AI 輔助 |
@@ -1578,8 +1829,8 @@ class SweepRunSummary:
 | **4** AI 問答 + UI | 4-A → 4-D（4 段） | 5 天 | ✅ |
 | **5** 回測體驗與 UI 補充 | 5-A → 5-B（2 段） | 3-5 天 | ✅ |
 | **6** UI/UX 強化 | 6-A（1 段） | 1-2 天 | ✅ |
-| **7** 策略擴充 | 7-A → 7-C（3 段） | 6-9 天 | |
-| **合計** | 23 個子階段 | **39-45 天（約 9-11 週）** | |
+| **7** 策略擴充 | 7-A → 7-D（4 段） | 9.5-14 天 | |
+| **合計** | 24 個子階段 | **42.5-50 天（約 10-12 週）** | |
 
 ---
 
