@@ -65,7 +65,7 @@ ai:
   provider: anthropic
   model: claude-sonnet-4-6
 ui:
-  theme: warm_sepia
+  theme: midnight_blue
   use_extras: true
   use_option_menu: true
 realtime:

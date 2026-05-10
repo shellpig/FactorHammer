@@ -7,9 +7,11 @@ from datetime import datetime
 import time
 from typing import Any
 import warnings
+from zoneinfo import ZoneInfo
 
 import requests
 
+from src.core.constants import TAIPEI_TZ
 from src.core.config import get_config
 from src.core.exceptions import FetcherError
 
@@ -229,7 +231,8 @@ class RealtimeFetcher:
 
         change = float(price - yesterday_close)
         change_pct = float((change / yesterday_close * 100.0) if yesterday_close else 0.0)
-        is_market_open = self._is_market_open(timestamp)
+        now = datetime.fromtimestamp(float(self._clock()), ZoneInfo(TAIPEI_TZ))
+        is_market_open = self._is_market_open(timestamp, now=now)
 
         return RealtimeQuote(
             symbol=symbol,
@@ -305,11 +308,22 @@ class RealtimeFetcher:
         return out
 
     @staticmethod
-    def _is_market_open(timestamp: str) -> bool:
+    def _is_market_open(timestamp: str, *, now: datetime | None = None) -> bool:
         if not timestamp:
             return False
         try:
             t = datetime.strptime(timestamp, "%H:%M:%S").time()
         except ValueError:
             return False
-        return (t.hour, t.minute, t.second) >= (9, 0, 0) and (t.hour, t.minute, t.second) <= (13, 30, 0)
+        current = now or datetime.now(ZoneInfo(TAIPEI_TZ))
+        if current.tzinfo:
+            current_taipei = current.astimezone(ZoneInfo(TAIPEI_TZ))
+        else:
+            current_taipei = current.replace(tzinfo=ZoneInfo(TAIPEI_TZ))
+        if current_taipei.weekday() >= 5:
+            return False
+        current_tuple = (current_taipei.hour, current_taipei.minute, current_taipei.second)
+        quote_tuple = (t.hour, t.minute, t.second)
+        market_open = (9, 0, 0)
+        market_close = (13, 30, 0)
+        return market_open <= current_tuple <= market_close and market_open <= quote_tuple <= market_close

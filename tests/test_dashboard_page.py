@@ -6,8 +6,10 @@ import pandas as pd
 
 from src.analysis.technical_summary import PriceLevel, TechnicalSummary
 from src.analysis.pattern import MultiTimeframeAnalysis, TimeframeTrend
+from src.data.storage import ParquetStorage
 from src.data.realtime import BidAskStructure, RealtimeQuote
 from src.ui.pages.dashboard import (
+    _build_dashboard_payload,
     _render_tab_ai,
     _render_tab_chip,
     _render_tab_overview,
@@ -121,6 +123,20 @@ def _make_technical_summary() -> TechnicalSummary:
     )
 
 
+def _make_daily_df(periods: int = 90) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.date_range("2025-01-01", periods=periods, freq="D"),
+            "open": [100.0 + i for i in range(periods)],
+            "high": [101.0 + i for i in range(periods)],
+            "low": [99.0 + i for i in range(periods)],
+            "close": [100.5 + i for i in range(periods)],
+            "volume": [1000 + i for i in range(periods)],
+            "symbol": ["2330"] * periods,
+        }
+    )
+
+
 def test_dashboard_page_imports() -> None:
     from src.ui.pages.dashboard import render_dashboard_page as imported  # noqa: PLC0415
 
@@ -134,6 +150,23 @@ def test_dashboard_page_render_no_symbol(monkeypatch) -> None:
     monkeypatch.setattr(dashboard_module, "st", dummy)
     render_dashboard_page()
     assert any("請先輸入股票代碼" in msg for msg in dummy.info_messages)
+
+
+def test_dashboard_page_accepts_alphanumeric_symbol(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _DummySt(symbol="00981a", analyze_clicked=True)
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(
+        dashboard_module,
+        "_build_dashboard_payload",
+        lambda symbol: {"symbol": symbol, "ready": False, "error": f"{symbol} 尚無本機日線資料"},
+    )
+
+    render_dashboard_page()
+
+    assert not dummy.info_messages
+    assert any("00981A 尚無本機日線資料" in msg for msg in dummy.warning_messages)
 
 
 def test_dashboard_tab_overview_renders(monkeypatch) -> None:
@@ -265,3 +298,19 @@ def test_dashboard_page_refresh_quote_updates_session_payload(monkeypatch) -> No
     assert updated["quote"].price == 123.45
     assert updated["bid_ask"].label == "買盤較積極"
     assert dummy.rerun_called_count == 1
+
+
+def test_dashboard_payload_builds_multi_timeframe_from_date_column(monkeypatch, tmp_path) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    storage = ParquetStorage(data_dir=tmp_path)
+    storage.save_daily("2330", _make_daily_df())
+    monkeypatch.setattr(dashboard_module, "ParquetStorage", lambda: storage)
+    monkeypatch.setattr(dashboard_module, "RealtimeFetcher", None)
+    monkeypatch.setattr(dashboard_module, "st", _DummySt())
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ai": {"enabled": False}, "ui": {"theme": "midnight_blue"}})
+
+    payload = _build_dashboard_payload("2330")
+
+    assert payload["ready"] is True
+    assert isinstance(payload["multi_timeframe"], MultiTimeframeAnalysis)

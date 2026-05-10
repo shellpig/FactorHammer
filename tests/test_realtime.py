@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from src.data.realtime import RealtimeFetcher, RealtimeQuote
 
@@ -252,7 +254,20 @@ def test_bid_ask_structure_balanced() -> None:
 
 def test_is_market_open_detection() -> None:
     fetcher = RealtimeFetcher()
-    assert fetcher._is_market_open("09:00:00") is True
-    assert fetcher._is_market_open("13:30:00") is True
-    assert fetcher._is_market_open("08:59:59") is False
-    assert fetcher._is_market_open("13:30:01") is False
+    trading_now = datetime(2026, 5, 11, 10, 0, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    assert fetcher._is_market_open("09:00:00", now=trading_now) is True
+    assert fetcher._is_market_open("13:30:00", now=trading_now) is True
+    assert fetcher._is_market_open("08:59:59", now=trading_now) is False
+    assert fetcher._is_market_open("13:30:01", now=trading_now) is False
+
+
+def test_is_market_open_false_on_weekend_even_if_quote_time_is_intraday() -> None:
+    fetcher = RealtimeFetcher()
+    sunday_night = datetime(2026, 5, 10, 21, 17, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    assert fetcher._is_market_open("10:15:01", now=sunday_night) is False
+
+
+def test_is_market_open_false_after_hours_even_if_quote_time_is_intraday() -> None:
+    fetcher = RealtimeFetcher()
+    weekday_night = datetime(2026, 5, 11, 21, 17, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    assert fetcher._is_market_open("10:15:01", now=weekday_night) is False
