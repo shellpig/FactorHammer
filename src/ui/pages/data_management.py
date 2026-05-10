@@ -14,14 +14,14 @@ from src.data.fetcher import FinMindFetcher, IDataFetcher, YFinanceFetcher
 from src.data.maintenance import DataMaintenance
 from src.data.storage import DuckDBMeta, ParquetStorage
 
-_TW_SYMBOL_PATTERN = re.compile(r"^\d{4,6}$")
+_TW_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{4,6}$")
 
 
 def render() -> None:
     st.title("資料管理")
     st.caption("管理本機歷史資料、更新與重建。")
 
-    symbol = st.text_input("股票代碼", value="2330").strip()
+    symbol = st.text_input("股票代碼", value="2330").strip().upper()
 
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
@@ -33,7 +33,7 @@ def render() -> None:
 
     if do_update or do_rebuild:
         if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-            st.error("請輸入有效的台股代碼（4~6 位數字）。")
+            st.error("請輸入有效的台股代碼（4~6 位英數字）。")
         else:
             _run_maintenance(symbol=symbol, rebuild=do_rebuild)
 

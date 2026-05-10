@@ -111,6 +111,19 @@ def detect_chart_pattern(
 
     w_pattern = _detect_w_bottom(work, tolerance_pct=tolerance_pct)
     m_pattern = _detect_m_top(work, tolerance_pct=tolerance_pct)
+
+    if w_pattern.formed and m_pattern.formed:
+        w_pattern = ChartPatternResult(
+            pattern_type="W底（雙底）",
+            formed=False,
+            description="區間震盪，未形成標準W底型態",
+        )
+        m_pattern = ChartPatternResult(
+            pattern_type="M頭（雙頂）",
+            formed=False,
+            description="區間震盪，未形成標準M頭型態",
+        )
+
     return [w_pattern, m_pattern]
 
 

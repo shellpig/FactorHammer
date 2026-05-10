@@ -263,18 +263,18 @@ def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary) -> None:
     chart_df["ma5"] = chart_df["close"].rolling(5).mean()
     chart_df["ma20"] = chart_df["close"].rolling(20).mean()
     chart_df["ma60"] = chart_df["close"].rolling(60).mean()
-    chart_df = chart_df.tail(60).reset_index(drop=True)
+    chart_df = chart_df.tail(120).reset_index(drop=True)
 
     price_min = float(chart_df["low"].min())
     price_max = float(chart_df["high"].max())
     y_padding = (price_max - price_min) * 0.05
-    
-    x_dates = chart_df["date"].dt.strftime("%Y-%m-%d")
+
+    dates = chart_df["date"]
 
     fig = go.Figure()
     fig.add_trace(
         go.Candlestick(
-            x=x_dates,
+            x=dates,
             open=chart_df["open"],
             high=chart_df["high"],
             low=chart_df["low"],
@@ -286,33 +286,37 @@ def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary) -> None:
             decreasing_fillcolor="#22c55e",
         )
     )
-    fig.add_trace(go.Scatter(x=x_dates, y=chart_df["ma5"], mode="lines", name="MA5", line={"width": 1}))
-    fig.add_trace(go.Scatter(x=x_dates, y=chart_df["ma20"], mode="lines", name="MA20", line={"width": 1}))
-    fig.add_trace(go.Scatter(x=x_dates, y=chart_df["ma60"], mode="lines", name="MA60", line={"width": 1}))
+    fig.add_trace(go.Scatter(x=dates, y=chart_df["ma5"], mode="lines", name="MA5", line={"width": 1}))
+    fig.add_trace(go.Scatter(x=dates, y=chart_df["ma20"], mode="lines", name="MA20", line={"width": 1}))
+    fig.add_trace(go.Scatter(x=dates, y=chart_df["ma60"], mode="lines", name="MA60", line={"width": 1}))
 
-    seg_x0 = x_dates.iloc[max(0, len(x_dates) - 20)]
-    seg_x1 = x_dates.iloc[-1]
+    seg_x0 = dates.iloc[max(0, len(dates) - 20)]
+    seg_x1 = dates.iloc[-1]
     for level in technical.resistance_levels:
         y = float(level.value)
         fig.add_shape(type="line", x0=seg_x0, x1=seg_x1, y0=y, y1=y, xref="x", yref="y",
                       line={"dash": "dot", "color": "#ef4444", "width": 1})
-        fig.add_annotation(x=0.99, y=y, xref="paper", yref="y", text=f"壓 {y:.1f}",
-                           showarrow=False, font={"size": 10, "color": "#ef4444"}, xanchor="right")
+        fig.add_annotation(x=seg_x1, y=y, xref="x", yref="y", text=f" 壓 {y:.1f}",
+                           showarrow=False, font={"size": 10, "color": "#ef4444"}, xanchor="left")
     for level in technical.support_levels:
         y = float(level.value)
         fig.add_shape(type="line", x0=seg_x0, x1=seg_x1, y0=y, y1=y, xref="x", yref="y",
                       line={"dash": "dot", "color": "#22c55e", "width": 1})
-        fig.add_annotation(x=0.99, y=y, xref="paper", yref="y", text=f"撐 {y:.1f}",
-                           showarrow=False, font={"size": 10, "color": "#22c55e"}, xanchor="right")
+        fig.add_annotation(x=seg_x1, y=y, xref="x", yref="y", text=f" 撐 {y:.1f}",
+                           showarrow=False, font={"size": 10, "color": "#22c55e"}, xanchor="left")
 
     fig.update_layout(
         template=palette["plotly_template"],
         title="日K + 均線 + 支撐壓力",
-        xaxis={"title": "日期", "type": "category", "nticks": 20, "rangeslider": {"visible": False}},
+        xaxis_title="日期",
+        xaxis_rangeslider={"visible": True, "thickness": 0.04},
+        xaxis_rangebreaks=[{"bounds": ["sat", "mon"]}],
         yaxis_title="價格",
+        yaxis_autorange=True,
+        yaxis_fixedrange=True,
         font={"color": palette["text"]},
         height=650,
-        yaxis={"range": [price_min - y_padding, price_max + y_padding]},
+        dragmode="pan",
     )
     st.plotly_chart(fig, width="stretch")
 
@@ -354,8 +358,16 @@ def _render_tab_pattern(
     mtf: MultiTimeframeAnalysis,
 ) -> None:
     st.subheader("型態與週期")
-    rows = [{"型態": p.name, "是否偵測": "是" if p.detected else "否", "說明": p.description} for p in candle_patterns]
-    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    detected = [p for p in candle_patterns if p.detected]
+    not_detected = [p for p in candle_patterns if not p.detected]
+    if detected:
+        st.markdown("**偵測到的型態：**")
+        for p in detected:
+            st.success(f"**{p.name}** — {p.description}")
+    if not_detected:
+        with st.expander("未偵測到的型態", expanded=False):
+            rows = [{"型態": p.name, "說明": p.description} for p in not_detected]
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     for pattern in chart_patterns:
         if pattern.formed:
