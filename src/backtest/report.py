@@ -197,7 +197,16 @@ class TearsheetReport:
             template=palette["plotly_template"],
             paper_bgcolor=palette["surface"],
             plot_bgcolor=palette["surface"],
+            font={"color": palette["text"]},
         )
+
+        for trace in fig.data:
+            if hasattr(trace, "header") and hasattr(trace.header, "update"):
+                trace.header.update(fill_color=palette["surface"])
+                trace.header.font.update(color=palette["text"])
+                trace.cells.update(fill_color=palette["background"])
+                trace.cells.font.update(color=palette["text"])
+
         return fig
 
     @staticmethod

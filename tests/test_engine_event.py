@@ -368,6 +368,47 @@ def test_ma_cross_event_same_entry_points() -> None:
     assert vec_exit_dates == event_exit_dates
 
 
+def test_infer_freq_daily() -> None:
+    bt = EventDrivenBacktester.__new__(EventDrivenBacktester)
+    tz = "Asia/Taipei"
+    idx = pd.date_range("2024-01-01", periods=5, freq="B", tz=tz)
+    assert bt._infer_freq(idx) == "1day"
+
+
+def test_infer_freq_too_short_returns_1day() -> None:
+    bt = EventDrivenBacktester.__new__(EventDrivenBacktester)
+    tz = "Asia/Taipei"
+    idx = pd.date_range("2024-01-01", periods=2, freq="1min", tz=tz)
+    assert bt._infer_freq(idx) == "1day"
+
+
+def test_infer_freq_minute_old_alias() -> None:
+    """pd.infer_freq returns 'T'/'5T' on older pandas — simulate via DatetimeIndex."""
+    bt = EventDrivenBacktester.__new__(EventDrivenBacktester)
+    tz = "Asia/Taipei"
+    idx = pd.date_range("2024-01-02 09:00", periods=5, freq="5min", tz=tz)
+    assert bt._infer_freq(idx) == "5min"
+
+
+def test_infer_freq_1min() -> None:
+    bt = EventDrivenBacktester.__new__(EventDrivenBacktester)
+    tz = "Asia/Taipei"
+    idx = pd.date_range("2024-01-02 09:00", periods=5, freq="1min", tz=tz)
+    assert bt._infer_freq(idx) == "1min"
+
+
+def test_infer_freq_60min() -> None:
+    bt = EventDrivenBacktester.__new__(EventDrivenBacktester)
+    tz = "Asia/Taipei"
+    idx = pd.date_range("2024-01-02 09:00", periods=5, freq="60min", tz=tz)
+    assert bt._infer_freq(idx) == "60min"
+
+
+def test_infer_freq_empty_returns_1day() -> None:
+    bt = EventDrivenBacktester.__new__(EventDrivenBacktester)
+    assert bt._infer_freq(pd.DatetimeIndex([])) == "1day"
+
+
 def test_strategy_no_modification_needed() -> None:
     df = _build_ma_cross_event_fixture()
     strategy = MACrossStrategy(ma_short=2, ma_long=3)

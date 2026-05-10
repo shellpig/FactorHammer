@@ -95,24 +95,24 @@ def render_theme_css(name: str) -> str:
     [data-testid="stHeader"] {{
         background-color: transparent !important;
     }}
-    
+
     /* 強制修改所有基礎文字與標題顏色，避免在淺色模式下變成白色 */
-    [data-testid="stAppViewContainer"] h1, 
-    [data-testid="stAppViewContainer"] h2, 
-    [data-testid="stAppViewContainer"] h3, 
-    [data-testid="stAppViewContainer"] h4, 
-    [data-testid="stAppViewContainer"] h5, 
-    [data-testid="stAppViewContainer"] h6, 
-    [data-testid="stAppViewContainer"] p, 
-    [data-testid="stAppViewContainer"] span, 
-    [data-testid="stAppViewContainer"] label, 
+    [data-testid="stAppViewContainer"] h1,
+    [data-testid="stAppViewContainer"] h2,
+    [data-testid="stAppViewContainer"] h3,
+    [data-testid="stAppViewContainer"] h4,
+    [data-testid="stAppViewContainer"] h5,
+    [data-testid="stAppViewContainer"] h6,
+    [data-testid="stAppViewContainer"] p,
+    [data-testid="stAppViewContainer"] span,
+    [data-testid="stAppViewContainer"] label,
     [data-testid="stAppViewContainer"] li,
     .stMarkdown, .stText {{
         color: var(--text-color) !important;
     }}
 
     /* 針對輸入框與下拉選單背景作修正，確保文字不被同色背景吃掉 */
-    .stTextInput input, .stNumberInput input, .stTextArea textarea, 
+    .stTextInput input, .stNumberInput input, .stTextArea textarea,
     div[data-baseweb="select"] > div {{
         background-color: var(--secondary-background-color) !important;
         color: var(--text-color) !important;
@@ -128,6 +128,22 @@ def render_theme_css(name: str) -> str:
     }}
     div[data-testid="stMetricValue"] > div {{
         color: var(--text-color) !important;
+    }}
+
+    /* Button styling — 淺色主題用深色(text)背景確保對比 ≥4.5:1；深色主題用 primary
+       加入 [data-testid="stAppViewContainer"] 前綴，specificity 高於廣域 span/p 規則 */
+    [data-testid="stAppViewContainer"] .stButton > button {{
+        background-color: {palette["text"] if palette["plotly_template"] == "plotly_white" else palette["primary"]} !important;
+        border: 1px solid {palette["text"] if palette["plotly_template"] == "plotly_white" else palette["primary"]} !important;
+    }}
+    [data-testid="stAppViewContainer"] .stButton > button,
+    [data-testid="stAppViewContainer"] .stButton > button p,
+    [data-testid="stAppViewContainer"] .stButton > button span {{
+        color: {palette["background"]} !important;
+    }}
+    [data-testid="stAppViewContainer"] .stButton > button:hover,
+    [data-testid="stAppViewContainer"] .stButton > button:focus {{
+        filter: brightness(1.15) !important;
     }}
 </style>
 """

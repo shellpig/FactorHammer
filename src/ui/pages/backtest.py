@@ -247,6 +247,9 @@ def _render_batch_comparison_tab() -> None:
         selection_mode="single-row",
         on_select="rerun",
         key="batch_table",
+        column_config={
+            "備註": st.column_config.TextColumn("備註", width="large"),
+        },
     )
 
     # Export button
@@ -706,14 +709,14 @@ def _render_walk_forward_tab() -> None:
         status_text.text("WFA 完成！")
 
         st.session_state["wfa_result"] = summary
-        st.session_state["wfa_symbol"] = symbol
+        st.session_state["wfa_result_symbol"] = symbol
 
     wfa_summary: WalkForwardSummary | None = st.session_state.get("wfa_result")
     if wfa_summary is None:
         st.info("設定股票代碼、日期與參數範圍後，點選「開始 Walk-Forward 分析」。")
         return
 
-    _render_wfa_results(wfa_summary, symbol=st.session_state.get("wfa_symbol", ""))
+    _render_wfa_results(wfa_summary, symbol=st.session_state.get("wfa_result_symbol", ""))
 
 
 def _fmt_wfa_metric(value: float, metric: str) -> str:
@@ -869,11 +872,11 @@ def _render_wfa_results(summary: WalkForwardSummary, *, symbol: str) -> None:
 def _input_symbol_and_dates(key_prefix: str) -> tuple[str, Any, Any]:
     today = pd.Timestamp.today().date()
     default_start = (pd.Timestamp.today() - pd.Timedelta(days=365 * 3)).date()
-    c1, c2 = st.columns(2)
-    with c1:
-        symbol = st.text_input("股票代碼", value="2330", key=f"{key_prefix}_symbol").strip()
+    symbol = st.text_input("股票代碼", value="2330", key=f"{key_prefix}_symbol").strip()
+    d1, d2 = st.columns(2)
+    with d1:
         start_date = st.date_input("開始日期", value=default_start, key=f"{key_prefix}_start")
-    with c2:
+    with d2:
         end_date = st.date_input("結束日期", value=today, key=f"{key_prefix}_end")
     return symbol, start_date, end_date
 
@@ -1041,7 +1044,14 @@ def _render_tearsheet_metrics(result: BacktestResult) -> None:
     config = get_config()
     ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
     if bool(ui_section.get("use_extras", True)) and HAS_EXTRAS:
-        style_metric_cards()
+        from src.ui.themes import get_theme
+        theme_name = str(ui_section.get("theme", "midnight_blue"))
+        _, palette = get_theme(theme_name)
+        style_metric_cards(
+            background_color=palette["surface"],
+            border_left_color=palette["primary"],
+            border_color=palette["surface"],
+        )
 
     st.plotly_chart(figures["equity"], width="stretch")
     st.plotly_chart(figures["drawdown"], width="stretch")
@@ -1214,6 +1224,7 @@ def _render_price_and_indicator_panel(
         template=palette["plotly_template"],
         paper_bgcolor=palette["surface"],
         plot_bgcolor=palette["surface"],
+        font={"color": palette["text"]},
         title=f"{symbol} 回測區間走勢",
         hovermode="x unified" if n_rows > 1 else "closest",
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
@@ -1409,7 +1420,14 @@ def _render_dca_summary(result: DcaBacktestResult) -> None:
     config = get_config()
     ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
     if bool(ui_section.get("use_extras", True)) and HAS_EXTRAS:
-        style_metric_cards()
+        from src.ui.themes import get_theme
+        theme_name = str(ui_section.get("theme", "midnight_blue"))
+        _, palette = get_theme(theme_name)
+        style_metric_cards(
+            background_color=palette["surface"],
+            border_left_color=palette["primary"],
+            border_color=palette["surface"],
+        )
 
 
 def _render_dca_transactions(transactions: pd.DataFrame) -> None:

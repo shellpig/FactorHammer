@@ -280,7 +280,7 @@ class EventDrivenBacktester(BacktesterBase):
 
     @staticmethod
     def _infer_freq(index: pd.Index) -> str:
-        if len(index) < 2:
+        if len(index) < 3:
             return "1day"
         inferred = pd.infer_freq(pd.DatetimeIndex(index))
         if not inferred:
@@ -289,9 +289,14 @@ class EventDrivenBacktester(BacktesterBase):
         alias = inferred.upper()
         if alias in {"D", "B"}:
             return "1day"
+        # Old pandas: "T", "5T" …  New pandas 2.2+: "min", "5min" …
         if alias.endswith("T"):
             value = alias[:-1] or "1"
             return f"{value}min"
-        if alias == "H":
+        if alias.endswith("MIN"):
+            value = alias[:-3] or "1"
+            return f"{value}min"
+        # Old pandas: "H", "2H" …  New pandas 2.2+: "h", "2h" …
+        if alias.endswith("H"):
             return "60min"
-        return inferred.lower()
+        return "1day"
