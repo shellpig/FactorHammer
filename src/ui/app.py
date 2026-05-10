@@ -15,7 +15,7 @@ warnings.filterwarnings(
 )
 
 from src.core.config import get_config
-from src.ui.pages import ai_chat, backtest, data_management, settings
+from src.ui.pages import ai_chat, backtest, dashboard, data_management, settings
 from src.ui.themes import get_theme, render_theme_css
 
 try:
@@ -52,13 +52,13 @@ def main() -> None:
         with st.sidebar:
             page_name = option_menu(
                 "功能頁面",
-                options=["資料管理", "回測", "AI 問答", "設定"],
+                options=["資料管理", "回測", "個股分析", "AI 問答", "設定"],
                 default_index=0,
             )
     else:
         page_name = st.sidebar.radio(
             "功能頁面",
-            options=["資料管理", "回測", "AI 問答", "設定"],
+            options=["資料管理", "回測", "個股分析", "AI 問答", "設定"],
             index=0,
         )
 
@@ -66,6 +66,8 @@ def main() -> None:
         data_management.render()
     elif page_name == "回測":
         backtest.render()
+    elif page_name == "個股分析":
+        dashboard.render_dashboard_page()
     elif page_name == "AI 問答":
         ai_chat.render()
     else:

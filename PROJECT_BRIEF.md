@@ -176,13 +176,13 @@ risk:
 | 8-C | ✅ 完成 | 籌碼分析管線：ChipSummary dataclass、三大法人pivot+加總、融資融券、增量補抓、籌碼集中度判讀 |
 | 8-D | ✅ 完成 | 即時行情接入：RealtimeQuote/BidAskStructure dataclass、TWSE MIS API 解析、tse/otc 路由、快取、買賣力道估算 |
 | 8-E | ✅ 完成 | AI 綜合分析與操作劇本：DashboardAnalysis/TradingScenario dataclass、structured JSON 輸出、三情境劇本、AI disabled/error 降級例外 |
-| 8-F | 📋 規格完成 | 個股分析儀表板 UI：4 tab 總覽、籌碼與量價、型態與週期、AI 劇本 |
+| 8-F | ✅ 單元驗證完成 | 個股分析儀表板 UI：4 tab 總覽、籌碼與量價、型態與週期、AI 劇本；缺資料與重新整理報價 regression 已補 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 8-A/B/C/D/E 已完成驗收；下一步進入 8-F 實作。
+主線：Phase 8-A/B/C/D/E 已完成驗收；Phase 8-F 單元驗證完成，下一步補 8-F 手動驗收與 Phase 8 回歸。
 
 2026-05-10 狀態：
 - 8-A 驗證結果：`tests/test_technical_summary.py` 13 passed, 0.72s
@@ -190,9 +190,11 @@ risk:
 - 8-C 驗證結果：`tests/test_chip_analysis.py` 14 passed, 0.66s
 - 8-D 驗證結果：`tests/test_realtime.py` 13 passed, 0.20s
 - 8-E 驗證結果：`tests/test_advisor.py` 15 passed, 1 skipped（缺 anthropic API key 的 integration test）
-- 新增模組：`src/analysis/technical_summary.py`、`src/analysis/pattern.py`、`src/analysis/chip_analysis.py`、`src/data/realtime.py`
-- 修改模組：`src/data/fetcher.py`、`src/data/storage.py`、`src/core/constants.py`、`config.yaml`（+realtime section）
+- 8-F 驗證結果：`tests/test_dashboard_page.py` 8 passed, 0.94s；已覆蓋缺日線資料不 crash、重新整理報價更新 session payload 並 rerun
+- 新增模組：`src/analysis/technical_summary.py`、`src/analysis/pattern.py`、`src/analysis/chip_analysis.py`、`src/data/realtime.py`、`src/ui/pages/dashboard.py`
+- 修改模組：`src/data/fetcher.py`、`src/data/storage.py`、`src/core/constants.py`、`config.yaml`（+realtime section）、`src/ui/app.py`
 - 8-E 修改模組：`src/ai/advisor.py`、`src/core/exceptions.py`、`tests/test_advisor.py`
+- 8-F 測試模組：`tests/test_dashboard_page.py`
 
 2026-05-10 狀態：
 - Phase 8-D 基準 commit：`3fa5322 Complete Phase 8-D implementation and verification`
