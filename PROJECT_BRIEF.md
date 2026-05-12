@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-11
+最後更新：2026-05-12
 
 ---
 
@@ -10,13 +10,13 @@
 
 台股量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦研究與回測，不接實盤。三大核心功能：自動化台股資料管道、回測引擎（向量化 + 事件驅動）、AI 技術分析問答。
 
-2026-05-11 Phase 9 規格已確認：美股 US-1 支援（美股日 K、調整後價格、回測與技術分析），尚未實作。
+2026-05-12 Phase 9-A/9-B 已完成：多市場基礎架構與美股日 K 資料管線。9-C~9-F 尚未實作。
 
 ## 技術棧
 
 - Python 3.12+、套件管理 `uv`（`pyproject.toml`）
 - 資料處理 pandas、技術指標 pandas-ta
-- 台股資料 FinMind API + yfinance 備援；Phase 9 規劃美股日 K 使用 yfinance
+- 台股資料 FinMind API + yfinance 備援；美股日 K 使用 yfinance（Phase 9-B）
 - 儲存 DuckDB + Parquet（零伺服器）
 - UI Streamlit、圖表 Plotly
 - AI LLM（OpenAI / Anthropic / Gemini，provider-neutral）
@@ -26,7 +26,7 @@
 
 ```
 src/
-├── core/           config.py, constants.py, exceptions.py, strategy_config.py
+├── core/           config.py, constants.py, exceptions.py, market.py, strategy_config.py
 ├── data/           fetcher.py, cleaner.py, storage.py, maintenance.py, realtime.py
 ├── backtest/       base.py, engine_vec.py, engine_event.py, account.py,
 │                   events.py, cost.py, metrics.py, report.py, dca.py,
@@ -47,7 +47,7 @@ src/
 
 tests/
 ├── fixtures/       手工構造的 CSV 測試資料
-├── test_fetcher.py, test_storage.py, test_cleaner.py
+├── test_market.py, test_fetcher.py, test_storage.py, test_cleaner.py
 ├── test_cost.py, test_metrics.py, test_report.py
 ├── test_engine_vec.py, test_engine_event.py, test_consistency.py
 ├── test_account.py, test_events.py
@@ -63,8 +63,8 @@ data/                （gitignore，執行時自動建立）
   raw/tw/{symbol}/       daily.parquet, minute.parquet,
                          institutional.parquet, margin.parquet
   processed/tw/{symbol}/ adj_daily.parquet
-  raw/us/{symbol}/       daily.parquet（Phase 9 規劃，尚未實作）
-  processed/us/{symbol}/ adj_daily.parquet（Phase 9 規劃，尚未實作）
+  raw/us/{symbol}/       daily.parquet（Phase 9-B 已實作）
+  processed/us/{symbol}/ adj_daily.parquet（Phase 9-B 已實作）
   backtest/              回測結果快照
   quant.duckdb           元資料
 ```
@@ -73,7 +73,7 @@ data/                （gitignore，執行時自動建立）
 
 1. **零設定啟動**：不依賴任何外部伺服器（無 PostgreSQL、無 Redis、無 Docker）。
 2. **免費資料優先**：FinMind 免費層為主、yfinance 備援。一次性下載歷史 → Parquet 落地、日常增量更新。
-3. **時區鐵律**：所有 datetime 必須 timezone-aware；目前台股使用 `Asia/Taipei`，Phase 9 規劃美股使用 `America/New_York`，禁止 naive datetime。
+3. **時區鐵律**：所有 datetime 必須 timezone-aware；台股使用 `Asia/Taipei`，美股使用 `America/New_York`（Phase 9-A 起由 `MarketSpec.timezone` 統一管理），禁止 naive datetime。
 4. **雙引擎並行**：`generate_signals`（向量化）與 `on_bar`（事件驅動）是並行設計，非可互換（已知設計決策，見已知問題）。
 5. **策略即文件**：每個策略為獨立 Python 類別，透過 `config.yaml` 的 `strategies[]` preset 管理參數。
 6. **AI 可選**：`config.yaml` 設定 `ai.enabled=false` 時，AI 功能關閉，不需要任何 API Key。
@@ -182,8 +182,8 @@ risk:
 | 8-E | ✅ 完成 | AI 綜合分析與操作劇本：DashboardAnalysis/TradingScenario dataclass、structured JSON 輸出、三情境劇本、AI disabled/error 降級例外 |
 | 8-F | ✅ 完成 | 個股分析儀表板 UI：4 tab 總覽、籌碼與量價、型態與週期、AI 劇本；缺資料、重新整理報價、英文字母股票代碼、多週期資料欄位 regression 已補 |
 | 8-G | ✅ 完成 | 新手友善說明文字：技術分析總覽 tooltip、K 棒型態詳細說明、量價結構 caption、籌碼術語解釋、壓力支撐概念、短線分數組成，已完成人工驗收 |
-| 9-A | 📋 規格已確認，尚未實作 | 多市場基礎架構：`MarketSpec`、`market` context、storage/meta/maintenance market-aware、禁止混合台美 DataFrame |
-| 9-B | 📋 規格已確認，尚未實作 | 美股日 K 資料管線：yfinance daily、`BRK.B`→`BRK-B`、`America/New_York`、adjusted OHLC、split-adjusted volume、批次節流 |
+| 9-A | ✅ 完成 | 多市場基礎架構：`MarketSpec`、`market` context、storage/meta/maintenance market-aware、DuckDB meta migration、`assert_single_market`、symbol 正規化與路徑穿越防護 |
+| 9-B | ✅ 完成 | 美股日 K 資料管線：yfinance daily、`BRK.B`→`BRK-B`、`America/New_York`、adjusted OHLC（price ratio）、split-adjusted volume（split-only factor）、`fetch_daily_with_adjusted`、US minute 拒絕、批次節流 |
 | 9-C | 📋 規格已確認，尚未實作 | 美股回測支援：回測頁市場切換、USD、1 股單位、`USCostCalculator`、DCA 不支援碎股 warning |
 | 9-D | 📋 規格已確認，尚未實作 | 美股技術分析儀表板：技術面/K線/型態/AI 劇本；停用即時、籌碼；AI 強制繁中輸出 |
 | 9-E | 📋 規格已確認，尚未實作 | 資料管理頁美股支援：市場切換，美股只做日 K 更新/重建，停用分 K 與籌碼 |
@@ -193,13 +193,21 @@ risk:
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 8-A~G 已完成。8-G 已完成新手友善說明文字實作、測試與人工驗收。Phase 9 規格已確認，尚未實作。
+主線：Phase 9-A/9-B 已完成實作與驗證。9-C~9-F 規格已確認，尚未實作。
+
+2026-05-12 狀態：
+- 最新基準 commit：`75fee58 Add one-click install script and market core module`
+- Phase 9-A 驗證結果：`tests/test_market.py tests/test_storage.py tests/test_maintenance.py -m "not integration"` 為 39 passed；py_compile `src/core/market.py src/data/storage.py src/data/maintenance.py` 通過
+- Phase 9-B 驗證結果：`tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py -m "not integration"` 為 49 passed, 6 deselected（integration）；py_compile `src/data/fetcher.py src/data/maintenance.py` 通過
+- 9-A 新增模組：`src/core/market.py`（MarketSpec、normalize_symbol、validate_symbol、assert_single_market）
+- 9-A 修改模組：`src/data/storage.py`（normalize 函式群改 timezone 參數、DuckDB meta migration、market-aware 路徑）、`src/data/maintenance.py`（market 參數傳遞）
+- 9-B 修改模組：`src/data/fetcher.py`（YFinanceFetcher market 參數、fetch_daily_with_adjusted、US adjusted bundle、split-only volume factor、US minute 拒絕）、`src/data/maintenance.py`（US adjusted bundle path、yfinance 批次節流）
+- 9-A/9-B 新增測試：`tests/test_market.py`（11 tests）；`test_storage.py` 追加 5 tests（us path、unknown market、meta PK、migration）；`test_fetcher.py` 追加 12 tests（US ticker/tz/volume/adjusted/split/minute）；`test_maintenance.py` 追加 4 tests（US rebuild/update/throttle/rate-limit）
+- storage.py 已完全移除 TAIPEI_TZ hardcode，改由 market timezone 動態決定；cleaner.py 無 timezone hardcode
+- Phase 9 規格已納入審查重點：split-adjusted volume、禁止混合台美 DataFrame、yfinance 批次 request 至少 1 秒節流、美股 DCA 不支援碎股 warning、AI prompt 強制繁體中文
 
 2026-05-11 狀態：
-- 最新基準 commit：`ed4af93 Add stock name search and indicator values`
-- 目前工作樹含未提交的 Phase 9 規格文件更新（`量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md`、`PROJECT_BRIEF.md`）。
 - Phase 9 規格已確認並寫入正式文件：US-1 範圍為美股日 K + 調整後價格 + 回測 + 技術分析；不做即時、籌碼、分 K、財報、期權、匯率換算。
-- Phase 9 規格已納入審查重點：split-adjusted volume、禁止混合台美 DataFrame、yfinance 批次 request 至少 1 秒節流、美股 DCA 不支援碎股 warning、AI prompt 強制繁體中文。
 - Phase 8 + 回測頁相關回歸：`tests/test_technical_summary.py tests/test_pattern.py tests/test_chip_analysis.py tests/test_realtime.py tests/test_advisor.py tests/test_dashboard_page.py tests/test_backtest_page.py -m "not integration"` 為 98 passed, 1 deselected。
 - Realtime / dashboard 針對性回歸：`tests/test_realtime.py tests/test_dashboard_page.py -m "not integration"` 為 37 passed。
 - `py_compile src\data\realtime.py src\ui\pages\dashboard.py` 通過；Phase 8 全範圍 py_compile 曾因 Windows/OneDrive `__pycache__` 權限擋住，elevated 重跑通過。
