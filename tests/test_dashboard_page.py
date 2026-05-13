@@ -17,6 +17,7 @@ from src.ui.pages.dashboard import (
     _build_recent_institutional_table,
     _build_dashboard_payload,
     _prepare_chip_data_for_dashboard,
+    _render_price_chart,
     _render_tab_ai,
     _render_tab_chip,
     _render_tab_overview,
@@ -159,6 +160,15 @@ class _MetricCaptureSt(_DummySt):
         return [_MetricCaptureCtx(self.metrics) for _ in range(count)]
 
 
+class _PlotlyCaptureSt(_DummySt):
+    def __init__(self, **kwargs):  # noqa: ANN003
+        super().__init__(**kwargs)
+        self.figure = None
+
+    def plotly_chart(self, fig, *args, **kwargs) -> None:  # noqa: ANN001, ANN002, ANN003
+        self.figure = fig
+
+
 def _make_technical_summary() -> TechnicalSummary:
     return TechnicalSummary(
         trend_direction="多頭趨勢",
@@ -237,6 +247,39 @@ def test_dashboard_tab_overview_renders(monkeypatch) -> None:
         technical=_make_technical_summary(),
         df=pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"]),
     )
+
+
+def test_price_chart_hover_shows_ohlc_and_mas_together(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _PlotlyCaptureSt()
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+
+    _render_price_chart(_make_daily_df(periods=65), _make_technical_summary(), kline_count=10)
+
+    assert dummy.figure is not None
+    hover_templates = [trace.hovertemplate for trace in dummy.figure.data[:4]]
+    assert len(set(hover_templates)) == 1
+    assert "Open: %{customdata[1]}" in hover_templates[0]
+    assert "High: %{customdata[2]}" in hover_templates[0]
+    assert "Low: %{customdata[3]}" in hover_templates[0]
+    assert "Close: %{customdata[4]}" in hover_templates[0]
+    assert "MA5: %{customdata[5]}" in hover_templates[0]
+    assert "MA20: %{customdata[6]}" in hover_templates[0]
+    assert "MA60: %{customdata[7]}" in hover_templates[0]
+    first_visible_row = list(dummy.figure.data[0].customdata[0])
+    last_visible_row = list(dummy.figure.data[0].customdata[-1])
+    assert first_visible_row[7] == "—"
+    assert last_visible_row[1:] == [
+        "164.00",
+        "165.00",
+        "163.00",
+        "164.50",
+        "162.50",
+        "155.00",
+        "135.00",
+    ]
 
 
 def test_help_texts_has_all_required_keys() -> None:

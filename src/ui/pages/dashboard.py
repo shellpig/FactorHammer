@@ -773,6 +773,27 @@ def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary, kline_cou
     y_padding = (price_max - price_min) * 0.05
 
     dates = chart_df["date"]
+    hover_data = pd.DataFrame({
+        "date": pd.to_datetime(chart_df["date"], errors="coerce").dt.strftime("%Y-%m-%d"),
+        "open": chart_df["open"].map(_fmt_hover_value),
+        "high": chart_df["high"].map(_fmt_hover_value),
+        "low": chart_df["low"].map(_fmt_hover_value),
+        "close": chart_df["close"].map(_fmt_hover_value),
+        "ma5": chart_df["ma5"].map(_fmt_hover_value),
+        "ma20": chart_df["ma20"].map(_fmt_hover_value),
+        "ma60": chart_df["ma60"].map(_fmt_hover_value),
+    })
+    hover_template = (
+        "日期: %{customdata[0]}<br>"
+        "Open: %{customdata[1]}<br>"
+        "High: %{customdata[2]}<br>"
+        "Low: %{customdata[3]}<br>"
+        "Close: %{customdata[4]}<br>"
+        "MA5: %{customdata[5]}<br>"
+        "MA20: %{customdata[6]}<br>"
+        "MA60: %{customdata[7]}<extra></extra>"
+    )
+    hover_customdata = hover_data.to_numpy()
 
     fig = go.Figure()
     fig.add_trace(
@@ -787,11 +808,37 @@ def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary, kline_cou
             increasing_fillcolor="#ef4444",
             decreasing_line_color="#22c55e",
             decreasing_fillcolor="#22c55e",
+            customdata=hover_customdata,
+            hovertemplate=hover_template,
         )
     )
-    fig.add_trace(go.Scatter(x=dates, y=chart_df["ma5"], mode="lines", name="MA5", line={"width": 1}))
-    fig.add_trace(go.Scatter(x=dates, y=chart_df["ma20"], mode="lines", name="MA20", line={"width": 1}))
-    fig.add_trace(go.Scatter(x=dates, y=chart_df["ma60"], mode="lines", name="MA60", line={"width": 1}))
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=chart_df["ma5"],
+        mode="lines",
+        name="MA5",
+        line={"width": 1},
+        customdata=hover_customdata,
+        hovertemplate=hover_template,
+    ))
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=chart_df["ma20"],
+        mode="lines",
+        name="MA20",
+        line={"width": 1},
+        customdata=hover_customdata,
+        hovertemplate=hover_template,
+    ))
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=chart_df["ma60"],
+        mode="lines",
+        name="MA60",
+        line={"width": 1},
+        customdata=hover_customdata,
+        hovertemplate=hover_template,
+    ))
 
     seg_x0 = dates.iloc[max(0, len(dates) - 20)]
     seg_x1 = dates.iloc[-1]
@@ -822,6 +869,12 @@ def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary, kline_cou
         dragmode="pan",
     )
     st.plotly_chart(fig, width="stretch")
+
+
+def _fmt_hover_value(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{float(value):.2f}"
 
 
 def _render_tab_chip(
