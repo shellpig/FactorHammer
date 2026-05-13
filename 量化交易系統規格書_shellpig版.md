@@ -18,6 +18,7 @@
 | **V1.11** | 2026/05/10 | 新增 Phase 6-B：設定頁與側邊欄 UI 小修。包含隱藏 Streamlit 自動頁面入口、預設外觀改為 `midnight_blue`、一般設定與策略設定儲存/恢復流程分離、策略類型選項補齊 8 種並顯示中文說明、每種策略提供一組預設 preset、已儲存 preset 可單獨清除。 |
 | **V2.0** | 2026/05/10 | 新增 Phase 8（個股綜合分析儀表板）：8-A 技術面自動判讀引擎、8-B K 線型態辨識、8-C 籌碼分析管線、8-D 即時行情接入、8-E AI 綜合分析與操作劇本、8-F 儀表板 UI。新增 TWSE MIS 即時報價、FinMind 法人/融資融券管線、`src/analysis/` 模組群。 |
 | **V2.1** | 2026/05/11 | 確認 Phase 9（美股 US-1 支援）規格：第一版只做美股日 K、調整後價格、回測與技術分析；不做即時行情、籌碼、分 K、匯率換算、財報與期權。新增多市場基礎、`market=us` 資料管線、USD 回測與既有 UI 市場切換規格。 |
+| **V2.2** | 2026/05/13 | 新增 Phase 9-G：美股 yfinance 1m intraday 盤中快照與分 K 圖。使用最新 1 分 K close 作為近似盤中價，漲跌以該價格對前一紐約交易日收盤價計算；不做 WebSocket、買一 / 賣一、五檔、逐筆或實盤級即時報價。 |
 
 ---
 
@@ -2368,7 +2369,7 @@ realtime:
 
 #### Phase 9 定位
 
-Phase 9 的目標是把系統從「台股專用」擴充為「台股為主、可研究美股日線」的多市場架構。第一版稱為 **US-1**，只支援美股日 K、調整後價格、回測與技術分析，不處理任何需要即時授權、交易所延遲規範或複雜跨幣別結算的功能。
+Phase 9 的目標是把系統從「台股專用」擴充為「台股為主、可研究美股」的多市場架構。9-A 到 9-F 的第一版稱為 **US-1**，只支援美股日 K、調整後價格、回測與技術分析，不處理任何需要即時授權、交易所延遲規範或複雜跨幣別結算的功能。9-G 在 US-1 基礎上新增 **yfinance 1m intraday 盤中快照與分 K 圖**，定位為研究用途的近似盤中資料，不等同券商或交易所即時報價。
 
 **US-1 正式支援：**
 
@@ -2388,6 +2389,14 @@ Phase 9 的目標是把系統從「台股專用」擴充為「台股為主、可
 - 不做 USD/TWD 匯率換算，所有美股回測與報表均以 USD 呈現。
 - 不做實盤下單與券商串接。
 - 不支援非美股 suffix，例如 `.L`、`.TO`、`.HK`。
+
+**9-G 擴充後仍明確不做：**
+
+- 不做 WebSocket streaming。
+- 不做買一 / 賣一、五檔、逐筆 tick 或 order book。
+- 不宣稱 yfinance 1m close 是交易所正式即時成交價。
+- 不做美股盤前 / 盤後分段分析；第一版只取 regular session，`prepost=False`。
+- 不把美股 intraday 資料用於長期回測；yfinance intraday 歷史深度有限，僅供近期盤中分析與圖表。
 
 #### Phase 9-A：多市場基礎架構
 
@@ -2586,11 +2595,53 @@ You must reply entirely in Traditional Chinese (zh-TW).
 | yfinance 非官方資料源 | 資料可能延遲、缺漏或欄位變動 | 明確標示研究用途；必要時 US-2 改接付費資料源 |
 | yfinance request rate limit | 批次更新多檔美股可能觸發 429 或短暫封鎖 | 美股批次更新每檔間隔至少 1 秒；429 顯示外部資料源限制 |
 | split factor 缺失 | adjusted volume 無法保證與 split-adjusted price 對齊，OBV / 量能判讀可能失真 | 不宣稱 volume 已 split-adjust；量能相關指標顯示資料限制提示 |
-| 不支援美股即時 | 個股分析無盤中價格 | 使用最新日 K 收盤資料 |
-| 不支援美股分 K | 無法做 intraday 策略 | US-1 僅聲明日線回測 |
+| US-1 不支援美股即時 | 9-A~9-F 個股分析無盤中價格 | 使用最新日 K 收盤資料；9-G 以 yfinance 1m close 補近似盤中價 |
+| US-1 不支援美股分 K | 9-A~9-F 無法顯示 intraday 圖 | 9-G 顯示近期 yfinance 1m 分 K；仍不做 intraday 策略回測 |
 | 不支援籌碼 / short interest | 美股分析缺少資金面 | 美股 dashboard 僅顯示技術面與 AI 劇本 |
 | 不做匯率換算 | 無台幣資產總覽 | 報表全部以 USD 呈現 |
 | 不做財報 / 基本面 | 無 EPS 或營收輔助 | 後續另開基本面資料 phase |
+
+#### Phase 9-G：美股 yfinance 盤中快照與分 K 圖
+
+**目標：** 個股分析頁在美股交易時間可顯示接近盤中的價格、漲跌、成交量與日內分 K 圖，不再只停留在前一個完整日 K 收盤價。
+
+**資料源與語意：**
+
+- Provider：`yfinance`
+- 主要呼叫：`period="1d"`, `interval="1m"`, `prepost=False`, `auto_adjust=False`
+- 支援 interval：第一版 UI 顯示 `1m`，可預留 `5m / 15m / 60m` 圖表切換，但不得把長期 intraday 回測納入 9-G。
+- yfinance intraday 資料歷史深度受限，僅供近期盤中分析。
+- timestamp 必須轉為 `America/New_York`，並保留 timezone-aware。
+- UI 必須標示「美股盤中價使用 yfinance 最新 1 分 K 收盤價，可能延遲，僅供研究分析」或等價文案。
+
+**盤中行情顯示規則：**
+
+| 欄位 | 9-G 顯示規則 |
+|:---|:---|
+| 現價 | 今日 regular session 最新一根 1m bar 的 `close` |
+| 漲跌 | `現價 - 前一紐約交易日 adjusted daily close` |
+| 漲跌幅 | `漲跌 / 前一紐約交易日 adjusted daily close` |
+| 成交量 | 今日 regular session 1m volume 加總，單位 shares |
+| 狀態 | `盤中分K資料` 或 `近似盤中價` |
+| 時間 | 顯示最新 1m bar timestamp，標註紐約時間 |
+
+若 1m intraday 抓取失敗、回傳空資料、非美股交易時間或最新 bar 非今日紐約交易日，dashboard 必須自動降級回 9-D 的 adjusted daily 顯示，並提示資料來源限制。
+
+**分 K 圖：**
+
+- 個股分析總覽 tab 可新增日內分 K 圖，與既有日 K 圖分開。
+- 預設顯示今日 regular session 1m K。
+- K 線圖 x 軸使用紐約時間，不轉台北時間。
+- 盤中圖表只影響 dashboard 顯示；技術面 summary、型態辨識、多週期趨勢與 AI 劇本預設仍使用 adjusted daily。若 AI 要納入 intraday snapshot，需在 prompt payload 明確標示資料是 `intraday_snapshot`，不得與日 K close 混用。
+
+**9-G 不做：**
+
+- 不接 yfinance WebSocket。
+- 不做買一 / 賣一、五檔或 order book。
+- 不做 tick / 秒級資料。
+- 不做 intraday 策略回測。
+- 不將 intraday parquet 作為長期歷史資料庫；若需要落地，僅可保存近期 cache，並標明 yfinance 資料深度限制。
+- 不做盤前 / 盤後分 K；`prepost=False`。
 
 ---
 
@@ -2606,8 +2657,8 @@ You must reply entirely in Traditional Chinese (zh-TW).
 | **6** UI/UX 強化 | 6-A → 6-B（2 段） | 1.5-3 天 | ✅ |
 | **7** 策略擴充 | 7-A → 7-D（4 段） | 9.5-14 天 | |
 | **8** 個股綜合分析儀表板 | 8-A → 8-G（7 段） | 11.5-18 天 | ✅ |
-| **9** 美股 US-1 支援 | 9-A → 9-F（6 段） | 8-13 天 | ✅ |
-| **合計** | 38 個子階段 | **62.5-82 天（約 14-18 週）** | |
+| **9** 美股 US-1/9-G 支援 | 9-A → 9-G（7 段） | 9.5-15.5 天 | ✅ |
+| **合計** | 39 個子階段 | **64-84.5 天（約 14-18 週）** | |
 
 ---
 
@@ -2654,14 +2705,14 @@ You must reply entirely in Traditional Chinese (zh-TW).
 
 ### B.1 美股擴充邊界
 
-2026-04-26 的原始決策是「只保留 `market` 擴充接口，不宣稱已支援美股」。2026-05-11 規格討論後，決定將 Phase 9 規劃為 **美股 US-1 支援**，但範圍仍需嚴格限制：只做美股日 K、調整後價格、回測與技術分析。
+2026-04-26 的原始決策是「只保留 `market` 擴充接口，不宣稱已支援美股」。2026-05-11 規格討論後，決定將 Phase 9 規劃為 **美股 US-1 支援**，9-A 到 9-F 範圍嚴格限制為美股日 K、調整後價格、回測與技術分析。2026-05-13 追加 9-G：以 yfinance 1m intraday 補個股分析的近似盤中快照與分 K 圖。
 
 Phase 9 之前的正式支援市場仍是台股。Phase 9 完成後，正式支援市場為：
 
 - `tw`：台股完整既有功能。
-- `us`：美股 US-1（日 K + adjusted daily + 回測 + 技術分析）。
+- `us`：美股 US-1（日 K + adjusted daily + 回測 + 技術分析）；9-G 追加 yfinance 1m intraday 盤中快照與分 K 圖。
 
-US-1 不等於完整美股平台，不支援即時、分 K、籌碼、財報、期權、匯率換算或實盤。
+US-1 不等於完整美股平台。9-G 只補 yfinance 最新 1 分 K close 作為近似盤中價，仍不支援 WebSocket、買一 / 賣一、五檔、逐筆、籌碼、財報、期權、匯率換算或實盤。
 
 為避免後續擴充時大幅重構，資料層與回測層必須停止新增台股硬編碼。設計上以 `market` 作為第一層分流，預設值仍為 `tw`。
 

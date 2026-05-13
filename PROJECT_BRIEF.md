@@ -10,13 +10,13 @@
 
 台股量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦研究與回測，不接實盤。三大核心功能：自動化台股資料管道、回測引擎（向量化 + 事件驅動）、AI 技術分析問答。
 
-2026-05-13 Phase 9-A~9-F 自動化驗證全部完成（`89a4071` 已 push）：多市場基礎架構、美股日 K 資料管線、美股回測支援、美股技術分析儀表板、資料管理頁美股支援、Phase 9 整合回歸（428 passed）。9-F 手動驗收 12 項（9-F-1~9-F-12）待使用者執行。
+2026-05-13 Phase 9-A~9-F 自動化驗證全部完成（`89a4071` 已 push）：多市場基礎架構、美股日 K 資料管線、美股回測支援、美股技術分析儀表板、資料管理頁美股支援、Phase 9 整合回歸（428 passed）。9-F 手動驗收 12 項（9-F-1~9-F-12）待使用者執行。9-G 規格已追加：美股 yfinance 1m intraday 盤中快照與分 K 圖，使用最新 1 分 K close 作為近似盤中價，不做 WebSocket / 買一賣一 / 五檔 / tick。
 
 ## 技術棧
 
 - Python 3.12+、套件管理 `uv`（`pyproject.toml`）
 - 資料處理 pandas、技術指標 pandas-ta
-- 台股資料 FinMind API + yfinance 備援；美股日 K 使用 yfinance（Phase 9-B）
+- 台股資料 FinMind API + yfinance 備援；美股日 K 使用 yfinance（Phase 9-B）；9-G 規格追加美股 yfinance 1m intraday 盤中快照與分 K 圖
 - 儲存 DuckDB + Parquet（零伺服器）
 - UI Streamlit、圖表 Plotly
 - AI LLM（OpenAI / Anthropic / Gemini，provider-neutral）
@@ -188,15 +188,17 @@ risk:
 | 9-D | ✅ 完成 | 美股技術分析儀表板：市場切換、adjusted daily、技術面/K線/型態/AI 劇本；停用即時與籌碼；shares 顯示、紐約日期、AI 強制繁中輸出 |
 | 9-E | ✅ 完成 | 資料管理頁美股支援：市場切換、yfinance 日 K 更新/重建、BRK.B 正規化、raw/adjusted 狀態、停用分 K 與籌碼 |
 | 9-F | ⚠️ 自動驗證完成，手動驗收待做 | Phase 9 整合回歸與文件收束：全專案自動測試 428 passed；手動驗收 9-F-1~9-F-12 待使用者執行 |
+| 9-G | 📋 規格已定，待實作 | 美股 yfinance 1m intraday 盤中快照與分 K 圖：最新 1 分 K close 作為近似盤中價、漲跌對前一紐約交易日 close、成交量為今日 1m volume 加總；不做 WebSocket、買一/賣一、五檔、tick、intraday 回測 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9-A~9-F 自動化部分全部完成，已 push（`89a4071`）。9-F 手動驗收 12 項（9-F-1~9-F-12）待使用者執行。
+主線：Phase 9-A~9-F 自動化部分全部完成，已 push（`89a4071`）。9-F 手動驗收 12 項（9-F-1~9-F-12）待使用者執行。9-G 已完成規格文件追加，待後續實作。
 
 2026-05-13 狀態：
-- 最新 commit：`89a4071 Complete Phase 9 US support verification`（已 push 至 `origin/main`）。
+- 最新 commit：`662507e docs: complete Phase 9-F document closure and brief update`（已 push 至 `origin/main`）。
+- Phase 9-G 規格已寫入 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md` 並更新本 brief：使用 yfinance 1m intraday 補美股盤中快照與分 K 圖；總覽現價採最新 1 分 K close，漲跌 / 漲跌幅對前一紐約交易日 close，成交量採今日 regular session 1m volume 加總；若 intraday 不可用則降級 adjusted daily；不做 WebSocket、買一/賣一、五檔、tick、盤前盤後或 intraday 回測。
 - Phase 9-C/9-D/9-E 已驗證完成；Phase 9-F 全專案自動回歸 428 passed，文件收束完成。
 - Phase 9-C 驗證結果：`tests/test_cost.py tests/test_engine_vec.py tests/test_dca_backtest.py tests/test_backtest_page.py -m "not integration"` 為 42 passed；py_compile `src/backtest/cost.py src/backtest/_helpers.py src/backtest/dca.py src/backtest/batch.py src/backtest/sweep.py src/backtest/walk_forward.py src/ui/pages/backtest.py tests/test_cost.py tests/test_dca_backtest.py tests/test_backtest_page.py` 通過。
 - Phase 9-C research tabs 回歸：`tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_strategy_config.py tests/test_strategies.py -m "not integration"` 為 120 passed。
@@ -265,7 +267,7 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~2709 行）
+### 量化交易系統規格書_shellpig版.md（~2730 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -285,13 +287,13 @@ risk:
 | Phase 6 UI/UX | 1072-1221 | 修改主題切換、設定頁與側邊欄 UI 小修 |
 | Phase 7 策略擴充（7-A~7-D） | 1223-1932 | 策略、研究工作台、參數掃描、WFA |
 | Phase 8 個股綜合分析儀表板（8-A~8-G） | 1934-2365 | 實作 analysis/ / realtime / dashboard / 說明文字時必讀 |
-| **Phase 9 美股 US-1 支援** | **2367-2595** | **美股日 K、調整後價格、回測、技術分析、多市場架構時必讀** |
-| 子階段總覽 | 2597-2612 | Phase 總覽 |
-| 費用估算 | 2614-2630 | API / yfinance / US-2 資料源成本 |
-| 附錄 A：免責聲明全文 | 2632-2651 | 免責聲明文案 |
-| 附錄 B：架構決策補充 | 2653-2709 | 美股邊界與 AI provider 抽象 |
+| **Phase 9 美股 US-1 / 9-G 支援** | **2368-2646** | **美股日 K、調整後價格、回測、技術分析、多市場架構、yfinance 1m intraday 盤中快照與分 K 圖時必讀** |
+| 子階段總覽 | 2648-2663 | Phase 總覽 |
+| 費用估算 | 2665-2681 | API / yfinance / US-2 資料源成本 |
+| 附錄 A：免責聲明全文 | 2683-2702 | 免責聲明文案 |
+| 附錄 B：架構決策補充 | 2704-2730 | 美股邊界與 AI provider 抽象 |
 
-### 開發設計方針.md（~6132 行）
+### 開發設計方針.md（~6273 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -309,9 +311,9 @@ risk:
 | Phase 7-D Walk-Forward Analysis | 3740-4169 | 實作 WFA runner / UI tab 時必讀 |
 | Phase 8-A~8-F 個股綜合分析儀表板 | 4171-5258 | 實作 analysis/ / realtime / dashboard 時必讀 |
 | Phase 8-G 新手友善說明文字 | 5260-5683 | 實作儀表板說明文字時必讀 |
-| **Phase 9 美股 US-1 支援** | **5685-6132** | **實作多市場基礎、美股資料管線、回測、dashboard、資料管理頁前必讀** |
+| **Phase 9 美股 US-1 / 9-G 支援** | **5685-6273** | **實作多市場基礎、美股資料管線、回測、dashboard、資料管理頁、美股 intraday snapshot 前必讀** |
 
-### 測試指南.md（~2587 行）
+### 測試指南.md（~2680 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -329,9 +331,9 @@ risk:
 | Phase 8 測試（8-A~8-F） | 1878-2126 | 個股分析儀表板測試 |
 | **Phase 8-G 測試** | **2128-2174** | **儀表板說明文字測試** |
 | Phase 8 全階段回歸 | 2176-2194 | Phase 8 完成後 |
-| **Phase 9 測試（9-A~9-F）** | **2196-2504** | **美股 US-1 實作與驗收時必讀** |
-| 全專案最終回歸 | 2506-2544 | Phase 完成後 |
-| 測試數量統計總覽 | 2546-2587 | 測試統計與 Phase 9 估算 |
+| **Phase 9 測試（9-A~9-G）** | **2196-2599** | **美股 US-1 與 9-G intraday 實作與驗收時必讀** |
+| 全專案最終回歸 | 2601-2639 | Phase 完成後 |
+| 測試數量統計總覽 | 2641-2680 | 測試統計與 Phase 9 估算 |
 
 ### 驗證後已知問題.md（~785 行）
 
