@@ -1,0 +1,3 @@
+@echo off
+echo Starting QuantTrader FastAPI backend...
+.venv\Scripts\python.exe -m uvicorn api.main:app --reload --port 8000

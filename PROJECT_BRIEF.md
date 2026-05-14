@@ -215,19 +215,21 @@ risk:
 | 9-D | ✅ 完成 | 美股技術分析儀表板：市場切換、adjusted daily、技術面/K線/型態/AI 劇本；停用即時與籌碼；shares 顯示、紐約日期、AI 強制繁中輸出 |
 | 9-E | ✅ 完成 | 資料管理頁美股支援：市場切換、yfinance 日 K 更新/重建、BRK.B 正規化、raw/adjusted 狀態、停用分 K 與籌碼 |
 | 9-F | ⚠️ 自動驗證完成，手動驗收待做 | Phase 9 整合回歸與文件收束：全專案自動測試 428 passed；手動驗收 9-F-1~9-F-12 待使用者執行 |
-| 9-G | 📋 規格已定，待實作 | 美股 yfinance 1m intraday 盤中快照與分 K 圖：新增專用 `fetch_us_intraday` 類 API、保留 `fetch_minute(market="us")` 拒絕；最新 1 分 K raw close 作為近似盤中價、漲跌對前一紐約交易日 raw close、今日判斷以紐約日期為準、成交量為今日 1m volume 加總並 cast 成 Python int、分 K 圖放日 K 圖前；不做 WebSocket、買一/賣一、五檔、tick、intraday 回測 |
-| 10 | 📋 規格已定，待實作（依賴 9-G 完成） | 前端架構重構：Streamlit → Next.js + FastAPI。10-A 服務層抽離 + FastAPI 骨架、10-B Next.js 骨架（可與 10-A 平行 scaffold）、10-C 資料管理頁（含 DELETE 新功能）、10-D 個股分析儀表板（Lightweight Charts）、10-E 回測工作台（Job + SSE）、10-F AI 問答（SSE 串流）、10-G 設定 + 全局整合（Command Palette、Secrets 安全）、10-H 舊 UI 移除（測試遷移檢查表不可跳過） |
+| 9-G | ✅ 完成 | 美股 yfinance 1m intraday 盤中快照與分 K 圖：專用 `fetch_us_intraday` API、最新 1 分 K raw close 作為近似盤中價、漲跌對前一紐約交易日 raw close、今日判斷以紐約日期為準、成交量為今日 1m volume 加總、分 K 圖放日 K 圖前 |
+| 10-A | ✅ 完成 | 服務層抽離 + FastAPI 後端骨架：`src/services/` 4 個 service、`api/` FastAPI app + CORS + health + config + data/symbols + Job manager（write lock、TTL）；舊 Streamlit UI 改呼叫 services 行為不變；服務層 44 passed + API 17 passed + 全專案 508 passed |
+| 10-B~H | 📋 規格已定，待實作 | 10-B Next.js 骨架、10-C 資料管理頁（含 DELETE）、10-D 個股分析儀表板（Lightweight Charts）、10-E 回測工作台（Job + SSE）、10-F AI 問答（SSE 串流）、10-G 設定 + 全局整合、10-H 舊 UI 移除（測試遷移檢查表不可跳過） |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9-A~9-F 自動化完成（428 passed），9-G 規格已定待實作。Phase 10 規格已完成（V2.3），寫入三份正式文件，待 9-G 完成後啟動。
+主線：Phase 9 全部完成（9-G 驗證通過），Phase 10-A 服務層 + FastAPI 骨架已完成驗證（508 passed）。10-B~H 規格已定，待實作。
 
 2026-05-14 狀態：
 - 最新 commit 請以 `git log --oneline -1` 為準；本 brief 已改為不硬寫最新 hash，避免文件在 commit 後立即失真。
-- Phase 10 規格已寫入 `量化交易系統規格書_shellpig版.md`（V2.3）、`開發設計方針.md`、`測試指南.md`：前端架構從 Streamlit 遷移至 Next.js + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/` 服務層、`api/` FastAPI 後端、`web/` Next.js 前端。技術選型 Next.js 15+ / React 19+ / TypeScript 5+ / Tailwind CSS v4 / shadcn/ui / Lightweight Charts / SWR / FastAPI。核心演算法不重寫。10-A 與 10-B 可平行 scaffold。10-H 舊 UI 移除需通過測試遷移檢查表。
-- Phase 9-G 規格已寫入三份正式文件：使用 yfinance 1m intraday 補美股盤中快照與分 K 圖。
+- **9-G 驗證完成**：美股 yfinance 1m intraday 盤中快照與分 K 圖已通過驗證，Phase 9 全階段結束。
+- **10-A 驗證完成**：服務層抽離（`src/services/` 4 service）+ FastAPI 後端骨架（`api/`）；服務層 44 passed + API 17 passed + Streamlit 回歸 72 passed + 全專案 508 passed。舊 Streamlit UI 改呼叫 services 行為不變。
+- Phase 10 規格已寫入 `量化交易系統規格書_shellpig版.md`（V2.3）、`開發設計方針.md`、`測試指南.md`：前端架構從 Streamlit 遷移至 Next.js + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/` 服務層、`api/` FastAPI 後端、`web/` Next.js 前端。技術選型 Next.js 15+ / React 19+ / TypeScript 5+ / Tailwind CSS v4 / shadcn/ui / Lightweight Charts / SWR / FastAPI。核心演算法不重寫。10-H 舊 UI 移除需通過測試遷移檢查表。
 - Phase 9-C/9-D/9-E 已驗證完成；Phase 9-F 全專案自動回歸 428 passed，文件收束完成。
 - Phase 9-C 驗證結果：`tests/test_cost.py tests/test_engine_vec.py tests/test_dca_backtest.py tests/test_backtest_page.py -m "not integration"` 為 42 passed；py_compile `src/backtest/cost.py src/backtest/_helpers.py src/backtest/dca.py src/backtest/batch.py src/backtest/sweep.py src/backtest/walk_forward.py src/ui/pages/backtest.py tests/test_cost.py tests/test_dca_backtest.py tests/test_backtest_page.py` 通過。
 - Phase 9-C research tabs 回歸：`tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_strategy_config.py tests/test_strategies.py -m "not integration"` 為 120 passed。
