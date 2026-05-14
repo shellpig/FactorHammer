@@ -3,6 +3,9 @@
   "version": "0.10.0",
   "private": true,
   "scripts": {
+    "sync:mock": "node scripts/sync-dashboard-mock.mjs",
+    "predev": "pnpm run sync:mock",
+    "prebuild": "pnpm run sync:mock",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

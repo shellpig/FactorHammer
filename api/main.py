@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import config, data, jobs
+from api.routers import ai, analysis, config, data, jobs, realtime
 
 app = FastAPI(
     title="QuantTrader API",
@@ -32,6 +32,9 @@ app.add_middleware(
 app.include_router(config.router)
 app.include_router(data.router)
 app.include_router(jobs.router)
+app.include_router(analysis.router)
+app.include_router(realtime.router)
+app.include_router(ai.router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────

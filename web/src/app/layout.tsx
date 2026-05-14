@@ -1,12 +1,13 @@
 // Root layout (Phase 10-B)
 
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
+const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
 export const metadata: Metadata = {
   title: "QuantTrader — 台股量化研究",
@@ -20,7 +21,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-TW" suppressHydrationWarning>
-      <body className={inter.variable}>
+      <body className={`${inter.variable} ${mono.variable}`}>
         <ThemeProvider defaultTheme="dark">
           <div className="min-h-screen flex">
             <Sidebar />

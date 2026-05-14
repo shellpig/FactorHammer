@@ -4,7 +4,7 @@
 // TW: accepts symbol or name search (Enter to confirm)
 // US: accepts ticker only (normalises BRK.B → BRK-B on the backend)
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Market } from "@/types/market";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ interface StockSelectorProps {
   market: Market;
   value: string;
   onChange: (symbol: string) => void;
+  onInputChange?: (value: string) => void;
   onSearch?: (query: string) => void;
   placeholder?: string;
   className?: string;
@@ -21,11 +22,16 @@ export function StockSelector({
   market,
   value,
   onChange,
+  onInputChange,
   onSearch,
   placeholder,
   className,
 }: StockSelectorProps) {
   const [inputValue, setInputValue] = useState(value);
+
+  useEffect(() => {
+    setInputValue(value);
+  }, [value]);
 
   const defaultPlaceholder =
     market === "tw"
@@ -46,7 +52,10 @@ export function StockSelector({
     <input
       type="text"
       value={inputValue}
-      onChange={(e) => setInputValue(e.target.value)}
+      onChange={(e) => {
+        setInputValue(e.target.value);
+        onInputChange?.(e.target.value);
+      }}
       onKeyDown={handleKeyDown}
       placeholder={placeholder ?? defaultPlaceholder}
       className={cn(

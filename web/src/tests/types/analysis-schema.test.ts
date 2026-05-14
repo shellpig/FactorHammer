@@ -5,7 +5,10 @@ import mockDashboardPayload from "../../../../docs/mock_dashboard_payload.json";
 
 describe("analysis type schema", () => {
   it("accepts current dashboard mock payload", () => {
-    const typedPayload = mockDashboardPayload satisfies DashboardPayloadResponse;
+    const typedPayload = {
+      ...mockDashboardPayload,
+      market: mockDashboardPayload.market as DashboardPayloadResponse["market"],
+    } satisfies DashboardPayloadResponse;
 
     expect(typedPayload.symbol).toBe("2330");
     expect(typedPayload.daily_df.length).toBeGreaterThan(0);
