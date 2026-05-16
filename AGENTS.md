@@ -2,7 +2,9 @@
 
 # QuantTrader
 
-台股量化交易研究工具（個人版），純 Python，聚焦研究與回測，不接實盤。
+台股 / 美股 US-1 量化交易研究工具（個人版），聚焦資料管線、研究、回測與 AI 分析，不接實盤。
+
+核心演算法與資料層以 Python 為主；Phase 10 起前端主線遷移為 Next.js + FastAPI。舊 Streamlit UI 在 Phase 10-H 前保留，10-H 後移除。
 
 ## New Conversation Opening Check
 
@@ -18,10 +20,10 @@ At conversation start, read in this layered order. Ignore `舊文件/`.
 - Use line-number index in `PROJECT_BRIEF.md` to read only relevant sections of `量化交易系統規格書_shellpig版.md` / `開發設計方針.md` / `測試指南.md`. Don't read entire files.
 
 **Layer 3 — Reference during implementation:**
-- `量化交易系統規格書_shellpig版.md` — 
-- `開發設計方針.md` — 
-- `測試指南.md` — 
-- `驗證後已知問題.md` —
+- `量化交易系統規格書_shellpig版.md` — phase 範圍、API / UI 合約、驗收條件
+- `開發設計方針.md` — 實作細節、檔案位置、資料契約、類別 / 函式設計
+- `測試指南.md` — 驗證指令、測試範圍、手動驗收清單
+- `驗證後已知問題.md` — 當前未完成項、驗收缺口、使用者已接受的邊界決定
 - Source code: read as needed per task
 
 Report to user: current progress, and any issues with their scope of impact.
@@ -37,6 +39,13 @@ Trigger rules:
 
 Only modify files when user explicitly requests fix, implement, or commit. Verify/diagnose = report only.
 
+## 目前主線
+
+- Phase 9 全部完成（含美股 US-1 / 9-G intraday）。
+- Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-F-1 / 10-G-1 已完成。
+- Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
+- 後續順序：10-E-3 → 10-E-4 → 10-G-2 → 10-H。
+
 ## 文件
 - `PROJECT_BRIEF.md` — **專案簡報（新 session 入口）**
 - `量化交易系統規格書_shellpig版.md` — 個人版規格書（純 Python、台股、DuckDB、AI 問答）
@@ -44,14 +53,20 @@ Only modify files when user explicitly requests fix, implement, or commit. Verif
 - `測試指南.md` — 測試流程與驗收標準
 - `驗證後已知問題.md` — 驗收問題追蹤（每次必讀）
 - `未涵蓋資料項目.md` — 目前不抓不存的資料項目
+- `docs/mock_dashboard_payload.json` — Phase 10 dashboard mock payload
+- `web/_design/` — Phase 10 視覺設計稿；只作參考，不可 import 進 build
+- `run_api.bat` / `run_web.bat` / `run_dev.bat` / `run_quanttraderV2.bat` — Phase 10 本機啟動腳本
 
 ## 技術棧
-- **語言：** Python 3.12+（純 Python，無 Rust）
+- **語言：** Python 3.12+（核心資料 / 回測 / API）
 - **資料：** pandas, pandas-ta, FinMind API, yfinance
 - **儲存：** DuckDB + Parquet（零伺服器）
-- **UI：** Streamlit + Plotly
+- **後端：** FastAPI, uvicorn, httpx
+- **前端：** Next.js 15+, React 19+, TypeScript 5+, Tailwind CSS v4, SWR, Lightweight Charts, Radix UI, sonner, cmdk
+- **舊 UI：** Streamlit + Plotly（Phase 10-H 前保留）
 - **AI：** OpenAI / Anthropic / Gemini（provider-neutral）
 - **套件管理：** uv
+- **測試：** pytest, Vitest, Playwright
 
 
 ## 驗證模式規則
@@ -80,3 +95,22 @@ Only modify files when user explicitly requests fix, implement, or commit. Verif
 - `.\.venv\Scripts\python.exe`
 
 目標是讓 Agent 與使用者看到一致結果，避免誤用其他全域或內建 runtime Python。
+
+## 驗證指令速查
+
+```powershell
+# Python / API
+.\.venv\Scripts\python.exe -m pytest tests/ -v -m "not integration"
+.\.venv\Scripts\python.exe -m pytest tests/test_api/ -v -m "not integration"
+.\.venv\Scripts\python.exe -m pytest tests/test_services/ -v -m "not integration"
+
+# Frontend（在 web/ 目錄）
+pnpm test
+npx tsc --noEmit
+pnpm build
+
+# Local dev
+.\run_quanttraderV2.bat
+.\run_api.bat
+.\run_web.bat
+```
