@@ -23,6 +23,7 @@
 | **V2.4** | 2026/05/15 | Phase 10-F 拆分為 **10-F-1（UI shell + lock）** 與 **10-F-2（接 LLM）**：10-F-1 完整實作 AI 問答頁 UI（含免責聲明 gate + localStorage 持久、訊息泡泡與 Markdown 渲染 `react-markdown` + remark-gfm、Mock 逐字串流模擬未來 SSE token 動畫），但**不串接真實 LLM**；後端 `/api/ai/chat` 與 `/api/ai/status` 僅做最小骨架（chat 永遠回 `503 AI_DISABLED`、status 永遠回 `{ available: false, reason: "feature_locked" }`）；Sidebar AI 入口加「後續開放」灰色徽章；訊息歷史刷新即清不持久化。**設定頁的 AI 開關鎖死延至 10-G 一起做**（在 10-G 把 toggle 預設 disabled）。10-F-2 延後實作、時程不卡 10-G / 10-H，將補上 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）與真實 SSE。10-F-1 落地時 `pyproject.toml` 與 `web/package.json` package version 同步 bump 至 `0.2.0`（兩個 package version 從此對齊）。 |
 | **V2.6** | 2026/05/15 | Phase 10-G 補完細部規格並正式拆為 **10-G-1（基礎設施先行）+ 10-G-2（設定頁主功能）**。**三項拍板決定**：(1) **主題系統** 從舊 Streamlit 6 套收斂為 Dark / Light 二選一（不移植），預設 dark、`next-themes` 留到 10-G-2 才裝、不接 system 自動偵測避免 K 線色閃動；(2) **策略 preset API** 改以 `name` 為主鍵：`POST /api/config/strategies`（upsert by name）+ `DELETE /api/config/strategies/{name}`（idempotent）+ `POST /api/config/strategies/restore`（復原 8 組預設）；payload `{ preset: {name, strategy, params, market} }`、錯誤碼 `INVALID_PRESET` 422；(3) **Toast 系統** 用 `sonner`（拔 `@radix-ui/react-toast`），預設右下、3 秒、success/error/info 三變體，封裝為 `useToast()` hook（介面與 10-E 已預設一致）；Error Boundary 只接 React 例外、API 錯誤一律走 toast。**10-G-1 提供 4 種全局元件供 10-E 4 段共用**：`useToast()` hook + `sonner Toaster`、`<ErrorBoundary>` + 預設 fallback、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton` 三變體、`<CommandPalette>` + `useCommandPaletteEntry()` hook（cmdk 為底、Ctrl+K / Cmd+K / Esc / `/` 開啟並 focus input、頁面 + 股票搜尋）；同時把 10-C-2 既有 5 處 banner（全部更新 / 全部重建 / 新增 / 動作欄·更新 / DELETE）統一遷移為 toast。**10-G-2 設定頁四分區**：API key write-only（5 provider）+ 策略 preset CRUD（含重置預設）+ Dark/Light toggle + AI toggle disabled + tooltip。**10-E 合約收斂**：取消後 job 保持 `cancelled` 並可讀取 partial result；fetch/SSE/invalid JSON 走 toast + 頁內錯誤區，不交給 Error Boundary；CSV 匯出 query 由 `/api/jobs/{id}/result` 所在的 jobs router 負責；10-E-2 比較表定為 10 欄。**10-G-2 在所有 10-E 子階段驗收後才執行**；10-H 移至 10-G-2 之後。 |
 | **V2.5** | 2026/05/15 | Phase 10-E 拆分為 **10-E-1（單次回測）/ 10-E-2（策略比較）/ 10-E-3（參數掃描）/ 10-E-4（Walk-Forward）** 四個子階段：四段共用 Job lifecycle + SSE 進度 + 取消、共用 K 線 + Markers chart 元件、共用 tearsheet 5 metric card；後端 dispatcher 比照 10-C-2 `_run_data_job` 樣板擴充。**明確不做老 Streamlit 的「歷史結果」tab**（Next.js SWR cache 後切頁狀態不會掉，迫切性降低）；**Heatmap 採「排名表 + 顏色背景」為主，僅當 sweep 為恰好 2 個參數時加 2D heatmap（自製 CSS Grid + Tailwind 色階，不引入 heatmap 套件）**；**多策略 equity curve 疊圖用 lightweight-charts 多個 LineSeries 同圖（不引入 Recharts）**；**WFA CSV 由後端產生 blob、前端 `<a download>` 觸發下載**。取消行為：服務層 `run_*_job` 在迴圈點檢查 `manager.get_job(job.id).status == "cancelled"` 後 break，比照 10-C-2 模式。**實作順序調整：10-G 將拆為 10-G-1（基礎設施先行：Toast 系統 + Error Boundary + Loading Skeleton + Command Palette）與 10-G-2（設定頁主功能），執行順序改為 10-G-1 → 10-E（4 段）→ 10-G-2 → 10-H；10-E 4 個子階段假設 10-G-1 已就位，job complete / cancel / error 通知統一走 toast、SSE 中載入態統一用 skeleton、頁面/股票導航支援 Command Palette。10-G-1 / 10-G-2 細部規格將於後續 V2.6 補上。** |
+| **V2.8** | 2026/05/16 | **Phase 10-H 拆為 10-H-1（收尾前置補強）+ 10-H-2（實際移除與回歸）**。理由：規格動作清單中「移除 `src/ui/` + 套件 + 文件」屬機械操作，但同段隱含三項**新建工**——(a) Playwright E2E smoke（desktop + mobile，V2.7 已說明「E2E 統一在 10-E-4 後撰寫」）、(b) 手機 <768px 底部 Tab Bar（10-D round-4 延後項，[驗證後已知問題.md] 已記錄）、(c) `test_themes.py` 對應的前端 Vitest CSS 變數替代測試。三者若與「按下刪除」混在同一段，破壞舊 UI 後才發現替代測試或 E2E 沒寫好會造成回頭工。**10-H-1**：完成 Playwright E2E smoke（5 頁可達 / SSE 收結果 / CSV 下載 / 取消 job，desktop 1280×800 + mobile 375×667 兩 viewport）+ 手機底部 Tab Bar 元件 + `test_themes.py` → Vitest CSS 變數測試；驗收條件：7 行測試遷移檢查表全部打勾、Playwright smoke 全綠、`run_quanttraderV2.bat` 在 375px viewport 可達 5 頁。**10-H-2**：刪 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` 移除 `streamlit` / `streamlit-extras` / `streamlit-option-menu`、刪已有替代的 Streamlit pytest 檔（`test_dashboard_page.py` / `test_backtest_page.py` / `test_data_management_page.py` / `test_stock_selector.py` / `test_themes.py` / `test_config_ui_section.py` / `test_settings_page.py`）、更新四份文件、全專案 pytest 回歸（測試總數不低於移除前的 svc + API 部分；扣除被移除的 7 個 Streamlit 測試檔後計算）。**10-H-2 不得在 10-H-1 未通過前啟動**；10-H-1 失敗時不准走捷徑刪檔。 |
 | **V2.7** | 2026/05/16 | **10-E 規格審查補丁**（12 項）：(1) `JobManager.finish_cancelled_job()` 新增（含 `cancel_job()` race condition 修正——只設 status、不關 queue）；(2) `GET /api/jobs/{id}/result` 擴充允許 cancelled + partial result；(3) 取消 `api/routers/backtest.py` 冗餘端點，前端直接用 `GET /api/config` 取 preset 清單；(4) `initial_capital` 預設 `1000000`，需新增為 `run_backtest_job()` 參數並注入引擎；(5) DCA 序列化映射補充（equity_curve / trades / metrics null 欄位）；(6) `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表；(7) WFA 特化 `WfaProgress` interface 補充；(8) CSV blob 函式位置指定 `src/services/backtest_service.py`；(9) E2E Playwright 統一在 10-E-4 後撰寫；(10) **交易數量單位統一顯示「股」（shares），不做 1000 股→1 張轉換**（與舊 Streamlit 回測頁一致；「張」僅用於 10-D 儀表板的日成交量與籌碼顯示）；(11) 切換市場時 reset state（清空回測結果）；(12) DCA 批次比較 error message 明確定義為「DCA 不支援批次比較（請至單次回測使用）」。 |
 
 ---
@@ -2778,7 +2779,8 @@ Phase 10 拆為 **10-A ~ 10-H** 八個子階段，每個可獨立驗證。
 | **10-G-1** | 基礎設施先行（Toast / Error Boundary / Skeleton / Command Palette） | 10-A, 10-B, 10-C-2（既有 banner 來源）| 為 10-E 4 段預先建立全局元件：`sonner` toast 系統（拔 `@radix-ui/react-toast`）+ React Error Boundary + 3 種 Skeleton 變體 + `cmdk` Command Palette（頁面跳轉 + 股票搜尋）；10-C-2 既有 5 處 banner 全部改 toast |
 | **10-E-1~4** | 回測工作台 4 段 | 10-G-1 | 見上表 |
 | **10-G-2** | 設定頁主功能（API Key / 策略 preset / 主題 / AI toggle） | 10-G-1, 10-E（4 段全部驗收後） | SettingsPage 4 分區實作：API key write-only UI、策略 preset CRUD UI（搭配 `POST /api/config/strategies` upsert + `DELETE /api/config/strategies/{name}` + `POST /api/config/strategies/restore`）、Dark↔Light 主題切換（`next-themes`）、AI toggle disabled + tooltip |
-| **10-H** | 舊 UI 移除與收尾 | 10-G-2 驗收後 | 移除 `src/ui/`、Streamlit 依賴、測試遷移檢查表、文件更新 |
+| **10-H-1** | 收尾前置補強（E2E + 手機 Tab Bar + theme 測試） | 10-G-2 驗收後 | Playwright E2E smoke（desktop 1280×800 + mobile 375×667）、手機 <768px 底部 Tab Bar、`test_themes.py` → Vitest CSS 變數替代；測試遷移檢查表 7 行打勾 |
+| **10-H-2** | 實際移除與全專案回歸 | 10-H-1 驗收後 | 移除 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` streamlit 三套件、舊 Streamlit 7 個 pytest 檔；更新四份文件；全專案 pytest 回歸 |
 
 10-A 與 10-B 的 scaffold 工作可同時進行；10-B 開發階段使用 mock data，最終驗收依賴 10-A。
 
@@ -3643,11 +3645,81 @@ SettingsPage
 
 #### 10-H：舊 UI 移除與收尾
 
-**前置條件：** 10-A ~ 10-G 全部通過人工驗收。
+**V2.8 起拆為 10-H-1（收尾前置補強）+ 10-H-2（實際移除與回歸）兩段。** 拆分理由：規格動作清單看似機械（刪檔 + 移除套件 + 跑回歸），但隱含三項新建工——Playwright E2E、手機底部 Tab Bar、theme 變數替代測試。三者必須先做完並驗收，才能按下刪除按鈕；否則破壞舊 UI 後再回頭補先決條件，成本高且容易遺漏邊角測試。
 
-**測試遷移檢查表（不可跳過）：** 每個被刪的 Streamlit test case 必須先在 service 層/API/前端測試中有對應替代。
+##### 10-H-1：收尾前置補強
 
-**動作：** 移除 `src/ui/`、Streamlit 依賴、`run_quanttrader.bat`、已有替代的 Streamlit 測試。更新文件。全專案回歸測試（測試總數不低於移除前）。
+**前置條件：** 10-G-2 已通過驗收。
+
+**範圍：**
+
+1. **Playwright E2E smoke**：在 `web/tests/e2e/` 下撰寫 smoke 套件，至少覆蓋以下流程：
+   - 5 頁可達（Dashboard / Data / Backtest / AI / Settings）— 從 sidebar / 底部 Tab Bar 點擊或 Command Palette 跳轉皆需通過
+   - SSE 收結果：發起一個短期 backtest job（例如 `2330 / 2023-01-01 ~ 2023-12-31 / MA20_MA60`），確認 progress → result 完整收到、tearsheet 5 metric card 顯示
+   - CSV 下載：批次比較 / 參數掃描其中一個觸發 `<a download>` 並驗 toast「CSV 已下載」
+   - 取消 job：點取消後 status 變 `cancelled`、partial result 仍可讀
+   - viewport：desktop `1280×800` 與 mobile `375×667` 兩種皆需跑通
+   - 配置：`web/playwright.config.ts` 依規格 [3139-3164] 既有區塊；CI 視窗用 chromium
+
+2. **手機 <768px 底部 Tab Bar**：完成 [Sidebar](web/src/components/sidebar.tsx) 在 `<768px` 的底部 Tab Bar 變體（10-D round-4 延後項）。
+   - 5 個入口（Dashboard / Data / Backtest / AI / Settings）icon + 短 label
+   - 固定貼底，`h-14`、`z-50`、`bg-background border-t border-border`
+   - active state 用 primary 色 icon + label
+   - PC 與 mobile 切換以 `lg:` (1024px) breakpoint 為界（PC 側欄、Mobile 底部）；中間 768-1023px 保留側欄 `lg:w-32` 即可
+
+3. **`test_themes.py` 替代測試**：舊 [tests/test_themes.py](tests/test_themes.py) 驗證 6 套主題定義完整性，新前端只剩 Dark/Light，需以前端 Vitest 補等價測試：
+   - 位置：`web/src/tests/lib/theme-vars.test.ts`（新增）
+   - 驗 `:root.dark` 與 `:root.light` 兩 class 下，必要 CSS 變數（`--background` / `--foreground` / `--primary` / `--chart-up` / `--chart-down`）皆有定義且不空字串
+   - 透過 `getComputedStyle(document.documentElement)` 讀取；測試用 happy-dom 環境
+
+**驗收條件：**
+1. `web/tests/e2e/` smoke 套件存在；`pnpm exec playwright test` 全綠（desktop + mobile 兩 viewport 都跑）
+2. 手機 `375×667` viewport 下底部 Tab Bar 顯示、5 個 icon 可點、active state 正確
+3. `pnpm test` 新增的 theme-vars vitest 通過；既有 vitest 不退化
+4. 測試遷移檢查表 7 行全部打勾（見 `開發設計方針.md §10-H-1`）
+5. 全專案 pytest 回歸（含舊 Streamlit 測試）仍綠 — **10-H-1 階段不准刪任何舊測試**
+6. `run_quanttraderV2.bat` 在 desktop 與手機模擬器下皆可達 5 頁
+
+##### 10-H-2：實際移除與全專案回歸
+
+**前置條件：** 10-H-1 已通過驗收，測試遷移檢查表 7 行皆 ✅。
+
+**動作：**
+
+1. 移除 `src/ui/`（`app.py` / `themes.py` / `pages/*`）
+2. 移除 `run_quanttrader.bat`（保留 `run_quanttraderV2.bat` / `run_api.bat` / `run_web.bat` / `run_dev.bat`）
+3. `pyproject.toml` 移除 `streamlit`、`streamlit-extras`、`streamlit-option-menu`
+4. 移除 7 個已有替代的 Streamlit 測試檔：
+   - `tests/test_dashboard_page.py`
+   - `tests/test_backtest_page.py`
+   - `tests/test_data_management_page.py`
+   - `tests/test_stock_selector.py`
+   - `tests/test_themes.py`
+   - `tests/test_config_ui_section.py`
+   - `tests/test_settings_page.py`
+5. 更新四份文件：
+   - `量化交易系統規格書_shellpig版.md`：標記 10-H 完成、修訂歷史加 V2.9 條目
+   - `開發設計方針.md`：10-H 區段標記完成、刪除「Phase 4 AI + Streamlit UI」對 `ui/` 的描述（或加註已移除）
+   - `測試指南.md`：標記檢查表 7 行 ✅、全專案測試總數欄位重算
+   - `PROJECT_BRIEF.md`：Phase 進度表 10-H 標 ✅、主線移除 Streamlit 提及、目錄結構刪 `src/ui/` 區塊
+6. 全專案 pytest 回歸：`.\.venv\Scripts\python.exe -m pytest tests/ -v -m "not integration"` 全綠
+7. 前端 vitest 回歸：`pnpm test` 全綠
+8. Playwright E2E 回歸：`pnpm exec playwright test` 全綠
+
+**驗收條件：**
+1. `src/ui/` 不存在
+2. `pyproject.toml` 不含 streamlit 三套件；`uv pip install -e .` 重新安裝後不再拉入 streamlit
+3. `run_quanttrader.bat` 不存在
+4. 7 個舊 pytest 測試檔不存在
+5. 全專案 pytest 通過，**測試總數 ≥ 移除前 - 7 個檔的 case 數**（svc + API + web vitest 部分總和應**不少**於移除前的 Streamlit 部分等價測試數）
+6. 前端 vitest + Playwright E2E 全綠
+7. 四份文件更新並 commit
+8. `驗證後已知問題.md` 補一條「[P10-H] 完成、邊界決定彙整」
+
+**範圍邊界（10-H-2 結束後）：**
+- 不再支援 Streamlit；任何「請打開舊 UI」的指令皆無效
+- `src/ai/advisor.py` **保留**（10-F-2 與 dashboard `/api/ai/analyze` 仍會用），不一起刪
+- `data/`、`config.yaml`、`.env` 既有檔不動
 
 #### Phase 10 主題系統
 

@@ -15,7 +15,7 @@
 - Phase 9 全部完成（含美股 US-1 / 9-G intraday）。
 - Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 / 10-F-1 / 10-G-1 / 10-G-2 已完成。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
-- 後續順序：10-H。
+- 後續順序：10-H-1 → 10-H-2（V2.8 將 10-H 拆為前置補強 + 實際移除兩段）。
 
 ## 技術棧
 
@@ -232,7 +232,8 @@ risk:
 | 10-F-2 | ⏸ 延後 | AI 問答頁接 LLM：補 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）+ 真實 SSE token 串流；**不卡 10-G / 10-H** |
 | 10-G-1 | ✅ 完成 | 基礎設施先行：新增 `sonner` toast + 10-C-2 banner 遷移、React Error Boundary（只接 render/lifecycle/hook 例外）、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton`、`cmdk` Command Palette（頁面跳轉 + 股票搜尋）；移除 `@radix-ui/react-toast`；補 7 檔前端測試與單檔更新/新增失敗 toast regression。tsc 0 errors + vitest **24 files / 148 tests passed** |
 | 10-G-2 | ✅ 完成 | 設定頁 4 分區：API key write-only UI（5 provider）、策略 preset CRUD（`POST/DELETE/restore` 三端點 + Dialog）、Dark↔Light 主題切換（沿用既有自製 `theme-provider.tsx`，**未引入 `next-themes`**，等價支援 `class="dark"` + localStorage）、AI toggle disabled + Radix Tooltip；pytest `test_config_api.py + test_config_svc.py` 28 passed（+6 strategy endpoints / +3 `delete_strategy_preset_by_name`）+ vitest **46 files / 290 tests passed**（+5 settings 元件測試 + use-config hook）+ tsc 0 errors |
-| 10-H | 📋 規格已定，待實作 | 舊 Streamlit UI 移除（測試遷移檢查表不可跳過；`src/ai/advisor.py` 必須保留供 10-F-2 與 dashboard analysis 使用） |
+| 10-H-1 | 📋 規格已定，待實作 | 收尾前置補強：Playwright E2E smoke（desktop + mobile）、手機 <768px 底部 Tab Bar、`test_themes.py` → Vitest CSS 變數測試；測試遷移檢查表 7 行必須全部打勾後才能進入 10-H-2 |
+| 10-H-2 | 📋 規格已定，待實作 | 實際移除與全專案回歸：刪 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` streamlit 三套件、7 個 Streamlit pytest 檔；`src/ai/advisor.py` **保留**（10-F-2 + dashboard analysis 仍使用） |
 
 ## 當前待辦
 
@@ -354,7 +355,7 @@ risk:
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-25 | 查版本變更，最新為 `V2.7`（10-E 規格審查補丁：cancel_job race condition 修正、finish_cancelled_job 新增、DCA 序列化、sweep-defaults 完整內容、WfaProgress interface、CSV blob 位置、交易單位統一「股」） |
+| 修訂歷史 | 3-27 | 查版本變更，最新為 `V2.8`（Phase 10-H 拆為 10-H-1 收尾前置補強 + 10-H-2 實際移除；前置補強含 Playwright E2E desktop+mobile、手機 <768px 底部 Tab Bar、`test_themes.py` 對應 Vitest CSS 變數測試） |
 | 專案願景與目標 | 47-62 | 理解定位 |
 | 技術語言與套件選型 | 64-91 | 技術決策參考 |
 | 系統架構（四層架構圖） | 93-177 | 理解整體結構 |
