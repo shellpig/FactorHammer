@@ -237,6 +237,21 @@ risk:
 
 主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）**、**10-F-1 AI 問答頁 UI shell + 後端 lock**、**10-G-1 全局基礎設施（toast / error boundary / skeleton / command palette）** 均已完成。**Phase 10-C 全段落結束**；10-F 已拆成 10-F-1（已完成）與 10-F-2（接 LLM、延後且不卡 10-G / 10-H）。**10-E 已拆成 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 四段，10-G 已拆成 10-G-1 / 10-G-2（規格 V2.6 已記載）**。**後續實作順序：10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2（設定頁主功能）→ 10-H**；10-E 4 段共用 10-G-1 的 Toast / Error Boundary / Loading Skeleton / Command Palette。下一步預計實作 10-E-1。
 
+2026-05-16 狀態：
+- **10-E 規格審查完成（V2.7 補丁）**：三份文件同步補充以下 12 項缺口，規格、設計方針、測試指南已更新：
+  1. `JobManager.finish_cancelled_job()` 方法需在 10-E-1 開工前新增（目前缺失）
+  2. `cancel_job()` 需修改為只設 status、不關 queue（避免 partial result 推送失敗的 race condition）
+  3. `GET /api/jobs/{id}/result` 需允許 cancelled + partial result 回傳
+  4. 取消 `api/routers/backtest.py` 新端點，改用既有 `GET /api/config` 取 preset 清單
+  5. `initial_capital` 預設 1000000，需新增為 `run_backtest_job()` 參數
+  6. 10-E-2 的 `price_data` 只在 result 頂層帶一次（各 summary 不重複）— 規格已正確，無需改
+  7. DCA 序列化映射補充（equity_curve 從 records 派生、trades 空陣列、metrics 不適用欄位 null）
+  8. `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表（int/float 區分）
+  9. WFA 特化 `WfaProgress` interface 補充
+  10. CSV blob 函式位置明確指定放 `src/services/backtest_service.py`
+  11. E2E Playwright 統一在 10-E-4 完成後撰寫
+  12. 交易數量統一顯示「股」、不轉「張」（與舊 Streamlit 回測頁一致）；切換市場 reset state；DCA 批次 error message 定義
+
 2026-05-15 狀態：
 - 最新 commit 請以 `git log --oneline -1` 為準。
 - **10-G-1 實作 + 驗證完成**：新增 `web/src/components/providers.tsx`、`error-boundary.tsx`、`command-palette.tsx`、`skeletons/index.tsx`、`hooks/use-toast.ts`、`hooks/use-command-palette.ts`；`layout.tsx` 接入 Providers；Sidebar 註冊 5 個頁面 command entry；StockSelector 註冊股票搜尋來源；資料管理頁 10-C-2 完成/錯誤 banner 改 toast，並補單檔更新失敗與新增標的失敗 toast regression。驗證：`.\node_modules\.bin\tsc.CMD --noEmit` 通過；`pnpm test` 為 **24 files / 148 tests passed**；聚焦 `data-page-client.test.tsx` 為 **7 passed**。
@@ -329,7 +344,7 @@ risk:
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-25 | 查版本變更，最新為 `V2.6`（Phase 10-G 拆為 10-G-1/10-G-2；10-E 合約收斂：cancelled partial result、async 錯誤不進 Error Boundary、CSV 由 jobs router、10-E-2 比較表 10 欄） |
+| 修訂歷史 | 3-25 | 查版本變更，最新為 `V2.7`（10-E 規格審查補丁：cancel_job race condition 修正、finish_cancelled_job 新增、DCA 序列化、sweep-defaults 完整內容、WfaProgress interface、CSV blob 位置、交易單位統一「股」） |
 | 專案願景與目標 | 47-62 | 理解定位 |
 | 技術語言與套件選型 | 64-91 | 技術決策參考 |
 | 系統架構（四層架構圖） | 93-177 | 理解整體結構 |

@@ -146,17 +146,20 @@ def get_job_result(
             status_code=404,
             detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Job {job_id} not found"}},
         )
-    if job.status != "complete":
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": {
-                    "code": "JOB_NOT_COMPLETE",
-                    "message": f"Job status is '{job.status}', not 'complete'",
-                }
-            },
-        )
-    return {"data": job.result or {}, "meta": {"job_id": job_id}}
+    # Allow "complete" and "cancelled with partial result"
+    if job.status == "complete":
+        return {"data": job.result or {}, "meta": {"job_id": job_id, "status": job.status}}
+    if job.status == "cancelled" and job.result is not None:
+        return {"data": job.result, "meta": {"job_id": job_id, "status": "cancelled"}}
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "error": {
+                "code": "JOB_NOT_COMPLETE",
+                "message": f"Job status is '{job.status}', not 'complete'",
+            }
+        },
+    )
 
 
 @router.post("/{job_id}/cancel")
@@ -196,6 +199,8 @@ async def _run_job(manager: JobManager, job: Job, params: dict[str, Any]) -> Non
     try:
         if job.type in ("data_update", "data_rebuild"):
             await _run_data_job(manager, job, params)
+        elif job.type == "backtest_run":
+            await _run_backtest_run_job(manager, job, params)
         elif job.type == "dummy":
             await _run_dummy_job(manager, job)
         else:
@@ -307,3 +312,60 @@ async def _run_dummy_job(manager: JobManager, job: Job) -> None:
         result={"ok": True, "params": job.type},
     )
     manager._close_event_queue(job.id)
+
+
+async def _run_backtest_run_job(
+    manager: JobManager, job: Job, params: dict[str, Any]
+) -> None:
+    """Runner for backtest_run job type (Phase 10-E-1)."""
+    import pandas as pd
+
+    from src.services.backtest_service import (
+        BacktestServiceError,
+        list_strategy_presets,
+        run_backtest_job,
+        serialize_backtest_result,
+    )
+
+    presets = list_strategy_presets()
+    idx = params.get("strategy_preset_index")
+    if not isinstance(idx, int) or idx < 0 or idx >= len(presets):
+        manager.fail_job(
+            job.id,
+            error={"code": "INVALID_PARAMS", "message": "strategy_preset_index out of range"},
+        )
+        return
+
+    if manager.get_job(job.id) and manager.get_job(job.id).status == "cancelled":  # type: ignore[union-attr]
+        return
+
+    manager.push_event(job.id, "progress", {"status": "running", "phase": "loading_data"})
+
+    initial_capital = float(params.get("initial_capital", 1_000_000))
+
+    result = await asyncio.to_thread(
+        run_backtest_job,
+        symbol=str(params.get("symbol", "")),
+        start_ts=pd.Timestamp(str(params.get("start_date", "2020-01-01"))),
+        end_exclusive=pd.Timestamp(str(params.get("end_date", "2024-12-31")))
+        + pd.Timedelta(days=1),
+        strategy_preset=presets[idx],
+        engine=str(params.get("engine", "vectorized")),
+        market=str(params.get("market", "tw")),
+        initial_capital=initial_capital,
+    )
+
+    if isinstance(result, BacktestServiceError):
+        manager.fail_job(
+            job.id, error={"code": result.code, "message": result.message}
+        )
+        return
+
+    payload = serialize_backtest_result(result)
+    manager.push_event(job.id, "result", payload)
+
+    current = manager.get_job(job.id)
+    if current and current.status == "cancelled":
+        manager.finish_cancelled_job(job.id, result=payload)
+    else:
+        manager.complete_job(job.id, result=payload)

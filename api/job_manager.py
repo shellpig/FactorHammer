@@ -135,8 +135,19 @@ class JobManager:
         if job.status in ("complete", "error"):
             return False
         job.status = "cancelled"
-        self._close_event_queue(job_id)
+        # Do NOT close the event queue here; finish_cancelled_job() handles that
+        # after the service layer pushes any partial result event.
         return True
+
+    def finish_cancelled_job(self, job_id: str, result: dict[str, Any]) -> None:
+        """Store partial result for a cancelled job and close the SSE stream."""
+        self.update_job(
+            job_id,
+            status="cancelled",
+            result=result,
+            message="已取消",
+        )
+        self._close_event_queue(job_id)
 
     def cleanup_expired(self) -> None:
         expired = [jid for jid, j in self._jobs.items() if j.is_expired()]

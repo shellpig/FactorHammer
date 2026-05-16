@@ -1,6 +1,7 @@
-// Backtest page — shell (Phase 10-B, to be implemented in 10-E)
+// Backtest research page — 4-tab framework (Phase 10-E-1)
 
 import type { Metadata } from "next";
+import { BacktestPageClient } from "@/components/backtest/BacktestPageClient";
 
 export const metadata: Metadata = {
   title: "回測研究 | QuantTrader",
@@ -8,12 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function BacktestPage() {
-  return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-foreground">回測研究</h1>
-      <p className="text-muted-foreground">
-        此頁面將在 Phase 10-E 實作完整內容。
-      </p>
-    </div>
-  );
+  return <BacktestPageClient />;
 }

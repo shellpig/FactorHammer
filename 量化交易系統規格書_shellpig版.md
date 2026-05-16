@@ -23,6 +23,7 @@
 | **V2.4** | 2026/05/15 | Phase 10-F 拆分為 **10-F-1（UI shell + lock）** 與 **10-F-2（接 LLM）**：10-F-1 完整實作 AI 問答頁 UI（含免責聲明 gate + localStorage 持久、訊息泡泡與 Markdown 渲染 `react-markdown` + remark-gfm、Mock 逐字串流模擬未來 SSE token 動畫），但**不串接真實 LLM**；後端 `/api/ai/chat` 與 `/api/ai/status` 僅做最小骨架（chat 永遠回 `503 AI_DISABLED`、status 永遠回 `{ available: false, reason: "feature_locked" }`）；Sidebar AI 入口加「後續開放」灰色徽章；訊息歷史刷新即清不持久化。**設定頁的 AI 開關鎖死延至 10-G 一起做**（在 10-G 把 toggle 預設 disabled）。10-F-2 延後實作、時程不卡 10-G / 10-H，將補上 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）與真實 SSE。10-F-1 落地時 `pyproject.toml` 與 `web/package.json` package version 同步 bump 至 `0.2.0`（兩個 package version 從此對齊）。 |
 | **V2.6** | 2026/05/15 | Phase 10-G 補完細部規格並正式拆為 **10-G-1（基礎設施先行）+ 10-G-2（設定頁主功能）**。**三項拍板決定**：(1) **主題系統** 從舊 Streamlit 6 套收斂為 Dark / Light 二選一（不移植），預設 dark、`next-themes` 留到 10-G-2 才裝、不接 system 自動偵測避免 K 線色閃動；(2) **策略 preset API** 改以 `name` 為主鍵：`POST /api/config/strategies`（upsert by name）+ `DELETE /api/config/strategies/{name}`（idempotent）+ `POST /api/config/strategies/restore`（復原 8 組預設）；payload `{ preset: {name, strategy, params, market} }`、錯誤碼 `INVALID_PRESET` 422；(3) **Toast 系統** 用 `sonner`（拔 `@radix-ui/react-toast`），預設右下、3 秒、success/error/info 三變體，封裝為 `useToast()` hook（介面與 10-E 已預設一致）；Error Boundary 只接 React 例外、API 錯誤一律走 toast。**10-G-1 提供 4 種全局元件供 10-E 4 段共用**：`useToast()` hook + `sonner Toaster`、`<ErrorBoundary>` + 預設 fallback、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton` 三變體、`<CommandPalette>` + `useCommandPaletteEntry()` hook（cmdk 為底、Ctrl+K / Cmd+K / Esc / `/` 開啟並 focus input、頁面 + 股票搜尋）；同時把 10-C-2 既有 5 處 banner（全部更新 / 全部重建 / 新增 / 動作欄·更新 / DELETE）統一遷移為 toast。**10-G-2 設定頁四分區**：API key write-only（5 provider）+ 策略 preset CRUD（含重置預設）+ Dark/Light toggle + AI toggle disabled + tooltip。**10-E 合約收斂**：取消後 job 保持 `cancelled` 並可讀取 partial result；fetch/SSE/invalid JSON 走 toast + 頁內錯誤區，不交給 Error Boundary；CSV 匯出 query 由 `/api/jobs/{id}/result` 所在的 jobs router 負責；10-E-2 比較表定為 10 欄。**10-G-2 在所有 10-E 子階段驗收後才執行**；10-H 移至 10-G-2 之後。 |
 | **V2.5** | 2026/05/15 | Phase 10-E 拆分為 **10-E-1（單次回測）/ 10-E-2（策略比較）/ 10-E-3（參數掃描）/ 10-E-4（Walk-Forward）** 四個子階段：四段共用 Job lifecycle + SSE 進度 + 取消、共用 K 線 + Markers chart 元件、共用 tearsheet 5 metric card；後端 dispatcher 比照 10-C-2 `_run_data_job` 樣板擴充。**明確不做老 Streamlit 的「歷史結果」tab**（Next.js SWR cache 後切頁狀態不會掉，迫切性降低）；**Heatmap 採「排名表 + 顏色背景」為主，僅當 sweep 為恰好 2 個參數時加 2D heatmap（自製 CSS Grid + Tailwind 色階，不引入 heatmap 套件）**；**多策略 equity curve 疊圖用 lightweight-charts 多個 LineSeries 同圖（不引入 Recharts）**；**WFA CSV 由後端產生 blob、前端 `<a download>` 觸發下載**。取消行為：服務層 `run_*_job` 在迴圈點檢查 `manager.get_job(job.id).status == "cancelled"` 後 break，比照 10-C-2 模式。**實作順序調整：10-G 將拆為 10-G-1（基礎設施先行：Toast 系統 + Error Boundary + Loading Skeleton + Command Palette）與 10-G-2（設定頁主功能），執行順序改為 10-G-1 → 10-E（4 段）→ 10-G-2 → 10-H；10-E 4 個子階段假設 10-G-1 已就位，job complete / cancel / error 通知統一走 toast、SSE 中載入態統一用 skeleton、頁面/股票導航支援 Command Palette。10-G-1 / 10-G-2 細部規格將於後續 V2.6 補上。** |
+| **V2.7** | 2026/05/16 | **10-E 規格審查補丁**（12 項）：(1) `JobManager.finish_cancelled_job()` 新增（含 `cancel_job()` race condition 修正——只設 status、不關 queue）；(2) `GET /api/jobs/{id}/result` 擴充允許 cancelled + partial result；(3) 取消 `api/routers/backtest.py` 冗餘端點，前端直接用 `GET /api/config` 取 preset 清單；(4) `initial_capital` 預設 `1000000`，需新增為 `run_backtest_job()` 參數並注入引擎；(5) DCA 序列化映射補充（equity_curve / trades / metrics null 欄位）；(6) `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表；(7) WFA 特化 `WfaProgress` interface 補充；(8) CSV blob 函式位置指定 `src/services/backtest_service.py`；(9) E2E Playwright 統一在 10-E-4 後撰寫；(10) **交易數量單位統一顯示「股」（shares），不做 1000 股→1 張轉換**（與舊 Streamlit 回測頁一致；「張」僅用於 10-D 儀表板的日成交量與籌碼顯示）；(11) 切換市場時 reset state（清空回測結果）；(12) DCA 批次比較 error message 明確定義為「DCA 不支援批次比較（請至單次回測使用）」。 |
 
 ---
 
@@ -2945,7 +2946,8 @@ data: { "succeeded": ["2330", ...], "failed": [{ "symbol": "2317", "error": "...
 
 - **Job lifecycle**：`POST /api/jobs` → `GET /api/jobs/{id}/events`（SSE 進度）→ `GET /api/jobs/{id}/result`，比照 10-C-2 `_run_data_job` 模式
 - **取消行為**：`POST /api/jobs/{id}/cancel`；服務層 `run_*_job` 在每個迴圈點檢查 `manager.get_job(job.id).status == "cancelled"` 後 break，最後以 `finish_cancelled_job(result=partial_result)` 保持 job status 為 `cancelled` 並保留已完成 partial result；`GET /api/jobs/{id}/result` 對 `complete` / `cancelled` 都可回傳 result（`cancelled` 且無 result 才回 409）
-- **市場 / 貨幣 / 單位**：透過 `MarketSwitcher` 切換，前端 formatter 處理 USD vs TWD、「股」vs「張」（重用 10-D 既有 logic）
+- **市場 / 貨幣 / 單位**：透過 `MarketSwitcher` 切換，前端 formatter 處理 USD vs TWD。**交易數量單位統一顯示「股」（shares）**，不做 1000 股 → 1 張的換算（與舊 Streamlit 回測頁一致；「張」僅用於 10-D 儀表板的日成交量與籌碼顯示）
+- **初始資金預設值**：`initial_capital` 預設 `1000000`（前端 number input 預設值 + 後端缺省值皆為此值）
 - **共用前端元件**：建立於 10-E-1，供 2~4 重用
   - `web/src/components/backtest/TearsheetCards.tsx` — 5 metric card（交易次數 / 總報酬率 / 年化報酬率 / 最大回撤 / Sharpe）
   - `web/src/components/backtest/CandleChartWithMarkers.tsx` — Lightweight Charts K 線 + MA 疊加 + buy/sell markers（綠 ↑ / 紅 ↓）
@@ -3049,7 +3051,7 @@ data: { "succeeded": ["2330", ...], "failed": [{ "symbol": "2317", "error": "...
 **Trades 表：**
 - 6 欄：日期區間 / 方向 / 進場價 / 出場價 / 數量 / PnL（含 return_pct）
 - shadcn `Table`，前端 sort 與 paginate（每頁 20 筆）
-- 美股「股」、台股「股」或「張」依貨幣決定（DCA 的 1 整股提示沿用）
+- 台股與美股交易數量統一顯示「股」（引擎回傳單位即為股，不轉換為張）
 
 **驗收條件：**
 1. 4 tab 框架建立，「單次回測」可用；10-E-2/3/4 tab disabled + tooltip
@@ -3087,7 +3089,7 @@ data: { "succeeded": ["2330", ...], "failed": [{ "symbol": "2317", "error": "...
 }
 ```
 - 預設全選 8 個 preset；前端可勾選子集
-- DCA preset 視為「不支援批次比較」，後端回傳該 row `error="..."`，前端表格 row 顯示「—」+ 備註欄文案
+- DCA preset 視為「不支援批次比較」，後端回傳該 row `error="DCA 不支援批次比較（請至單次回測使用）"`，前端表格 row 數值欄顯示「—」+ 備註欄文案
 
 **SSE 進度訊號：** 每完成一個策略推一筆 `progress`：
 ```
@@ -3345,6 +3347,18 @@ data: { "window_id": 2, "total_windows": 6, "phase": "done",
 9. 美股 WFA（AAPL）：USD、cost calculator 正確
 10. **Job complete 時 toast「WFA 分析完成（N 段視窗）」**
 11. 對應後端測試 + 前端 vitest 全綠
+
+##### 10-E 實作前置修改（10-E-1 開工前必須完成）
+
+以下 3 項為 10-E 的共用基礎設施修改，**必須在 10-E-1 實作前完成並驗證**：
+
+1. **`JobManager.finish_cancelled_job()` 方法**：目前 [api/job_manager.py](api/job_manager.py) 尚未實作此方法。需新增（簽名見開發設計方針 §10-E），用於取消後保留 partial result 並關閉 SSE stream。
+2. **`cancel_job()` 修改**：現有 `cancel_job()` 在設定 `status="cancelled"` 的同時會**立即關閉 event queue**，導致後續 service 迴圈 break 後推送的 partial result 無法送達。修改為：`cancel_job()` **只設 status，不關 queue**；改由 `finish_cancelled_job()` 統一關閉 queue。
+3. **`GET /api/jobs/{id}/result` 允許 cancelled partial result**：現有 result endpoint 僅對 `status == "complete"` 回傳 result。需擴充：`status == "cancelled"` 且 `job.result` 存在時亦回傳 result（`meta.status` 帶 `"cancelled"`）；`cancelled` 且無 result 時回 409。
+
+##### 10-E 策略 preset 端點
+
+前端 `StrategyPresetSelect` 需要取得 preset 清單。**直接使用既有 `GET /api/config` 回傳的 `strategies[]` 陣列**（不另設 `/api/backtest/strategies` endpoint），避免冗餘端點。前端從 config response 取出 strategies 後顯示中文名稱，送回 `strategy_preset_index`。
 
 ##### 10-E 套件依賴（全段共用）
 

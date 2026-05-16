@@ -208,6 +208,7 @@ def run_backtest_job(
     strategy_preset: dict[str, Any],
     engine: str = _VECTOR_ENGINE,
     market: str = "tw",
+    initial_capital: float = 1_000_000,
 ) -> BacktestJobResult | BacktestServiceError:
     """Run a single backtest and return a ``BacktestJobResult``.
 
@@ -286,9 +287,9 @@ def run_backtest_job(
 
     cost_calculator = create_cost_calculator(market=normalized_market)
     engine_obj = (
-        VectorizedBacktester(cost_calculator=cost_calculator)
+        VectorizedBacktester(initial_capital=initial_capital, cost_calculator=cost_calculator)
         if engine == _VECTOR_ENGINE
-        else EventDrivenBacktester(cost_calculator=cost_calculator)
+        else EventDrivenBacktester(initial_capital=initial_capital, cost_calculator=cost_calculator)
     )
     try:
         result = engine_obj.run(strategy=strategy_obj, data=data)  # type: ignore[arg-type]
@@ -354,6 +355,213 @@ def _sync_symbol_daily_data(
             meta.close()
 
     raise FetcherError(f"{symbol} 自動更新日線資料失敗：{' | '.join(errors)}")
+
+
+def serialize_backtest_result(job_result: "BacktestJobResult") -> dict[str, Any]:
+    """Convert BacktestJobResult → JSON-safe dict matching the 10-E-1 result schema."""
+    market = job_result.market
+    currency = job_result.currency
+    strategy_type = job_result.strategy_type
+
+    price_data = _serialize_price_data(job_result.data)
+
+    # ── DCA branch ────────────────────────────────────────────────────────
+    if job_result.dca_result is not None:
+        dca = job_result.dca_result
+        equity_curve = _dca_equity_curve(dca.transactions, job_result.data)
+        return {
+            "symbol": job_result.symbol,
+            "market": market,
+            "currency": currency,
+            "engine": job_result.engine,
+            "strategy_type": strategy_type,
+            "strategy_params": job_result.strategy_params,
+            "metrics": {
+                "total_trades": None,
+                "total_return": round(float(dca.total_return_rate), 6),
+                "annual_return": None,
+                "max_drawdown": None,
+                "max_drawdown_start": None,
+                "max_drawdown_end": None,
+                "sharpe_ratio": None,
+                "win_rate": None,
+                "profit_factor": None,
+            },
+            "equity_curve": equity_curve,
+            "trades": [],
+            "signals": [],
+            "price_data": price_data,
+            "dca_warning": job_result.dca_warning,
+        }
+
+    # ── error branch (execution failed) ──────────────────────────────────
+    if job_result.result is None:
+        return {
+            "symbol": job_result.symbol,
+            "market": market,
+            "currency": currency,
+            "engine": job_result.engine,
+            "strategy_type": strategy_type,
+            "strategy_params": job_result.strategy_params,
+            "metrics": None,
+            "equity_curve": [],
+            "trades": [],
+            "signals": [],
+            "price_data": price_data,
+            "dca_warning": None,
+            "error": job_result.error,
+        }
+
+    # ── standard backtest branch ──────────────────────────────────────────
+    r = job_result.result
+    equity_curve = _serialize_equity_curve(r.equity_curve)
+    trades = _serialize_trades(r.trades)
+    signals = _signals_from_trades(r.trades)
+
+    return {
+        "symbol": job_result.symbol,
+        "market": market,
+        "currency": currency,
+        "engine": job_result.engine,
+        "strategy_type": strategy_type,
+        "strategy_params": job_result.strategy_params,
+        "metrics": {
+            "total_trades": int(r.total_trades),
+            "total_return": round(float(r.total_return), 6),
+            "annual_return": round(float(r.annual_return), 6),
+            "max_drawdown": round(float(r.max_drawdown), 6),
+            "max_drawdown_start": str(r.max_drawdown_start) if r.max_drawdown_start else None,
+            "max_drawdown_end": str(r.max_drawdown_end) if r.max_drawdown_end else None,
+            "sharpe_ratio": round(float(r.sharpe_ratio), 4),
+            "win_rate": round(float(r.win_rate), 4),
+            "profit_factor": round(float(r.profit_factor), 4),
+        },
+        "equity_curve": equity_curve,
+        "trades": trades,
+        "signals": signals,
+        "price_data": price_data,
+        "dca_warning": None,
+    }
+
+
+def _serialize_price_data(data: pd.DataFrame) -> list[dict[str, Any]]:
+    if data is None or data.empty:
+        return []
+    rows = []
+    for _, row in data.iterrows():
+        date_val = row.get("date") or row.name
+        try:
+            date_str = str(pd.Timestamp(date_val).date())
+        except Exception:  # noqa: BLE001
+            date_str = str(date_val)[:10]
+        rows.append({
+            "date": date_str,
+            "open": float(row.get("open", 0) or 0),
+            "high": float(row.get("high", 0) or 0),
+            "low": float(row.get("low", 0) or 0),
+            "close": float(row.get("close", 0) or 0),
+            "volume": int(float(row.get("volume", 0) or 0)),
+        })
+    return rows
+
+
+def _serialize_equity_curve(equity_series: pd.Series) -> list[dict[str, Any]]:
+    if equity_series is None or equity_series.empty:
+        return []
+    rows = []
+    for dt, val in equity_series.items():
+        try:
+            date_str = str(pd.Timestamp(dt).date())
+        except Exception:  # noqa: BLE001
+            date_str = str(dt)[:10]
+        rows.append({"date": date_str, "value": round(float(val), 2)})
+    return rows
+
+
+def _serialize_trades(trades_df: pd.DataFrame) -> list[dict[str, Any]]:
+    if trades_df is None or trades_df.empty:
+        return []
+    rows = []
+    for _, row in trades_df.iterrows():
+        entry_price = float(row.get("entry_price", 0) or 0)
+        shares = int(float(row.get("quantity", 0) or 0))
+        pnl = float(row.get("pnl", 0) or 0)
+        cost_basis = entry_price * shares
+        return_pct = round(pnl / cost_basis, 6) if cost_basis != 0 else 0.0
+        try:
+            entry_date = str(pd.Timestamp(row["entry_date"]).date())
+        except Exception:  # noqa: BLE001
+            entry_date = str(row.get("entry_date", ""))[:10]
+        try:
+            exit_date = str(pd.Timestamp(row["exit_date"]).date())
+        except Exception:  # noqa: BLE001
+            exit_date = str(row.get("exit_date", ""))[:10]
+        rows.append({
+            "entry_date": entry_date,
+            "exit_date": exit_date,
+            "side": str(row.get("side", "long")).lower(),
+            "entry_price": entry_price,
+            "exit_price": float(row.get("exit_price", 0) or 0),
+            "shares": shares,
+            "pnl": round(pnl, 2),
+            "return_pct": return_pct,
+        })
+    return rows
+
+
+def _signals_from_trades(trades_df: pd.DataFrame) -> list[dict[str, Any]]:
+    if trades_df is None or trades_df.empty:
+        return []
+    signals = []
+    for _, row in trades_df.iterrows():
+        try:
+            entry_date = str(pd.Timestamp(row["entry_date"]).date())
+        except Exception:  # noqa: BLE001
+            entry_date = str(row.get("entry_date", ""))[:10]
+        try:
+            exit_date = str(pd.Timestamp(row["exit_date"]).date())
+        except Exception:  # noqa: BLE001
+            exit_date = str(row.get("exit_date", ""))[:10]
+        signals.append({"date": entry_date, "side": "buy", "price": float(row.get("entry_price", 0) or 0)})
+        signals.append({"date": exit_date, "side": "sell", "price": float(row.get("exit_price", 0) or 0)})
+    return signals
+
+
+def _dca_equity_curve(transactions: pd.DataFrame, price_data: pd.DataFrame) -> list[dict[str, Any]]:
+    """Derive daily equity curve from DCA transactions + price data."""
+    if price_data is None or price_data.empty:
+        return []
+    if transactions is None or transactions.empty:
+        return []
+
+    price = price_data.copy()
+    price["_date_key"] = pd.to_datetime(price["date"]).dt.tz_localize(None).dt.normalize()
+
+    tx = transactions.copy()
+    tx["_date_key"] = pd.to_datetime(tx["date"]).dt.tz_localize(None).dt.normalize()
+    tx_sorted = tx.dropna(subset=["_date_key"]).sort_values("_date_key")
+    tx_rows = tx_sorted.to_dict("records")
+
+    tx_idx = 0
+    cum_shares = 0
+    cash = 0.0
+    result = []
+
+    for _, row in price.iterrows():
+        day = row["_date_key"]
+        while tx_idx < len(tx_rows):
+            tx_day = pd.Timestamp(tx_rows[tx_idx]["_date_key"])
+            if tx_day <= day:
+                cum_shares = int(tx_rows[tx_idx].get("cumulative_shares", cum_shares))
+                cash = float(tx_rows[tx_idx].get("cash_balance", cash))
+                tx_idx += 1
+            else:
+                break
+        close = float(row.get("close", 0) or 0)
+        value = round(cum_shares * close + cash, 2)
+        result.append({"date": str(day.date()), "value": value})
+
+    return result
 
 
 def _build_fetchers_from_config(market: str = "tw") -> list[tuple[str, IDataFetcher]]:
