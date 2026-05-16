@@ -84,6 +84,27 @@ Only modify files when user explicitly requests fix, implement, or commit. Verif
 
 目標是讓 Agent 與使用者看到一致結果，避免誤用其他全域或內建 runtime Python。
 
+## 跑 pytest 前先查殘留 process
+
+API 測試曾 leak async task 卡在真網路 → 前次 pytest 沒結束、持住 file handle，新 pytest 會秒卡。
+
+**症狀**：pytest 卡 30+ 分鐘無輸出 / 後續 pytest 全部卡。**健康基準**：全套 506 條約 7–10 秒；超過 30 秒立刻 Ctrl+C 查。
+
+```powershell
+# 查本專案 venv 殘留
+Get-Process python -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -like "*QuantTraderV2*" } |
+  Select-Object Id, StartTime,
+    @{N="MinAge";E={[int]((Get-Date)-$_.StartTime).TotalMinutes}} |
+  Format-Table -AutoSize
+
+# 砍（MinAge > 10 且非本 session 啟動的就是孤兒）
+Stop-Process -Id <PID>,<PID> -Force
+
+# 驗證：輕量測試應 < 2 秒
+.\.venv\Scripts\python.exe -m pytest tests/test_indicators.py -q
+```
+
 ## 驗證指令速查
 
 ```powershell
