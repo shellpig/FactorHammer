@@ -549,6 +549,8 @@ cd web && pnpm exec playwright test
 
 注意：Windows/OneDrive 路徑下 pytest 暫存目錄可能出現 `PermissionError: [WinError 5]`，視為環境問題，不影響測試結果。
 
+注意：`web/` 的 `pnpm build` 以使用者人工 PowerShell 執行結果為準。2026-05-18 已確認人工執行 `cd web; pnpm build` 可完整通過；但 Codex runner / agent shell 目前在 Windows 子程序鏈上不可靠，曾卡在 `next build` banner 後且 timeout 未能正確終止。後續 agent 驗證前端以 `npx tsc --noEmit` + `pnpm test -- --run` 為主要 gate；不要再由 agent 自動跑 `pnpm build`，除非使用者明確要求並接受可能卡住。
+
 ---
 
 ## 未來：打包成 Windows 安裝檔（規劃中，未動工）
