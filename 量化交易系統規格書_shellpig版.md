@@ -4169,6 +4169,416 @@ Goodinfo 抓取限制：
 | EPS `date=report_date` 與會計期間語意不同 | 接受；metadata 記錄資料公告範圍，會計期間仍保留 `year/quarter` |
 | Dashboard 高度增加 | chart 縮至 300px；若 1080p 仍需 scroll，先接受 |
 
+### Phase 12：首次執行 Token Onboarding 與 Portable Runtime 重整
+
+#### Phase 12 定位
+
+Phase 12 解決個人版「首次安裝後第一次能跑起來」的兩個體驗痛點：
+
+1. **Token 設定流程**：原 install.bat 結尾以 Notepad 打開 `.env` 讓使用者貼 token，UX 粗糙且只在安裝期出現。改為在執行階段：若偵測到 `FINMIND_TOKEN` 未設定或為空，dashboard 第一次開啟就跳出強制 modal，內含 FinMind 官網申請連結與輸入框，輸入後實際打 FinMind API 驗證有效性才寫回 `.env`。AI API keys（Anthropic / OpenAI / Gemini）於 modal 內以選填欄位提供，整合在同一次設定流程。
+2. **Runtime 一鍵到位**：原 install.bat 只跑 `uv sync`（Python deps），完全沒有處理 Next.js 前端所需的 Node.js 與 pnpm。乾淨機器跑完仍無法啟動前端。改為採可攜式 Node.js（鎖定 v22.11.0 LTS）落地到專案 `tools\node\`，由 install.bat 自動下載、校驗 SHA-256、解壓，並透過 corepack 啟用 pnpm。整個流程免 UAC、不污染系統環境，且與未來 Inno Setup 打包規劃（`PROJECT_BRIEF.md:538` 可攜式 Python + 可攜式 Node）一致。
+
+同步將執行檔 `run_quanttraderV2.bat` 改名為 `run_factorhammer.bat`，對齊 P11-E 已敲定的工具名稱 `FactorHammer`，並刪除舊腳本不保留 alias。
+
+Phase 12 不改既有業務邏輯（回測、分析、資料管線），不擴 phase 範圍。所有變更聚焦於安裝與首次執行體驗。
+
+#### Phase 12 子階段與依賴
+
+| 子階段 | 名稱 | 內容 | 執行角色 |
+|:---|:---|:---|:---|
+| 12-A | Portable Node.js + install.bat 改版 | install.bat 重整為 5 步驟、新增 portable Node 下載 + SHA-256 驗證、corepack/pnpm 啟用、`run_quanttraderV2.bat` 改名為 `run_factorhammer.bat`、`web/package.json` 加 `packageManager` 欄、`.gitignore` 加 `tools/` | implementer |
+| 12-B | Backend Config API 擴充 | **擴充**既有 `api/routers/config.py` 新增 `POST /api/config/secrets/validate`；沿用既有 `GET /api/config/secrets/status`；**重構** `_write_env` 為共用 atomic helper、既有 `update_secrets` 與新 endpoint 共用 | implementer |
+| 12-C | Frontend Token Setup Dialog | 新增 `web/src/components/dashboard/token-setup-dialog.tsx`；dashboard 進入時偵測 token 狀態、未設定則強制 block modal、含 FinMind 申請連結、含 AI keys 選填折疊區、儲存時呼叫 12-B API | implementer |
+| 12-D | Verifier 文件收尾 | 規格書 / 開發設計方針 / 測試指南 / 已知問題 / PROJECT_BRIEF / AGENTS 同步更新、舊腳本名移除確認、手動驗收清單執行 | verifier（不由 implementer 動） |
+
+執行順序固定為：
+
+```text
+12-A -> 12-B -> 12-C -> 12-D
+```
+
+依賴理由：12-A 提供 Node runtime，否則 12-C 連 build / test 都跑不起來；12-B 提供 API 合約，12-C 才能對接；12-D 必須在 12-A/B/C 全部驗收通過後啟動。
+
+12-A 與 12-B 雖然檔案不重疊（一個動 `.bat` 與 `tools/`，一個動 `api/`），但 12-B 後端啟動時要 `load_dotenv()`，需要 12-A 完成的 `.env` 結構，因此仍按序執行。
+
+依 AGENTS.md「Implementer 只動代碼 / 測試 / 註解」原則，12-A、12-B、12-C 的 implementer 完成後**只能改程式碼、測試、fixtures**，不得修改 `.md` 文件（含 `驗證後已知問題.md`）。文件異動建議列在 commit description 或單獨筆記交付，由使用者於 12-D 觸發 verifier 處理。
+
+#### Phase 12 共通規則
+
+**Token 判定統一**：以下三種情況都視為「未設定」，觸發 modal：
+
+- 環境變數不存在（`.env` 無此欄位、且 `os.environ` 無）
+- 環境變數為空字串
+- 環境變數值為純空白
+
+判定函式在 `config_service` 集中，前端不重複邏輯。現有 `get_secrets_status()` 已是 .env + os.environ 混合判定，但有「空白字串視為 falsy 後 fallback 到 os.environ」的細節 bug — 12-B 順手修為「.env 優先；.env 為空白字串則視為未設定，**不** fallback 到 os.environ；.env 不存在此欄位時才查 os.environ」。
+
+**.env 修改採共用 atomic helper**：12-B 重構 `_write_env` 後，既有 `update_secrets` 與新 `POST /api/config/secrets/validate` 都呼叫同一個 helper。helper 必須：
+
+- 保留註解（`# ...` 行）
+- 保留空行
+- 保留未知 keys（檔內已存在但本次未送的 env var）
+- 只更新有送的欄位
+- 寫 `.env.tmp` → `os.replace(".env.tmp", ".env")` 達成 atomic
+- 成功後同步 `os.environ`
+- 成功後 `clear_config_cache()`
+- **不** sort keys（保留原檔順序；新增的 key append 到檔尾）
+
+**所有外部連結固定 attribute**：`target="_blank" rel="noopener noreferrer"`。
+
+#### 12-A：Portable Node.js + install.bat 改版
+
+##### Node 版本選擇
+
+鎖定 `v22.11.0`（Node 22 LTS，Active LTS 至 2025-10-21、Maintenance LTS 至 2027-04-30，個人版生命週期內充裕）。選擇理由：
+
+- 同一版本確保所有使用者跑同一個 runtime，debug 容易
+- 22.x 是當前 LTS 主線，生態最廣
+- patch 號鎖死（不抓 latest），避免 nodejs.org URL 結構變動或 patch 行為差異
+- 升級時改 install.bat 一行字 + 改 SHA-256 即可，使用者重跑 install.bat 自動覆蓋 `tools\node\`
+
+##### install.bat 步驟重構
+
+| 步驟 | 內容 |
+|:---|:---|
+| [1/5] | 檢查 / 安裝 uv（沿用原邏輯） |
+| [2/5] | `uv sync` 安裝 Python deps（沿用原邏輯） |
+| [3/5] | 檢查 / 下載 portable Node.js（**新增**） |
+| [4/5] | `corepack enable` + `pnpm install --frozen-lockfile`（**新增**） |
+| [5/5] | 若 `.env` 不存在則 `copy .env.example .env`（移除 Notepad prompt） |
+
+##### Portable Node.js 流程（步驟 3）
+
+```text
+偵測 tools\node\node.exe
+├── 存在 → 跳過下載，直接進步驟 4
+└── 不存在 →
+    ├── 下載 https://nodejs.org/dist/v22.11.0/node-v22.11.0-win-x64.zip
+    ├── 下載 https://nodejs.org/dist/v22.11.0/SHASUMS256.txt
+    ├── 用 PowerShell Get-FileHash 比對 zip 的 SHA-256 與 SHASUMS256.txt 內值
+    ├── 驗證通過 → Expand-Archive 解壓到 tools\node\
+    │              （zip 內含 node-v22.11.0-win-x64\ 上層資料夾，需扁平化到
+    │               tools\node\ 下，使 tools\node\node.exe 直接可用）
+    └── 任一步驟失敗 →
+        ├── 重試最多 3 次（每次間隔 1 秒）
+        └── 仍失敗 → 停止並顯示手動下載 URL + 目標解壓路徑指引
+```
+
+##### pnpm 啟用流程（步驟 4）
+
+install.bat 內部把 `%~dp0tools\node` prepend 到 `PATH`，然後**逐項驗證**：
+
+1. `node --version` 預期輸出 `v22.11.0`；不符則報錯停止
+2. `corepack --version` 可用
+3. 在 `web/` 內 `corepack enable`
+4. `pnpm --version` 預期輸出 `11.1.1`（對齊 `web/package.json` 的 `packageManager` 欄位）
+5. `pnpm install --frozen-lockfile`（避免 lockfile 漂移）
+
+##### .env 步驟簡化（步驟 5）
+
+| 變更 | 說明 |
+|:---|:---|
+| 移除 | 原「Open .env in Notepad now? (y/n)」prompt 與 Notepad 呼叫 |
+| 保留 | `.env` 已存在則跳過（維持 idempotent） |
+| 修正 | 結尾訊息 `run_quanttrader.bat` → `run_factorhammer.bat` |
+
+Token 設定完全交由執行階段的 dashboard modal 處理（12-C）。
+
+##### 執行檔改名
+
+| 變更 | 說明 |
+|:---|:---|
+| 改名 | `run_quanttraderV2.bat` → `run_factorhammer.bat`（內容照舊） |
+| 刪舊 | 原 `run_quanttraderV2.bat` 直接刪除，**不保留 alias** |
+| 視窗標題 | `cmd /k` 標題從 `QT-Backend-8000` / `QT-Frontend-3000` 改為 `FactorHammer-Backend-8000` / `FactorHammer-Frontend-3000`；banner 文字 `QuantTrader v2 - Dev Stack Launcher` → `FactorHammer - Dev Stack Launcher` |
+| 新增邏輯 | `run_factorhammer.bat` 開頭加入：`if exist "%~dp0tools\node\node.exe" set "PATH=%~dp0tools\node;%PATH%"`，讓平日啟動也走 portable Node |
+
+##### web/package.json 修改
+
+新增頂層欄位：
+
+```json
+{
+  "packageManager": "pnpm@11.1.1"
+}
+```
+
+版本對齊專案目前實際使用版本；若 lockfile 對應的版本不同，以 lockfile 顯示版本為準。
+
+##### .gitignore 修改
+
+新增 `tools/`。`tools/node/` 解壓後約 90 MB，不進版本控制；每位使用者跑 install.bat 時各自下載。
+
+##### 12-A 驗收
+
+| 項目 | 驗收條件 |
+|:---|:---|
+| 乾淨機器（無 Node、無 pnpm） | install.bat 5 步驟全綠，結束時 `tools\node\node.exe` 與 `web\node_modules\` 都存在 |
+| 已有系統 Node 的機器 | 仍裝 portable Node 到 `tools\node\`，系統 Node 不受影響；`run_factorhammer.bat` 內 `node --version` 顯示 v22.11.0 |
+| install.bat 重跑（idempotent） | `tools\node\node.exe` 已存在則跳過下載；不重複解壓；不破壞既有 `.env` |
+| Node zip 下載失敗 | 重試 3 次後顯示手動下載指引並停止；指引中的 URL 與目標路徑正確 |
+| SHA-256 不符 | 視為下載失敗，進入重試流程 |
+| corepack / pnpm 版本驗證 | 步驟 4 任一驗證失敗（node 版本錯、corepack 不可用、pnpm 版本不符）立即報錯停止 |
+| pnpm 版本鎖定 | `pnpm --version` 輸出 `11.1.1`（與 `web/package.json` packageManager 一致） |
+| 改名 | `run_quanttraderV2.bat` 已刪除；`run_factorhammer.bat` 能正確啟動 dashboard；視窗標題顯示 FactorHammer |
+| .gitignore | `git status --short` 不顯示 `tools/`、`node-v22.11.0-win-x64.zip`、`SHASUMS256.txt` 等下載中介檔 |
+
+#### 12-B：Backend Config API 擴充
+
+##### 檔案結構
+
+| 檔案 | 動作 |
+|:---|:---|
+| `api/routers/config.py` | **擴充**：新增 `POST /api/config/secrets/validate`；不動既有 `PUT /api/config/secrets`、`GET /api/config/secrets/status` |
+| `src/services/config_service.py` | **修改**：重構 `_write_env` 為 atomic + 保留註解 / 空行 / 未知 keys；新增 `validate_finmind_token()` service 函式；微調 `get_secrets_status()` 修「空白字串 fallback」bug |
+| `api/main.py` | 確認啟動時有 `dotenv.load_dotenv()`（若無則補上）；不新增 router 掛載（既有已掛） |
+| `tests/test_api/test_config_api.py` | **擴充**（不新增同名 router 測試檔）：新增 `validate` endpoint 測試 |
+
+##### API 合約
+
+**沿用既有：`GET /api/config/secrets/status`**
+
+無變更（已實作，12-C 直接呼叫即可）。Response 200：
+
+```json
+{
+  "data": {
+    "openai": false,
+    "anthropic": false,
+    "gemini": false,
+    "finmind": true,
+    "google": false
+  },
+  "meta": {}
+}
+```
+
+12-C frontend 只關心 `finmind` 是否為 true，其他欄位忽略即可。
+
+**新增：`POST /api/config/secrets/validate`**
+
+Request Body：
+
+```json
+{
+  "finmind": "abc123...",
+  "anthropic": "sk-ant-...",
+  "openai": null,
+  "gemini": null
+}
+```
+
+- `finmind` 必填、非空白字串
+- 其他選填，可為 `null` 或省略；省略代表「不更新此欄位」，**不會清空既有值**（modal 不提供清空 AI keys 功能；清空請使用者直接編輯 .env 或留待未來 Settings 頁實作）
+
+Response 200：
+
+```json
+{
+  "data": { "updated": true },
+  "meta": {}
+}
+```
+
+錯誤（沿用 FastAPI HTTPException `detail.error.code/message` 慣例）：
+
+| HTTP | code | message（中文，給前端直接顯示） |
+|:---|:---|:---|
+| 400 | `FINMIND_REQUIRED` | `FinMind token 為必填欄位。` |
+| 400 | `FINMIND_TOKEN_INVALID` | `Token 無效，請確認從 FinMind 使用者資訊頁複製正確。` |
+| 502 | `FINMIND_UNREACHABLE` | `無法連線至 FinMind 伺服器，請檢查網路後重試。` |
+| 500 | `ENV_WRITE_FAILED` | `寫入設定檔失敗：<原始錯誤>` |
+
+##### FinMind 驗證流程
+
+固定流程，**驗證成功才寫 .env**：
+
+1. 收到 request → 檢查 `finmind` 欄位 strip 後非空 → 否則回 400 `FINMIND_REQUIRED`
+2. 用 `finmind` token 打 FinMind API 驗證
+   - 端點：`https://api.finmindtrade.com/api/v4/user_info`（GET，query string `token=<value>`）
+   - 若該端點實作期確認不適合（回應太慢、不穩、被限流），改用其他可純驗證 token 的輕量端點，並在 commit message 註明替換理由
+   - timeout：5 秒
+3. 收 200 且回應含 `status` 為成功值 → 通過
+4. 收 401 / 403 / 422 或回應含明確「token 無效」訊息 → 回 400 `FINMIND_TOKEN_INVALID`
+5. timeout / DNS 失敗 / 連線拒絕 / 5xx → 回 502 `FINMIND_UNREACHABLE`
+6. 通過後 → 呼叫共用 `_write_env` helper（只更新有送的欄位）→ 同步 `os.environ` + `clear_config_cache()` → 回 200
+
+**P12 不允許「驗證跳過」分支**。FinMind 限流時就是回 502，使用者重試；不能因為限流就直接寫入未驗證的 token。
+
+##### 12-B 驗收
+
+| 項目 | 驗收條件 |
+|:---|:---|
+| `secrets/status` 三種狀態 | 無 env / 空字串 / 純空白 → false；有有效字串 → true（同時驗 .env 優先、os.environ fallback） |
+| `secrets/validate` 必填 | 缺 `finmind` 或空白 → 400 `FINMIND_REQUIRED` |
+| `secrets/validate` 驗證失敗 | mock FinMind 回 401 → 400 `FINMIND_TOKEN_INVALID`，`.env` 不變、`os.environ` 不變 |
+| `secrets/validate` 網路錯誤 | mock FinMind 拋 ConnectionError / TimeoutError → 502 `FINMIND_UNREACHABLE`，`.env` 不變 |
+| `secrets/validate` 成功 | mock FinMind 回 200 → `.env` 含新 token、`os.environ` 同步、其他既有 keys 不變、註解 / 空行保留 |
+| `_write_env` atomic | 模擬寫入中斷（mock `os.replace` 拋例外）後，`.env` 保持原狀；`.env.tmp` 可殘留但其內容完整 |
+| `_write_env` 保留性 | 既有 `.env` 含註解 `# foo` 與空行，呼叫 helper 後註解與空行位置不變；未送的 keys 值不變；新 key append 到檔尾 |
+| 部分欄位更新 | POST 只送 `finmind` 不送 anthropic，已存在的 `ANTHROPIC_API_KEY` 不被清空 |
+| 既有 `PUT /api/config/secrets` 不破壞 | 既有測試全綠；行為不變（write-only、不驗證） |
+| Envelope 對齊 | 成功：`{ data, meta }`；失敗：`detail.error.code/message` |
+
+#### 12-C：Frontend Token Setup Dialog
+
+##### 檔案結構
+
+| 檔案 | 動作 |
+|:---|:---|
+| `web/src/components/dashboard/token-setup-dialog.tsx` | 新增 |
+| `web/src/components/dashboard/dashboard-page-client.tsx` | 修改：useEffect 偵測 token 狀態、需要時開啟 modal；成功後 mutate dashboard SWR |
+| `web/src/tests/components/dashboard/token-setup-dialog.test.tsx` | 新增 |
+| 既有 dashboard 測試 | 補 mock：`GET /api/config/secrets/status` 預設回 `{ data: { finmind: true, ... } }`，避免每個測試都跳 modal |
+
+##### 元件介面
+
+```ts
+export function TokenSetupDialog({
+  open,
+  onSaved,
+}: {
+  open: boolean;
+  onSaved: () => Promise<void> | void;
+}): JSX.Element
+```
+
+`open` 由父層控制，但 modal 本身**不接受任何關閉操作**；`onSaved` 在儲存成功後呼叫，由父層負責關閉與後續 SWR mutate。沒有 `onOpenChange` prop（Dialog.Root 的 `onOpenChange` 內部攔截為 no-op）。
+
+##### Modal 行為規格
+
+樣式對齊 `shareholder-meeting-edit-dialog.tsx`（`bg-slate-950` + `border-slate-800` + `rounded-xl`）。
+
+| 行為 | 規格 |
+|:---|:---|
+| 標題 | 「設定 API Token」 |
+| 關閉鈕（X） | **不顯示** |
+| ESC | `onEscapeKeyDown` `preventDefault` |
+| 點 overlay | `onPointerDownOutside` `preventDefault` |
+| 程式化關閉 | Dialog.Root `onOpenChange` 內部 no-op |
+
+##### 欄位規格
+
+**FinMind Token 區塊（必填）**：
+
+- 上方提示文字：「在 FinMind 官網註冊並登入後，於『使用者資訊』頁面取得 API Token，複製貼上至下方。」
+- 兩個超連結（行內並排，小字、底線、`target="_blank" rel="noopener noreferrer"`）：
+  - 「FinMind 官網（註冊／登入）」→ `https://finmindtrade.com/analysis/#/data/api`
+  - 「取得 API Token」→ `https://finmindtrade.com/analysis/#/account/user`
+- 輸入框：`type="password"`，右側「顯示／隱藏」切換鈕
+- 欄位下方錯誤訊息區（紅字，預設隱藏）
+
+**AI API Keys 折疊區（選填）**：
+
+- 折疊標題：「AI API Keys（選填）」+ 展開／收合 icon
+- 預設收合
+- 展開後三個欄位（皆 `type="password"`、皆選填）：
+  - Anthropic API Key → 對應 backend 欄位 `anthropic`
+  - OpenAI API Key → `openai`
+  - Gemini API Key → `gemini`
+- 三個欄位不擋儲存（任一空白都可儲存）
+- **明確不提供清空既有 key 功能**；欄位空白時前端送 request 時略過該欄位（或送 `null`），backend 解為「不更新此欄位」
+
+**儲存按鈕**：
+
+- 文字：「儲存並繼續」
+- Disabled 條件：`finmind.trim() === "" || saving`
+- 點擊行為：
+  1. `saving = true`，按鈕灰且顯示 spinner
+  2. `apiPost<{ updated: boolean }>("/api/config/secrets/validate", body)`，body 只包含非空白欄位
+  3. 回 200 → 呼叫 `onSaved()`（父層關閉 modal + mutate）
+  4. 捕到 `ApiClientError`：
+     - `code === "FINMIND_REQUIRED"` → FinMind 欄位下顯示「FinMind Token 為必填」
+     - `code === "FINMIND_TOKEN_INVALID"` → FinMind 欄位下顯示「Token 無效，請確認從 FinMind 使用者資訊頁複製正確」
+     - `code === "FINMIND_UNREACHABLE"` → FinMind 欄位下顯示「無法連線至 FinMind 伺服器，請檢查網路後重試」
+     - 其他 → 顯示 `error.message` 或 fallback「儲存失敗，請稍後再試」
+  5. `saving = false`，按鈕恢復可按
+
+##### Dashboard 入口整合
+
+`dashboard-page-client.tsx` 改動概要：
+
+- `useEffect` 入口呼叫 `apiGet<SecretsStatus>("/api/config/secrets/status")`；`res.data.finmind === false` 時開啟 modal
+- status endpoint 失敗時不顯示 modal（降級 UX，非 hard fail），讓 dashboard 嘗試載入（失敗時各 panel 自己回報）
+- `onSaved` callback：關閉 modal → `mutate(() => true, undefined, { revalidate: true })` 觸發所有 SWR key 重抓 → `router.refresh()`
+
+`mutate(() => true, ...)` 全域 invalidate 範圍寬，避免「token 寫入成功後，原本 401/403 失敗的 panel 不會自動恢復」。
+
+##### 12-C 驗收
+
+| 項目 | 驗收條件 |
+|:---|:---|
+| 未設 token 時開 dashboard | Modal 自動跳出，不可關閉 |
+| 已設 token 時開 dashboard | Modal 不跳，dashboard 正常 |
+| status endpoint 失敗 | Modal 不跳，dashboard 嘗試載入（降級 UX，非 hard fail） |
+| 儲存鈕灰掉 | FinMind 欄空白時灰；輸入後解灰 |
+| 儲存中 | 按鈕灰、顯示 spinner、輸入框 disabled |
+| Token 無效 | 紅字錯誤「Token 無效…」、modal 保持開、按鈕恢復可按 |
+| 網路錯誤 | 紅字錯誤「無法連線至 FinMind…」、modal 保持開、按鈕恢復可按 |
+| 儲存成功 | Modal 關閉、SWR 全域 mutate 觸發、`router.refresh()` 觸發、後續 dashboard 請求帶上新 token |
+| 不可被 ESC 關 | 按 ESC 無反應 |
+| 不可被點 overlay 關 | 點 modal 外無反應 |
+| AI keys 折疊 | 預設收合；展開後三個欄位可獨立輸入；空白不擋儲存 |
+| 不清空既有 key | AI key 欄位空白時 request body 不含該欄位；backend 既有值不變 |
+| Envelope 對齊 | 前端用 `apiGet<T>` / `apiPost<T>` 並讀 `res.data.xxx`，不直接讀 `res.xxx` |
+| 既有 dashboard 測試 | 全綠（已 mock `secrets/status` 回 `finmind: true`） |
+
+#### 12-D：Verifier 文件收尾
+
+**此子階段由使用者明示啟動後，verifier 角色執行；implementer 不得提前動文件。**
+
+##### 文件同步檢查清單
+
+| 檔案 | 必須更新項 |
+|:---|:---|
+| `量化交易系統規格書_shellpig版.md` | 新增「### Phase 12」段落（本段）；版本變更歷史 V2.x 表加一列 |
+| `開發設計方針.md` | 新增 `api/routers/config.py`（擴充項目）、`token-setup-dialog.tsx`、`tools/node/` 架構、`_write_env` atomic helper 的設計說明 |
+| `測試指南.md` | 新增 12-A / 12-B / 12-C 手動驗收步驟 |
+| `PROJECT_BRIEF.md` | 啟動腳本名稱改 `run_factorhammer.bat`；新增 portable Node 段落並與「未來打包」段落交叉引用 |
+| `AGENTS.md` | 啟動腳本名稱改 `run_factorhammer.bat` |
+
+##### 全文件同步驗收
+
+`run_quanttraderV2.bat` 在所有現役文件（排除 `舊文件/` 與 V2.x 歷史變更紀錄段）**不得殘留**作為主啟動入口字眼。verifier 完成後跑：
+
+```powershell
+Get-ChildItem -Recurse -Include *.md -Exclude 舊文件 |
+  Select-String "run_quanttraderV2|run_quanttrader\.bat" |
+  Where-Object { $_.Line -notmatch "^\|.*V2\." }
+```
+
+預期輸出僅剩版本變更歷史段落的歷史記錄，無現役指引殘留。
+
+#### Phase 12 不做
+
+| 項目 | 原因 |
+|:---|:---|
+| 自動裝 Node.js 到系統（MSI / winget） | 採可攜路線，與打包規劃一致；避免 UAC |
+| nvm / fnm 等 Node 版本切換工具 | 個人版單版本足夠，加 shim 反而複雜 |
+| 舊 Streamlit UI 的 token modal | Phase 10-H 已移除 Streamlit |
+| Token modal 內驗證 Anthropic / OpenAI / Gemini key | 驗證會打 paid API，且這些 keys 是選填，使用者填錯只影響 AI 功能、不擋 dashboard |
+| Modal 內提供「先跳過、稍後設定」 | Dashboard 全部功能都需要 FinMind token，跳過後一進去就大量 API fail |
+| Modal 內提供清空既有 key 功能 | 個人版單一使用者，清空可直接編 .env；modal 範圍聚焦 onboarding |
+| FinMind 限流時允許寫入未驗證的 token | 違反「驗證成功才寫入」原則；使用者重試即可 |
+| Linux / macOS 版的 install.sh | 個人版鎖定 Windows，跨平台留待打包階段（甚至更晚） |
+| Token 加密儲存 | `.env` 屬個人本機檔案，與 git history 隔離（已在 .gitignore）即可 |
+| Token 過期偵測 | FinMind token 無明確過期，使用時若 API 401 由各 service 自己回報，不在 P12 範圍 |
+| 改造既有 `PUT /api/config/secrets` 加驗證 | 維持 write-only 行為避免影響未來 Settings 頁；onboarding 用新 endpoint |
+
+#### Phase 12 風險
+
+| 風險 | 影響 | 緩解 |
+|:---|:---|:---|
+| nodejs.org 下載 URL 結構變動 | install.bat 步驟 3 失敗 | 鎖死 v22.11.0 + SHASUMS256 校驗，URL 變動時手動下載指引仍有效；長期可考慮把 zip 鏡像到 GitHub Release |
+| FinMind 驗證端點變動或限流 | 12-B POST 一直失敗 | 端點選擇放在實作期確認；限流時回 502 讓使用者重試，**不**允許繞過驗證寫入 |
+| Corepack 啟用需要 `--global` 權限 | 步驟 4 失敗 | corepack 啟用 portable Node 的 shim 寫到 `tools\node\` 內，不寫系統 PATH，預期不需權限 |
+| pnpm lockfile 與 packageManager 版本不一致 | `pnpm install --frozen-lockfile` fail | install.bat 明確錯誤訊息；規格 commit 前驗證 lockfile 對應 11.1.1 |
+| 90 MB tools\node\ 佔用 | 使用者抱怨磁碟用量 | 安裝完成提示中明示尺寸；未來打包階段可考慮共用 runtime 目錄 |
+| Atomic write 在某些 OneDrive 路徑失敗 | `.env` 寫入異常 | `os.replace` 在 Windows 是 atomic，但 OneDrive 同步可能 lock 檔；錯誤回 500 `ENV_WRITE_FAILED` 並提示「請暫停 OneDrive 同步後重試」 |
+| 使用者既有 `.env` 有自定 keys | 寫入時被誤刪 | 重構後 `_write_env` 保留註解 / 空行 / 未知 keys；測試覆蓋此情境 |
+| 既有 `PUT /api/config/secrets` 行為被連動破壞 | 未來 Settings 頁回歸 fail | 12-B 只擴充 `_write_env` 內部實作，不動 `update_secrets` 對外介面；既有 router 測試需全綠 |
+| SWR mutate 範圍過大造成多餘請求 | 儲存成功瞬間 dashboard 重新載入所有 panel | 個人版單頁面 panel 不多，實測可接受；若有效能問題未來改為精準 mutate（列舉 known SWR keys） |
+
 ---
 
 ## 附錄 A：免責聲明全文

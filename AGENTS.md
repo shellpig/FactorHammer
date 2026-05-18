@@ -50,7 +50,7 @@ Only modify files when user explicitly requests fix, implement, or commit. Verif
 - `未涵蓋資料項目.md` — 目前不抓不存的資料項目
 - `docs/mock_dashboard_payload.json` — Phase 10 dashboard mock payload
 - `web/_design/` — Phase 10 視覺設計稿；只作參考，不可 import 進 build
-- `run_api.bat` / `run_web.bat` / `run_dev.bat` / `run_quanttraderV2.bat` — Phase 10 本機啟動腳本
+- `run_api.bat` / `run_web.bat` / `run_dev.bat` / `run_factorhammer.bat` — Phase 10 本機啟動腳本（Phase 12 起 `run_quanttraderV2.bat` 改名為 `run_factorhammer.bat`）
 
 目前主線與技術棧只維護在 `PROJECT_BRIEF.md`，避免雙份內容漂移。
 
@@ -119,7 +119,7 @@ npx tsc --noEmit
 pnpm build
 
 # Local dev
-.\run_quanttraderV2.bat
+.\run_factorhammer.bat
 .\run_api.bat
 .\run_web.bat
 ```
