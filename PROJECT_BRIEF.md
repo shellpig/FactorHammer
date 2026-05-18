@@ -10,11 +10,7 @@
 
 台股 / 美股 US-1 量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦資料管線、研究、回測與 AI 分析，不接實盤。
 
-2026-05-18 Phase 11 規格已更新：11-D 從原先待定 / 散戶多空比 placeholder 改為 Goodinfo 股利政策 fallback，補強事件行事曆的「即將除息」顯示；若本機沒有正式未來除息資料，不再用上一筆除息日 + 1 年產生 `[預估]`，改查 Goodinfo 股利政策表。若表內有「股利發放期間=未定」的明細列，優先顯示較舊的待發放所屬期間，例如 `3293` 顯示 `25H2 現金股利 36`、`2330` 顯示 `25Q4 現金股利 6`，並提示使用者自行確認。11-C 已完成並驗證通過。
-
-2026-05-17 Phase 11 規格已從草案正式寫入三份文件：`量化交易系統規格書_shellpig版.md`（V3.0）、`開發設計方針.md`、`測試指南.md`。Phase 11 擴充 dashboard 個股分析頁的基本面與事件資訊，拆為 11-A 版面 placeholder、11-B 估值 / 獲利、11-C 籌碼 / 事件、11-D Goodinfo 股利政策 fallback；執行順序固定 11-A → 11-B → 11-C → 11-D。11-A / 11-B / 11-C 已完成並驗證通過；11-B 後續發現的刪除 WinError、ETF 空資料說明與歷史除息 TTM PE 最近交易日價格修正也已驗證完成。
-
-2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
+最新狀態見下方 **Phase 進度表**；過往階段細節請看 `git log` + `驗證後已知問題.md`。
 
 - Phase 1–9 全部完成（含美股 US-1 / 9-G intraday）。
 - Phase 10 全部完成（10-A ~ 10-H-2）；舊 Streamlit UI 已移除。
@@ -257,130 +253,12 @@ risk:
 - **P12 範圍邊界**：FinMind 驗證採固定流程「驗證成功才寫 .env」，限流時回 502 讓使用者重試，**不**允許繞過驗證寫入；modal 不提供清空既有 AI key、不提供「先跳過」；既有 `PUT /api/config/secrets` 行為與測試不被破壞。
 - **P12 角色拆分**：12-A / 12-B / 12-C 由 implementer 動代碼 + 測試 + 註解，**不動 .md 文件**；12-D 由 verifier 角色執行（規格書 / 開發設計方針 / 測試指南 / PROJECT_BRIEF 已於本批次同步。
 
-2026-05-18 狀態（Phase 11-E 完成）：
-- **P11-E 已完成並由使用者驗證通過**：純前端 UI/UX 收尾調整 8 項已上線，不動後端、不動 Python、不動 `pyproject.toml` / `package.json` 的 `name` 欄位、不更名 repo。版號透過 `next.config.ts` 讀 `web/package.json` 的 version 注入 `NEXT_PUBLIC_APP_VERSION`，build-time only，無 runtime API 呼叫。
-- **P11-D 已完成並由使用者驗證通過**：Goodinfo 股利政策 fallback 上線；只顯示「股利發放期間=未定」或日期落在未來的待發放明細，避免誤把已發放的舊資料當未來除息；`fetch_failed` 不寫每日 cache、舊 schema cache 自動失效；requests-first 處理 `CLIENT_KEY` / `REINIT`，Playwright 為 optional fallback。
-- **P11-C 已完成並由使用者驗證通過**：法人持股成本、事件行事曆、TWSE / TPEx 股東會全市場資料、獨立 `shareholder_meeting.meta.json`、manual override CSV、股東會手動編輯 Modal、資料管理頁 lifecycle / refresh 規則皆已落地。
-- **P11-D 規格背景**：原「散戶多空比」先不做；11-D 改為 Goodinfo 股利政策 fallback，文件已同步更新 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md`；11-E 進一步將該 placeholder 整塊移除。
-
-2026-05-17 狀態（Phase 11-B 完成）：
-- **P11-B 已完成並驗證通過**：新增 PER / monthly revenue fetcher；補 per / monthly_revenue / dividends / eps storage roundtrip 與 `data_meta`；dashboard service 新增 valuation / monthly revenue / dividend history with PE / industry PER；API 新增 `/api/analysis/p11/valuation`、`monthly-revenue`、`dividend-history`、`industry-per` 並放在動態 route 前；前端新增 valuation / monthly revenue / dividend history panel 與同產業 PER Modal；US market 回 501，frontend 隱藏 P11 區塊。
-- **P11-B 已修正驗證中發現的 4 個缺口**：industry PER response contract 改為 `median / mean / count / cached_at`；補 4 個 P11 component tests + tooltip coverage；PER / PBR / TTM 顯示與 tooltip 對齊規格；P11 資料補抓改 best-effort，不阻塞 daily pipeline。
-- **P11-B 收尾問題已驗證完成**：資料管理頁刪除遇 Windows `ReadOnly` / `WinError 5` 的錯誤解析與刪除耐受性已處理；ETF（如 0056）不適用 PER / 月營收 / EPS 時改以明確文案說明；歷史除息 TTM PE 改用除息日同日或最近可用交易日 close，並標記實際使用的 `price_date`。
-- **P11-B 驗證結果**：Python gate `tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_services/test_dashboard_svc.py tests/test_api/test_analysis_api.py` 為 **94 passed, 8 deselected**；frontend `npx tsc --noEmit` 0 errors；P11 frontend targeted tests **6 files / 17 tests passed**；full vitest **49 files / 321 tests passed**。
-- **P11-A 已完成並由使用者實機驗證通過**：Dashboard chart 高度改為 300px；TW 左欄 chart 下方新增 6 個 dashed placeholder；US market 隱藏 P11 下方區塊；K 線圖移除 KD / RSI / MACD 副圖並保留成交量；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位面板恢復小數顯示。
-- **P11 規格草案已正式寫入三份文件**：`量化交易系統規格書_shellpig版.md` 新增 V3.0 與 Phase 11 章節；`開發設計方針.md` 新增 Phase 11 實作設計；`測試指南.md` 新增 Phase 11 測試矩陣與 gate。
-- **P11 執行順序**：11-A（版面 placeholder）→ 11-B（估值 / 獲利）→ 11-C（籌碼 / 事件）→ 11-D（Goodinfo 股利政策 fallback），不可並行。
-- **P11 API 規則**：所有新 endpoint 掛 `/api/analysis/p11/*`，且需補 regression 防止被既有 `/api/analysis/{section}` 動態路由吃掉。
-- **P11-B 邊界決定**：同產業 PER cache miss 使用 `ThreadPoolExecutor(max_workers=8)`，每個 worker 建立獨立 `FinMindFetcher`；cache path 為 `data/cache/industry_per/{slug(industry)}_{YYYY-MM-DD}.parquet`；個別 peer 失敗以 `per/pbr/dividend_yield=null` 回傳，不阻塞整體結果。
-- **P11-C 股東會決策**：股東會是全市場單一 parquet，不進 `data_meta`，不用 sentinel symbol，不改 `DuckDBMeta` schema；使用 `data/raw/tw/shareholder_meeting.meta.json` 管 once-per-day guard，manual override 放 `data/manual/shareholder_meeting_override.csv`。資料管理頁單檔刪除只刪 per-symbol raw/processed/meta，不刪 shareholder meeting auto/meta/manual；`data_update` / `data_rebuild` 在 TW market 的 symbol loop 尾端最多 refresh 一次，US market 略過；乾淨重測需額外清全域股東會檔與 manual CSV。
-- **P11 同產業 PER Modal UX**：採同步 REST + `ThreadPoolExecutor(max_workers=8)` + cache；cache miss 可能 8–25 秒，前端需用 skeleton + 半透明遮罩 + 中央「資料讀取中」訊息，完成後一次替換表格。
-
-2026-05-16 狀態（10-H-1）：
-- **10-H-1 實作 + 驗證完成**：實作於 worktree `claude/peaceful-dewdney-33117e`，驗證通過後以 fast-forward 合進 main（commit `e7c6af2` + `e5c8a09`），uv.lock 同步 0.2.0 以 cherry-pick 進 main（`d346d49`）。新增 `web/playwright.config.ts`（desktop-chromium 1280×800 + mobile-chromium Pixel 5 兩 project）；新增 5 個 e2e spec（`navigation` / `backtest-single` / `backtest-cancel` / `csv-download` / `mobile-tabbar`）；新增 `web/src/tests/lib/theme-vars.test.ts` + `web/src/tests/components/mobile-tabbar.test.tsx`；`web/src/components/sidebar.tsx` 拆 `DesktopSidebar` + `MobileTabBar`（fixed bottom h-14 + grid-cols-5）；`web/src/app/layout.tsx` 加 `pb-14 lg:pb-0`；`web/src/app/globals.css` 補 `--chart-up` / `--chart-down` 與 `.light` class。順手修：`load_backtest_data` tz-aware filter、`StrategyPresetSelect` API URL 加絕對前綴。驗證：pytest **588 passed**、vitest **48 files / 307 tests pass**、tsc 0 errors、Playwright **48 tests pass**（24 desktop + 24 mobile）。測試遷移檢查表 7 行全打勾（見 `驗證後已知問題.md` [P10-H-1]）。
-
-2026-05-16 狀態：
-- **10-E-3 實作 + 驗證完成**：後端 `backtest_sweep` dispatcher + `run_param_sweep_job()` + sweep CSV blob + progress throttle（>50 combos）+ `OVER_MAX_COMBOS` 422 + `sample_warning`（total_trades < 3）；前端新增 `SweepTab` / `ParamGridForm` / `SweepRankingTable` / `SweepHeatmap`（僅 2 參數時自製 CSS Grid 2D）+ `sweep-types` / `sweep-helpers` / `sweep-constants`；commit `4b39120`。驗證：pytest 6 個 sweep case 全綠（含 throttle / over_max / 非整數參數 / sample_warning / CSV blob）。
-- **10-E-4 實作 + 驗證完成**：後端 `backtest_wfa` dispatcher + `run_walk_forward_job()` + 巢狀 SSE（`window_progress` × `sweep_progress`）+ `INSUFFICIENT_DATA_FOR_WFA` 422 + `build_wfa_window_csv_blob` / `build_wfa_stability_csv_blob` 雙 CSV；前端新增 `WalkForwardTab` / `WfaSummaryCards` / `WfaWindowTable` / `WfaStabilityTable`；commit `18fde89`。驗證：pytest `test_backtest_api.py` 26 passed（含 6 個 WFA case）；vitest 40 files / 252 tests passed；tsc 0 errors。
-- **10-G-2 實作 + 驗證完成**：後端 `api/routers/config.py` 新增 `POST /api/config/strategies`（upsert by name）、`DELETE /api/config/strategies/{name}`（idempotent 204）、`POST /api/config/strategies/restore`；`config_service.py` 新增 `delete_strategy_preset_by_name()`。前端 `web/src/app/settings/page.tsx` + 6 個 settings 元件（`settings-page-client` / `secrets-section` / `strategy-presets-section` / `strategy-preset-dialog` / `theme-section` / `ai-toggle-section`）+ `use-config` SWR hook。**主題系統**：沿用既有自製 `theme-provider.tsx`（class="dark" + localStorage `qt-theme`），**未引入 `next-themes`**（與規格 L3553-3554 偏離，但功能等價，已於 brief 與 spec 註記）。**AI toggle**：Radix Tooltip + `disabled`，文案「AI 功能尚未開放」。**Secrets 安全**：GET 永不回傳 key 值（既有規約沿用）。驗證：pytest `test_config_api.py + test_config_svc.py` 28 passed（+6 strategy endpoints / +3 delete_by_name）；vitest 46 files / 290 tests passed（+5 settings 測試檔 + use-config hook）；tsc 0 errors。
-
-
-- **10-E-1 實作 + 驗證完成**：後端 `job_manager.py` 新增 `finish_cancelled_job()` + 修正 `cancel_job()` race condition；`backtest_service.py` 新增 `initial_capital` 參數 + DCA 序列化；`jobs.py` 新增 `backtest_run` dispatcher + cancelled partial result 回傳。前端新增 `BacktestPageClient`（4-tab 框架，僅 Single 啟用）、`SingleRunTab`（表單 + 結果顯示）、`TearsheetCards` / `CandleChartWithMarkers` / `EquityCurveChart` / `TradesTable` / `StrategyPresetSelect` / `DateRangePicker` / `EngineSelect` / `BacktestProgressBar` 共 10 個元件；`use-backtest-job` hook（SSE + cancel + toast）。驗證：pytest **9/9 passed**（`test_backtest_api.py`）；vitest **31 files / 202 tests passed**（含 7 個 backtest 測試檔 53 cases）；`tsc --noEmit` 通過。
-- **10-E-2 實作 + 驗證完成**：後端 `api/routers/jobs.py` 新增 `backtest_batch` dispatcher、per-preset SSE progress、cancelled partial result 保留、`GET /api/jobs/{id}/result?format=csv` CSV blob；`src/services/backtest_service.py` 新增 `run_batch_backtest_job()`、`build_batch_csv_blob()` 與 batch summary detail 序列化（`price_data` 只在 result 頂層帶一次）。前端解鎖策略比較 tab，新增 `BatchCompareTab` / `StrategyMultiSelect` / `ComparisonTable` / `MultiEquityChart` / `batch-types`；`use-backtest-job` 支援 `jobId` 與 callback options；批次頁含 FastAPI base URL 取 preset、多策略 equity crosshair tooltip、10 欄 sortable table、row 展開重用 tearsheet / K 線 / equity / trades、CSV 下載 toast、取消後 partial result 顯示。驗證：`test_backtest_api.py` **14 passed**（含 SSE per-preset progress）、`tests/test_api/` **73 passed**、10-E-2 前端 targeted vitest **3 files / 12 tests passed**、完整 vitest **34 files / 214 tests passed**、`tsc --noEmit` 與 `py_compile` 通過。
-- **10-E 規格審查完成（V2.7 補丁）**：三份文件同步補充以下 12 項缺口，規格、設計方針、測試指南已更新：
-  1. `JobManager.finish_cancelled_job()` 方法需在 10-E-1 開工前新增（目前缺失）
-  2. `cancel_job()` 需修改為只設 status、不關 queue（避免 partial result 推送失敗的 race condition）
-  3. `GET /api/jobs/{id}/result` 需允許 cancelled + partial result 回傳
-  4. 取消 `api/routers/backtest.py` 新端點，改用既有 `GET /api/config` 取 preset 清單
-  5. `initial_capital` 預設 1000000，需新增為 `run_backtest_job()` 參數
-  6. 10-E-2 的 `price_data` 只在 result 頂層帶一次（各 summary 不重複）— 規格已正確，無需改
-  7. DCA 序列化映射補充（equity_curve 從 records 派生、trades 空陣列、metrics 不適用欄位 null）
-  8. `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表（int/float 區分）
-  9. WFA 特化 `WfaProgress` interface 補充
-  10. CSV blob 函式位置明確指定放 `src/services/backtest_service.py`
-  11. E2E Playwright 統一在 10-E-4 完成後撰寫
-  12. 交易數量統一顯示「股」、不轉「張」（與舊 Streamlit 回測頁一致）；切換市場 reset state；DCA 批次 error message 定義
-
-2026-05-15 狀態：
-- 最新 commit 請以 `git log --oneline -1` 為準。
-- **10-G-1 實作 + 驗證完成**：新增 `web/src/components/providers.tsx`、`error-boundary.tsx`、`command-palette.tsx`、`skeletons/index.tsx`、`hooks/use-toast.ts`、`hooks/use-command-palette.ts`；`layout.tsx` 接入 Providers；Sidebar 註冊 5 個頁面 command entry；StockSelector 註冊股票搜尋來源；資料管理頁 10-C-2 完成/錯誤 banner 改 toast，並補單檔更新失敗與新增標的失敗 toast regression。驗證：`.\node_modules\.bin\tsc.CMD --noEmit` 通過；`pnpm test` 為 **24 files / 148 tests passed**；聚焦 `data-page-client.test.tsx` 為 **7 passed**。
-- **10-E 規格拆分為 4 段（V2.5，V2.6 收斂合約）**：10-E-1（單次）/ 10-E-2（批次）/ 10-E-3（掃描）/ 10-E-4（WFA），規格、設計方針、測試指南三份文件已同步更新。明確不做老 Streamlit「歷史結果」tab；10-E-2 比較表定為 **10 欄**；Heatmap 採排名表 + 2D 自製 CSS Grid（僅 2 參數時）；多策略 equity 疊圖用 lightweight-charts 多 LineSeries；WFA 雙 CSV（window + stability）由後端產 blob、前端 `<a download>` 下載；不引入新前端套件（無 Recharts / nivo / heatmap-grid）。取消後 job status 保持 `cancelled`，但 partial result 可由 `GET /api/jobs/{id}/result` 讀取；CSV 匯出 query 由 `api/routers/jobs.py` 的既有 result endpoint 處理；fetch / SSE / invalid JSON 走 toast + 頁內 error panel，不交給 Error Boundary。
-- **10-G 規格拆分為 2 段（V2.6）**：10-G-1（基礎設施先行：`sonner` toast + 10-C-2 banner 遷移、Error Boundary、Loading Skeleton、Command Palette）與 10-G-2（設定頁主功能：API key write-only UI、策略 preset CRUD by name、Dark↔Light 主題切換、AI toggle disabled + tooltip）。執行順序為 **10-G-1 → 10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2 → 10-H**。10-G-1 不裝 `next-themes`，10-G-2 才裝；Error Boundary 只接 React render / lifecycle / hook 例外；API 錯誤一律走 toast。
-- **9-F 手動驗收完成**：9-F-1~9-F-12 全數通過，Phase 9 全階段（含手動驗收）正式收束。
-- **10-F-1 實作 + 驗收完成**：AI 問答頁 UI shell + 後端 lock（不接 LLM）。
-  - 後端：`GET /api/ai/status` 回 `{ available: false, reason: "feature_locked" }`、`POST /api/ai/chat` 回 503 + `AI_DISABLED`；既有 `/api/ai/analyze` 不變。
-  - 前端：disclaimer-gate（localStorage `ai_chat.disclaimer_accepted_v1` 持久）、message-bubble（`react-markdown` + `remark-gfm`、空內容顯示閃爍 cursor）、chat-input（Enter 送、空字串不送）、chat-page-client、use-mock-chat（25ms / char 逐字串流）、use-ai-status；Sidebar AI 入口加灰色「後續開放」徽章；Header「AI · 未啟用」灰 chip；訊息歷史純 React state 刷新即清。
-  - 版號：`pyproject.toml` `0.1.0`→`0.2.0`、`web/package.json` `0.10.0`→`0.2.0`、`api/main.py` FastAPI `version` `0.10.0`→`0.2.0`，文件 V2.4。
-  - 自動驗證：`tests/test_api/` 59 passed（+7 in `test_ai_api.py`）、`web/` `tsc --noEmit` 0 errors、`web/` vitest **17 files / 124 tests pass**（+31 cases：disclaimer-gate 5 / message-bubble 10 / chat-page-client 8 / use-ai-status 3 / sidebar 5）。
-  - 手動驗收：10-F-1-1~10-F-1-8 全數通過。
-- 10-F-2（接 LLM、SSE token 串流）延後實作，不卡 10-G / 10-H。
-
-2026-05-14 狀態：
-- 最新 commit 請以 `git log --oneline -1` 為準；本 brief 已改為不硬寫最新 hash，避免文件在 commit 後立即失真。
-- **9-G 驗證完成**：美股 yfinance 1m intraday 盤中快照與分 K 圖已通過驗證，Phase 9 全階段結束。
-- **10-A 驗證完成**：服務層抽離（`src/services/` 4 service）+ FastAPI 後端骨架（`api/`）；服務層 44 passed + API 17 passed + Streamlit 回歸 72 passed + 全專案 508 passed。舊 Streamlit UI 改呼叫 services 行為不變。
-- **10-B 驗證完成**：Next.js 15.3 前端骨架（`web/`）；Sidebar 5 頁導航、Dark/Light 主題、api-client、市場切換、股票選擇器、型別檔、formatters；Vitest 33 passed（api-client 4 + formatters 16 + market-switcher 5 + stock-selector 6 + setup 2）；手動驗收 10-B-1~6 全數通過（dev server 啟動 1250ms、頁面切換、主題切換、375px 底部 Tab Bar、`/api/health` 連通、OneDrive 無 conflict）。
-- Phase 10 規格已寫入 `量化交易系統規格書_shellpig版.md`（V2.3）、`開發設計方針.md`、`測試指南.md`：前端架構從 Streamlit 遷移至 Next.js + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/` 服務層、`api/` FastAPI 後端、`web/` Next.js 前端。技術選型 Next.js 15+ / React 19+ / TypeScript 5+ / Tailwind CSS v4 / shadcn/ui / Lightweight Charts / SWR / FastAPI。核心演算法不重寫。10-H 舊 UI 移除需通過測試遷移檢查表。
-- Phase 9-C/9-D/9-E 已驗證完成；Phase 9-F 全專案自動回歸 428 passed，文件收束完成。
-- Phase 9-C 驗證結果：`tests/test_cost.py tests/test_engine_vec.py tests/test_dca_backtest.py tests/test_backtest_page.py -m "not integration"` 為 42 passed；py_compile `src/backtest/cost.py src/backtest/_helpers.py src/backtest/dca.py src/backtest/batch.py src/backtest/sweep.py src/backtest/walk_forward.py src/ui/pages/backtest.py tests/test_cost.py tests/test_dca_backtest.py tests/test_backtest_page.py` 通過。
-- Phase 9-C research tabs 回歸：`tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_strategy_config.py tests/test_strategies.py -m "not integration"` 為 120 passed。
-- Phase 9-C broader context 回歸：`tests/test_market.py tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_cost.py tests/test_engine_vec.py tests/test_engine_event.py tests/test_consistency.py tests/test_dca_backtest.py tests/test_backtest_page.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py -m "not integration"` 為 194 passed, 6 deselected。
-- 9-C 修改模組：`src/backtest/cost.py`（`TWCostCalculator` / `USCostCalculator` / `create_cost_calculator`）、`src/backtest/_helpers.py`（market-aware ETF/cost helper）、`src/backtest/dca.py`（美股 1 股 DCA、New York timezone）、`src/backtest/batch.py`、`src/backtest/sweep.py`、`src/backtest/walk_forward.py`（可注入 US cost calculator）、`src/ui/pages/backtest.py`（市場切換、US adjusted data、USD 顯示、DCA warning、台美 K 線顏色）。
-- 9-C 新增/擴充測試：`tests/test_cost.py`（US cost model）、`tests/test_dca_backtest.py`（美股 DCA 1 股與月投入不足）、`tests/test_backtest_page.py`（US adjusted load、auto sync market、USD caption、DCA warning、不顯示「張」、caption 與 K 線顏色 market-aware）。
-- Phase 9-D 驗證結果：`tests/test_technical_summary.py tests/test_pattern.py tests/test_advisor.py tests/test_dashboard_page.py -m "not integration"` 為 79 passed, 1 deselected；py_compile `src/ui/pages/dashboard.py src/ai/advisor.py src/analysis/technical_summary.py src/analysis/pattern.py tests/test_dashboard_page.py tests/test_advisor.py` 通過。
-- Phase 9-D broader context 回歸：`tests/test_market.py tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_cost.py tests/test_engine_vec.py tests/test_engine_event.py tests/test_consistency.py tests/test_dca_backtest.py tests/test_backtest_page.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_technical_summary.py tests/test_pattern.py tests/test_advisor.py tests/test_dashboard_page.py -m "not integration"` 為 273 passed, 7 deselected。
-- 9-D 修改模組：`src/ui/pages/dashboard.py`（dashboard 市場切換、美股 adjusted daily payload、停用 realtime/chip、shares 成交量、紐約日期 caption、美股即時刷新不支援提示）、`src/ai/advisor.py`（market-aware symbol 驗證、payload 帶 market/currency、prompt 強制繁中、AI tools 支援 market）。
-- 9-D 新增/擴充測試：`tests/test_dashboard_page.py`（美股 adjusted daily、停用 realtime/chip、籌碼不支援提示、shares label、紐約日期 caption）、`tests/test_advisor.py`（美股 prompt 帶 market/currency/繁中硬約束、拒絕非 US-1 ticker、AI tool 接受美股 market context）。
-- Phase 9-E 驗證結果：`tests/test_data_management_page.py tests/test_stock_selector.py tests/test_maintenance.py -m "not integration"` 為 23 passed；py_compile `src/ui/pages/data_management.py src/ui/stock_selector.py tests/test_data_management_page.py tests/test_stock_selector.py tests/test_maintenance.py` 通過。
-- Phase 9-E broader context 回歸：`tests/test_market.py tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_cost.py tests/test_engine_vec.py tests/test_engine_event.py tests/test_consistency.py tests/test_dca_backtest.py tests/test_backtest_page.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_technical_summary.py tests/test_pattern.py tests/test_advisor.py tests/test_dashboard_page.py tests/test_data_management_page.py tests/test_stock_selector.py -m "not integration"` 為 284 passed, 7 deselected。
-- 9-E 修改模組：`src/ui/pages/data_management.py`（資料管理頁市場切換、美股 yfinance-only fetcher、日 K 更新/重建 market 傳遞、分 K/籌碼不支援提示、raw daily / adjusted daily 本機狀態表、metadata market filter）、`src/ui/stock_selector.py`（market-aware stock selector，美股 ticker 輸入與 `BRK.B`→`BRK-B` 正規化）。
-- 9-E 新增/擴充測試：`tests/test_data_management_page.py`（美股不支援訊息、update_daily market=us、yfinance-only、metadata market filter、raw/adjusted 狀態表、缺 adjusted 顯示、台股不顯示美股狀態表）、`tests/test_stock_selector.py`（美股 ticker 正規化與 invalid suffix uppercase fallback）。
-- Phase 9-F 自動驗證結果：Phase 9 指定回歸 `tests/test_market.py tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_cost.py tests/test_engine_vec.py tests/test_dca_backtest.py tests/test_backtest_page.py tests/test_technical_summary.py tests/test_pattern.py tests/test_advisor.py tests/test_dashboard_page.py -m "not integration"` 為 181 passed, 7 deselected。
-- Phase 9-F data management / selector 回歸：`tests/test_data_management_page.py tests/test_stock_selector.py -m "not integration"` 為 11 passed。
-- Phase 9-F 全專案非整合回歸：`tests/ -m "not integration"` 為 428 passed, 10 deselected。
-- Phase 9-F 驗證備註：一般權限第一次跑 Phase 9 指定回歸與全專案回歸時，Windows/OneDrive `.pytest_tmp_*` 清理出現 `PermissionError: [WinError 5]`；依專案規則使用同一 venv、同一範圍 elevated 重跑後全部通過，判定為環境暫存目錄權限問題。
-
-2026-05-12 狀態：
-- 最新基準 commit：`75fee58 Add one-click install script and market core module`
-- Phase 9-A 驗證結果：`tests/test_market.py tests/test_storage.py tests/test_maintenance.py -m "not integration"` 為 39 passed；py_compile `src/core/market.py src/data/storage.py src/data/maintenance.py` 通過
-- Phase 9-B 驗證結果：`tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py -m "not integration"` 為 49 passed, 6 deselected（integration）；py_compile `src/data/fetcher.py src/data/maintenance.py` 通過
-- 9-A 新增模組：`src/core/market.py`（MarketSpec、normalize_symbol、validate_symbol、assert_single_market）
-- 9-A 修改模組：`src/data/storage.py`（normalize 函式群改 timezone 參數、DuckDB meta migration、market-aware 路徑）、`src/data/maintenance.py`（market 參數傳遞）
-- 9-B 修改模組：`src/data/fetcher.py`（YFinanceFetcher market 參數、fetch_daily_with_adjusted、US adjusted bundle、split-only volume factor、US minute 拒絕）、`src/data/maintenance.py`（US adjusted bundle path、yfinance 批次節流）
-- 9-A/9-B 新增測試：`tests/test_market.py`（11 tests）；`test_storage.py` 追加 5 tests（us path、unknown market、meta PK、migration）；`test_fetcher.py` 追加 12 tests（US ticker/tz/volume/adjusted/split/minute）；`test_maintenance.py` 追加 4 tests（US rebuild/update/throttle/rate-limit）
-- storage.py 已完全移除 TAIPEI_TZ hardcode，改由 market timezone 動態決定；cleaner.py 無 timezone hardcode
-- Phase 9 規格已納入審查重點：split-adjusted volume、禁止混合台美 DataFrame、yfinance 批次 request 至少 1 秒節流、美股 DCA 不支援碎股 warning、AI prompt 強制繁體中文
-
-2026-05-11 狀態：
-- Phase 9 規格已確認並寫入正式文件：US-1 範圍為美股日 K + 調整後價格 + 回測 + 技術分析；不做即時、籌碼、分 K、財報、期權、匯率換算。
-- Phase 8 + 回測頁相關回歸：`tests/test_technical_summary.py tests/test_pattern.py tests/test_chip_analysis.py tests/test_realtime.py tests/test_advisor.py tests/test_dashboard_page.py tests/test_backtest_page.py -m "not integration"` 為 98 passed, 1 deselected。
-- Realtime / dashboard 針對性回歸：`tests/test_realtime.py tests/test_dashboard_page.py -m "not integration"` 為 37 passed。
-- `py_compile src\data\realtime.py src\ui\pages\dashboard.py` 通過；Phase 8 全範圍 py_compile 曾因 Windows/OneDrive `__pycache__` 權限擋住，elevated 重跑通過。
-- 8-A 驗證結果：`tests/test_technical_summary.py` 13 passed
-- 8-B 驗證結果：`tests/test_pattern.py` 15 passed
-- 8-C 驗證結果：`tests/test_chip_analysis.py` 14 passed
-- 8-D 驗證結果：`tests/test_realtime.py` 17 passed；新增非交易日 / 盤後即時報價時間判斷、`z="-"` 時不把買賣中間估算價塞進 `quote.price` 的 regression
-- 8-E 驗證結果：`tests/test_advisor.py` 15 passed, 1 deselected（integration test 未跑）
-- 8-F 驗證結果：`tests/test_dashboard_page.py` 19 passed；已覆蓋缺日線資料不 crash、重新整理報價更新 session payload 並 rerun、英文字母股票代碼、多週期 date 欄位 payload、盤中買一/賣一顯示、盤後收盤價/日成交量、近 5 日法人表格與籌碼抓取錯誤提示、輸入框 Enter 透過 form submit 穩定觸發分析、日線股數轉張顯示
-- 8-G 驗證結果：`py_compile src\ui\pages\dashboard.py tests\test_dashboard_page.py` 通過；`tests/test_dashboard_page.py -m "not integration"` 為 27 passed；6 項人工驗收完成（tooltip hover、caption、K 棒詳細說明、日/週/月線說明）
-- 回測頁 follow-up 驗證：`tests/test_backtest_page.py` 9 passed；已覆蓋回測載入前自動同步日線資料與 primary/fallback 資料源切換
-- 8-F 手動驗收修正：日 K 線圖高度、支撐/壓力標註、拖曳平移、range slider、型態顯示、K 線 X 軸改 categorical 消除週末空隙
-- Phase 8 後續修正：W 底 / M 頭同時偵測時改判為區間震盪；支撐/壓力改取近 20 日低點 / 近 60 日高點極值；資料管理頁支援 `00981A` 這類英文字母股票代碼；K 棒數量下拉；個股分析與回測自動補抓/更新日線；籌碼 tab 自動補抓並顯示近 5 交易日三大法人；盤中行情改顯示買一/賣一與盤中量，盤後顯示最新日線收盤價與日成交量；`RealtimeQuote.estimated_price` 獨立承載買賣中間估算價，`quote.price` 不再默默等於估算價；個股分析輸入框改用 form submit 支援 Enter；盤後日線成交量由股數轉張顯示
-- 新增模組：`src/analysis/technical_summary.py`、`src/analysis/pattern.py`、`src/analysis/chip_analysis.py`、`src/data/realtime.py`、`src/ui/pages/dashboard.py`
-- 修改模組：`src/data/fetcher.py`、`src/data/storage.py`、`src/data/realtime.py`、`src/core/constants.py`、`config.yaml`、`src/ui/app.py`、`src/ui/pages/dashboard.py`、`src/ui/pages/backtest.py`、`src/ui/pages/data_management.py`、`src/analysis/technical_summary.py`、`src/analysis/pattern.py`、`src/analysis/chip_analysis.py`
-- 8-E 修改模組：`src/ai/advisor.py`、`src/core/exceptions.py`、`tests/test_advisor.py`
-- 8-F / follow-up 測試模組：`tests/test_realtime.py`、`tests/test_dashboard_page.py`、`tests/test_backtest_page.py`、`tests/test_chip_analysis.py`
-
-2026-05-10 狀態：
-- Phase 8-D 基準 commit：`3fa5322 Complete Phase 8-D implementation and verification`
-- 已完成實作測試統計：191 個單元測試、7 個 integration 測試、65 項手動驗收項目（Phase 1-7-D）
-- 7-D-1 驗證結果：`tests/test_walk_forward.py tests/test_sweep.py` 為 62 passed, 1 warning（第一次因 Windows temp 權限失敗，elevated 重跑通過）
-- 7-D-1 已補 `warning_count` regression test：`test_warning_count_includes_per_window_and_unstable_param`
-- 7-D-2 驗收結果：Walk-Forward tab、英文術語中文說明、實際 window 回測次數預估、summary/window/stability table、CSV 匯出入口已驗收
-- Phase 7-D 完成回歸：`tests/test_strategies.py tests/test_strategy_config.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py` 為 116 passed, 1 warning（elevated 重跑通過）
-- Phase 6-B 已完成設定頁與側邊欄 UI 驗證；`use_container_width` deprecation warning 已處理。`pandas-ta` 對 pandas 4.0 的相容 warning 屬第三方套件根因，仍保留為追蹤限制。
-- Phase 6-C 已完成回測頁 UI 驗證與收尾：日期欄位排列、策略比較備註欄、WFA `wfa_symbol` session state hotfix、`midnight_blue` metric card、`warm_sepia` / `arctic_light` Plotly 文字、`arctic_light` 清除按鈕對比皆已更新至 `驗證後已知問題.md`。
-- Phase 6-C 相關驗證：`py_compile src\ui\themes.py src\ui\pages\backtest.py src\ui\pages\settings.py src\backtest\report.py` 通過；`tests/test_themes.py tests/test_config_ui_section.py tests/test_settings_page.py tests/test_backtest_page.py tests/test_report.py -v` 為 22 passed（elevated 重跑通過）。
+過往驗證 recap（2026-05-10 ~ 2026-05-18）：
+- Phase 6-C → 11-E 各子階段陸續完成並通過驗證；逐 phase 範圍 / 邊界決定 / 驗證結果見上方「Phase 進度表」、commit 訊息與 `驗證後已知問題.md`。
+- 重要設計邊界（保留參考）：
+  - P11-B 同產業 PER：cache miss 用 `ThreadPoolExecutor(max_workers=8)`、cache path `data/cache/industry_per/{slug(industry)}_{YYYY-MM-DD}.parquet`；個別 peer 失敗以 null 回傳。
+  - P11-C 股東會：全市場單一 parquet，不進 `data_meta`，metadata 用 `shareholder_meeting.meta.json` 管 once-per-day；manual override 放 `data/manual/shareholder_meeting_override.csv`；單檔刪除不動全域股東會。
+  - 10-G-2 主題系統：沿用既有自製 `theme-provider.tsx`（class="dark" + localStorage `qt-theme`），**未引入 `next-themes`**（與規格偏離但功能等價）。
 
 已知設計限制：
 - 兩引擎是不同典範（signal-based vs order-based），跨引擎只能比 per-share PnL
