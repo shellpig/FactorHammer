@@ -1,6 +1,7 @@
 // Backtest research page — 4-tab framework (Phase 10-E-1)
 
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { BacktestPageClient } from "@/components/backtest/BacktestPageClient";
 
 export const metadata: Metadata = {
@@ -9,5 +10,9 @@ export const metadata: Metadata = {
 };
 
 export default function BacktestPage() {
-  return <BacktestPageClient />;
+  return (
+    <Suspense>
+      <BacktestPageClient />
+    </Suspense>
+  );
 }
