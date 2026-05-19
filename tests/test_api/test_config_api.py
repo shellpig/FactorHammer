@@ -5,12 +5,14 @@ Uses FastAPI TestClient (synchronous wrapper around httpx).
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
+from src.services.config_service import FinMindTokenInvalid, FinMindUnreachable
 
 client = TestClient(app)
 
@@ -92,6 +94,140 @@ def test_put_secrets_unknown_provider_returns_422(mock_update: MagicMock) -> Non
     response = client.put("/api/config/secrets", json={"keys": {"binance": "xxx"}})
     assert response.status_code == 422
     assert response.json()["detail"]["error"]["code"] == "UNKNOWN_PROVIDER"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/config/secrets/validate (Phase 12-B)
+# ---------------------------------------------------------------------------
+
+
+def test_post_secrets_validate_missing_finmind_returns_400() -> None:
+    response = client.post("/api/config/secrets/validate", json={})
+    assert response.status_code == 400
+    body = response.json()
+    assert body["detail"]["error"]["code"] == "FINMIND_REQUIRED"
+
+
+def test_post_secrets_validate_blank_finmind_returns_400() -> None:
+    response = client.post("/api/config/secrets/validate", json={"finmind": "   "})
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"]["code"] == "FINMIND_REQUIRED"
+
+
+@patch("api.routers.config.update_secrets")
+@patch("api.routers.config.validate_finmind_token")
+def test_post_secrets_validate_invalid_token_returns_400(
+    mock_validate: MagicMock,
+    mock_update: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FINMIND_TOKEN", "old-token")
+    mock_validate.side_effect = FinMindTokenInvalid("bad token")
+
+    response = client.post("/api/config/secrets/validate", json={"finmind": "bad-token"})
+    assert response.status_code == 400
+    body = response.json()
+    assert body["detail"]["error"]["code"] == "FINMIND_TOKEN_INVALID"
+    assert os.getenv("FINMIND_TOKEN") == "old-token"
+    mock_update.assert_not_called()
+
+
+@patch("api.routers.config.update_secrets")
+@patch("api.routers.config.validate_finmind_token")
+def test_post_secrets_validate_unreachable_returns_502(
+    mock_validate: MagicMock,
+    mock_update: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FINMIND_TOKEN", "old-token")
+    mock_validate.side_effect = FinMindUnreachable("network down")
+
+    response = client.post("/api/config/secrets/validate", json={"finmind": "candidate-token"})
+    assert response.status_code == 502
+    body = response.json()
+    assert body["detail"]["error"]["code"] == "FINMIND_UNREACHABLE"
+    assert os.getenv("FINMIND_TOKEN") == "old-token"
+    mock_update.assert_not_called()
+
+
+@patch("api.routers.config.update_secrets")
+@patch("api.routers.config.validate_finmind_token")
+def test_post_secrets_validate_env_write_failure_returns_500(
+    mock_validate: MagicMock,
+    mock_update: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FINMIND_TOKEN", "old-token")
+    mock_validate.return_value = None
+    mock_update.side_effect = OSError("disk full")
+
+    response = client.post("/api/config/secrets/validate", json={"finmind": "new-token"})
+    assert response.status_code == 500
+    body = response.json()
+    assert body["detail"]["error"]["code"] == "ENV_WRITE_FAILED"
+    assert "寫入設定檔失敗" in body["detail"]["error"]["message"]
+    assert os.getenv("FINMIND_TOKEN") == "old-token"
+
+
+@patch("api.routers.config.update_secrets")
+@patch("api.routers.config.validate_finmind_token")
+def test_post_secrets_validate_success_updates_finmind_only(
+    mock_validate: MagicMock,
+    mock_update: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_validate.return_value = None
+    monkeypatch.setenv("FINMIND_TOKEN", "old-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "old-openai")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "old-anthropic")
+
+    response = client.post("/api/config/secrets/validate", json={"finmind": "new-token"})
+    assert response.status_code == 200
+    assert response.json() == {"data": {"updated": True}, "meta": {}}
+
+    mock_update.assert_called_once_with({"finmind": "new-token"})
+    assert os.getenv("FINMIND_TOKEN") == "new-token"
+    assert os.getenv("OPENAI_API_KEY") == "old-openai"
+    assert os.getenv("ANTHROPIC_API_KEY") == "old-anthropic"
+
+
+@patch("api.routers.config.update_secrets")
+@patch("api.routers.config.validate_finmind_token")
+def test_post_secrets_validate_success_with_anthropic(
+    mock_validate: MagicMock,
+    mock_update: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_validate.return_value = None
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "old-anthropic")
+
+    payload = {"finmind": "fm-token", "anthropic": "ant-token"}
+    response = client.post("/api/config/secrets/validate", json=payload)
+    assert response.status_code == 200
+
+    mock_update.assert_called_once_with({"finmind": "fm-token", "anthropic": "ant-token"})
+    assert os.getenv("FINMIND_TOKEN") == "fm-token"
+    assert os.getenv("ANTHROPIC_API_KEY") == "ant-token"
+
+
+@patch("api.routers.config.update_secrets")
+@patch("api.routers.config.validate_finmind_token")
+def test_post_secrets_validate_null_optional_keys_do_not_overwrite(
+    mock_validate: MagicMock,
+    mock_update: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_validate.return_value = None
+    monkeypatch.setenv("OPENAI_API_KEY", "existing-openai")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "existing-anthropic")
+
+    payload = {"finmind": "fm-token", "openai": None}
+    response = client.post("/api/config/secrets/validate", json=payload)
+    assert response.status_code == 200
+
+    mock_update.assert_called_once_with({"finmind": "fm-token"})
+    assert os.getenv("OPENAI_API_KEY") == "existing-openai"
+    assert os.getenv("ANTHROPIC_API_KEY") == "existing-anthropic"
 
 
 # ---------------------------------------------------------------------------

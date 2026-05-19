@@ -7,15 +7,19 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from src.services.config_service import (
     CONFIG_UPDATE_WHITELIST,
+    FinMindTokenInvalid,
+    FinMindUnreachable,
     _write_env,
     delete_strategy_preset_by_name,
     get_secrets_status,
     read_config,
     update_config,
     update_secrets,
+    validate_finmind_token,
 )
 
 
@@ -169,6 +173,43 @@ def test_get_secrets_status_never_returns_key_values(
         assert isinstance(v, bool), f"Expected bool, got {type(v).__name__}: {v!r}"
 
 
+@patch("src.services.config_service.get_project_root")
+def test_get_secrets_status_whitespace_is_false(
+    mock_root: MagicMock,
+    tmp_path: Path,
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("OPENAI_API_KEY=   \n", encoding="utf-8")
+    mock_root.return_value = tmp_path
+    assert get_secrets_status()["openai"] is False
+
+
+@patch("src.services.config_service.get_project_root")
+def test_get_secrets_status_env_value_is_authoritative_over_os_environ(
+    mock_root: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("OPENAI_API_KEY=\n", encoding="utf-8")
+    mock_root.return_value = tmp_path
+    monkeypatch.setenv("OPENAI_API_KEY", "from-os-env")
+    assert get_secrets_status()["openai"] is False
+
+
+@patch("src.services.config_service.get_project_root")
+def test_get_secrets_status_falls_back_to_os_environ_when_key_missing_in_env(
+    mock_root: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("FINMIND_TOKEN=abc\n", encoding="utf-8")
+    mock_root.return_value = tmp_path
+    monkeypatch.setenv("OPENAI_API_KEY", "from-os-env")
+    assert get_secrets_status()["openai"] is True
+
+
 # ---------------------------------------------------------------------------
 # delete_strategy_preset_by_name
 # ---------------------------------------------------------------------------
@@ -243,3 +284,149 @@ def test_delete_strategy_preset_by_name_strips_spaces(
 
     written = config_path.read_text(encoding="utf-8")
     assert "MA Cross" not in written
+
+
+# ---------------------------------------------------------------------------
+# _write_env (Phase 12-B)
+# ---------------------------------------------------------------------------
+
+
+def test_write_env_preserves_comments_blank_lines_unknown_keys_and_order(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "# header comment\n"
+        "CUSTOM_VAR=xyz\n"
+        "\n"
+        "B=1\n"
+        "A=2\n"
+        "# middle comment\n",
+        encoding="utf-8",
+    )
+
+    _write_env(env_path, {"A": "updated", "FINMIND_TOKEN": "fm-token"})
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+
+    assert lines[0] == "# header comment"
+    assert lines[1] == "CUSTOM_VAR=xyz"
+    assert lines[2] == ""
+    assert lines[3] == "B=1"
+    assert lines[4] == "A=updated"
+    assert lines[5] == "# middle comment"
+    assert lines[6] == "FINMIND_TOKEN=fm-token"
+
+
+def test_write_env_atomic_replace_failure_keeps_original_file(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("OPENAI_API_KEY=old\n", encoding="utf-8")
+
+    with patch("src.services.config_service.os.replace", side_effect=OSError("replace failed")):
+        with pytest.raises(OSError, match="replace failed"):
+            _write_env(env_path, {"OPENAI_API_KEY": "new"})
+
+    assert env_path.read_text(encoding="utf-8") == "OPENAI_API_KEY=old\n"
+    tmp_content = (tmp_path / ".env.tmp").read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY=new" in tmp_content
+
+
+def test_write_env_preserves_utf8_comments(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("# 中文註解\nOPENAI_API_KEY=old\n", encoding="utf-8")
+    _write_env(env_path, {"OPENAI_API_KEY": "new"})
+    content = env_path.read_text(encoding="utf-8")
+    assert "# 中文註解" in content
+    assert "OPENAI_API_KEY=new" in content
+
+
+@patch("src.services.config_service.get_project_root")
+@patch("src.services.config_service.clear_config_cache")
+def test_update_secrets_preserves_comments_and_blank_lines(
+    mock_clear: MagicMock,
+    mock_root: MagicMock,
+    tmp_path: Path,
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("# keep me\n\nOPENAI_API_KEY=old\n", encoding="utf-8")
+    mock_root.return_value = tmp_path
+
+    update_secrets({"openai": "new"})
+    content = env_path.read_text(encoding="utf-8")
+    assert "# keep me" in content
+    assert "\n\n" in content
+    assert "OPENAI_API_KEY=new" in content
+    mock_clear.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# validate_finmind_token (Phase 12-B)
+# ---------------------------------------------------------------------------
+
+
+def _mock_response(
+    *,
+    status_code: int,
+    json_body: dict[str, object] | None = None,
+) -> MagicMock:
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = {} if json_body is None else json_body
+    return response
+
+
+@patch("src.services.config_service.requests.get")
+@pytest.mark.parametrize("status_code", [401, 403, 422])
+def test_validate_finmind_token_rejected_status_codes(
+    mock_get: MagicMock,
+    status_code: int,
+) -> None:
+    mock_get.return_value = _mock_response(status_code=status_code)
+    with pytest.raises(FinMindTokenInvalid):
+        validate_finmind_token("bad-token")
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_connection_error(mock_get: MagicMock) -> None:
+    mock_get.side_effect = requests.ConnectionError("conn error")
+    with pytest.raises(FinMindUnreachable):
+        validate_finmind_token("token")
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_timeout(mock_get: MagicMock) -> None:
+    mock_get.side_effect = requests.Timeout("timeout")
+    with pytest.raises(FinMindUnreachable):
+        validate_finmind_token("token")
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_http_500(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=500)
+    with pytest.raises(FinMindUnreachable):
+        validate_finmind_token("token")
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_success_200(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=200, json_body={"status": 200, "msg": "success"})
+    validate_finmind_token("token")
+    mock_get.assert_called_once_with(
+        "https://api.finmindtrade.com/api/v4/user_info",
+        params={"token": "token"},
+        timeout=5,
+    )
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_200_with_invalid_status_in_body(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(
+        status_code=200,
+        json_body={"status": "error", "msg": "token invalid"},
+    )
+    with pytest.raises(FinMindTokenInvalid):
+        validate_finmind_token("token")
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_200_missing_status_is_invalid(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=200, json_body={"msg": "ok but no status"})
+    with pytest.raises(FinMindTokenInvalid):
+        validate_finmind_token("token")

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import requests
 import yaml
 
 from src.core.config import clear_config_cache, get_config, get_project_root
@@ -33,6 +34,14 @@ _SECRET_ENV_KEYS: dict[str, str] = {
 }
 
 _SECRET_MASK = "***configured***"
+
+
+class FinMindTokenInvalid(ValueError):
+    """Raised when FinMind rejects the provided token."""
+
+
+class FinMindUnreachable(ConnectionError):
+    """Raised when FinMind validation endpoint is unreachable."""
 
 
 # ---------------------------------------------------------------------------
@@ -151,13 +160,58 @@ def get_secrets_status() -> dict[str, bool]:
             k, v = line.split("=", 1)
             env_values[k.strip()] = v.strip()
 
+    def _is_set(value: str | None) -> bool:
+        return value is not None and value.strip() != ""
+
     # Also check os.environ (may have been set outside .env)
     status: dict[str, bool] = {}
     for env_var, label in _SECRET_ENV_KEYS.items():
-        value = env_values.get(env_var) or os.getenv(env_var, "")
-        status[label] = bool(value)
+        if env_var in env_values:
+            # .env explicitly defines this key; value in .env is authoritative.
+            status[label] = _is_set(env_values[env_var])
+        else:
+            status[label] = _is_set(os.getenv(env_var))
 
     return status
+
+
+def validate_finmind_token(token: str) -> None:
+    """Validate FinMind token via API.
+
+    Raises:
+        FinMindTokenInvalid: token rejected by FinMind.
+        FinMindUnreachable: network/timeout/server-side errors.
+    """
+    url = "https://api.finmindtrade.com/api/v4/user_info"
+    try:
+        resp = requests.get(url, params={"token": token}, timeout=5)
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise FinMindUnreachable(str(exc)) from exc
+    except requests.RequestException as exc:
+        raise FinMindUnreachable(str(exc)) from exc
+
+    if resp.status_code in (401, 403, 422):
+        raise FinMindTokenInvalid("Token rejected by FinMind.")
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise FinMindUnreachable(f"FinMind returned HTTP {resp.status_code}.")
+    if resp.status_code != 200:
+        raise FinMindTokenInvalid(f"Unexpected status {resp.status_code}.")
+
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise FinMindTokenInvalid("Invalid response from FinMind.") from exc
+
+    status = body.get("status")
+    msg = str(body.get("msg", "")).strip().lower()
+    if status in (200, "200", "success"):
+        return
+    if status is None:
+        raise FinMindTokenInvalid("Token rejected by FinMind.")
+
+    if _looks_like_invalid_token_message(msg):
+        raise FinMindTokenInvalid(body.get("msg", "Token rejected by FinMind."))
+    raise FinMindTokenInvalid(body.get("msg", "Token rejected by FinMind."))
 
 
 def get_strategy_presets_config() -> list[dict[str, Any]]:
@@ -225,21 +279,33 @@ def _save_strategy_presets(strategies: list[dict[str, Any]]) -> None:
 
 
 def _write_env(path: Path, updates: dict[str, str]) -> None:
-    current_lines: list[str]
-    if path.exists():
-        current_lines = path.read_text(encoding="utf-8").splitlines()
-    else:
-        current_lines = []
+    current_lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    remaining = dict(updates)
+    new_lines: list[str] = []
 
-    by_key: dict[str, str] = {}
     for line in current_lines:
-        if not line or line.lstrip().startswith("#") or "=" not in line:
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            new_lines.append(line)
             continue
-        k, v = line.split("=", 1)
-        by_key[k.strip()] = v
 
-    for key, value in updates.items():
-        by_key[key] = value
+        key, _ = line.split("=", 1)
+        key = key.strip()
+        if key in remaining:
+            new_lines.append(f"{key}={remaining.pop(key)}")
+        else:
+            new_lines.append(line)
 
-    rendered = [f"{k}={v}" for k, v in sorted(by_key.items())]
-    path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+    for key, value in remaining.items():
+        new_lines.append(f"{key}={value}")
+
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def _looks_like_invalid_token_message(message: str) -> bool:
+    lowered = message.lower()
+    token_signals = ("token", "api key", "apikey")
+    invalid_signals = ("invalid", "wrong", "expired", "unauthorized", "forbidden")
+    return any(t in lowered for t in token_signals) and any(i in lowered for i in invalid_signals)

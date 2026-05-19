@@ -8,10 +8,14 @@ Or via:
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers import ai, analysis, config, data, jobs, realtime
+from src.core.config import get_project_root
+
+load_dotenv(get_project_root() / ".env", override=False)
 
 app = FastAPI(
     title="QuantTrader API",

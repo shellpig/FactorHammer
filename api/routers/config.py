@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -9,6 +10,8 @@ from pydantic import BaseModel
 
 from src.services.config_service import (
     CONFIG_UPDATE_WHITELIST,
+    FinMindTokenInvalid,
+    FinMindUnreachable,
     delete_strategy_preset_by_name,
     get_secrets_status,
     get_strategy_presets_config,
@@ -17,6 +20,7 @@ from src.services.config_service import (
     update_config,
     update_secrets,
     upsert_strategy_preset,
+    validate_finmind_token,
 )
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -33,6 +37,13 @@ class ConfigPatchRequest(BaseModel):
 
 class SecretsUpdateRequest(BaseModel):
     keys: dict[str, str]
+
+
+class SecretsValidateRequest(BaseModel):
+    finmind: str | None = None
+    anthropic: str | None = None
+    openai: str | None = None
+    gemini: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +89,66 @@ def get_secrets_status_endpoint() -> dict[str, Any]:
     """Return boolean configured status for each API key."""
     status = get_secrets_status()
     return {"data": status, "meta": {}}
+
+
+@router.post("/secrets/validate")
+def post_secrets_validate(request: SecretsValidateRequest) -> dict[str, Any]:
+    finmind = (request.finmind or "").strip()
+    if not finmind:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "FINMIND_REQUIRED", "message": "FinMind token 為必填欄位。"}},
+        )
+
+    try:
+        validate_finmind_token(finmind)
+    except FinMindTokenInvalid as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": "FINMIND_TOKEN_INVALID",
+                    "message": "Token 無效，請確認從 FinMind 使用者資訊頁複製正確。",
+                }
+            },
+        ) from exc
+    except FinMindUnreachable as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": {
+                    "code": "FINMIND_UNREACHABLE",
+                    "message": "無法連線至 FinMind 伺服器，請檢查網路後重試。",
+                }
+            },
+        ) from exc
+
+    updates: dict[str, str] = {"finmind": finmind}
+    if request.anthropic is not None and request.anthropic.strip():
+        updates["anthropic"] = request.anthropic.strip()
+    if request.openai is not None and request.openai.strip():
+        updates["openai"] = request.openai.strip()
+    if request.gemini is not None and request.gemini.strip():
+        updates["gemini"] = request.gemini.strip()
+
+    try:
+        update_secrets(updates)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": "ENV_WRITE_FAILED", "message": f"寫入設定檔失敗：{exc}"}},
+        ) from exc
+
+    label_to_env = {
+        "finmind": "FINMIND_TOKEN",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+    }
+    for label, value in updates.items():
+        os.environ[label_to_env[label]] = value
+
+    return {"data": {"updated": True}, "meta": {}}
 
 
 @router.get("/strategies")
