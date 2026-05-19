@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { RefreshCw, Search, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { mutate as mutateGlobal } from "swr";
 import { MarketSwitcher } from "@/components/market-switcher";
 import { StockSelector } from "@/components/stock-selector";
 import { CandlestickChart } from "@/components/dashboard/candlestick-chart";
@@ -13,11 +15,13 @@ import { IndustryPerModal } from "@/components/dashboard/p11/industry-per-modal"
 import { InstitutionalCostPanel } from "@/components/dashboard/p11/institutional-cost-panel";
 import { MonthlyRevenuePanel } from "@/components/dashboard/p11/monthly-revenue-panel";
 import { ShareholderMeetingEditDialog } from "@/components/dashboard/p11/shareholder-meeting-edit-dialog";
+import { TokenSetupDialog } from "@/components/dashboard/token-setup-dialog";
 import { ValuationPanel } from "@/components/dashboard/p11/valuation-panel";
 import {
   DASHBOARD_TOOLTIP_TEXT,
   PATTERN_DETAILS,
 } from "@/components/dashboard/tooltip-text";
+import { apiGet } from "@/lib/api-client";
 import { useP11DividendHistory } from "@/lib/hooks/useP11DividendHistory";
 import { useP11EventCalendar } from "@/lib/hooks/useP11EventCalendar";
 import { useP11IndustryPer } from "@/lib/hooks/useP11IndustryPer";
@@ -673,6 +677,7 @@ function ChartSection({
 }
 
 export default function DashboardPageClient() {
+  const router = useRouter();
   // SSR-safe defaults: localStorage is only available on the client.
   // Do NOT read localStorage in useState initializers — it causes hydration mismatch.
   const [market, setMarket] = useState<Market>("tw");
@@ -682,6 +687,25 @@ export default function DashboardPageClient() {
   const [aiHint, setAiHint] = useState<string>("");
   const [industryModalOpen, setIndustryModalOpen] = useState(false);
   const [shareholderDialogOpen, setShareholderDialogOpen] = useState(false);
+  const [tokenSetupOpen, setTokenSetupOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await apiGet<Record<string, boolean>>("/api/config/secrets/status");
+        if (cancelled) return;
+        if (!status.data.finmind) {
+          setTokenSetupOpen(true);
+        }
+      } catch {
+        // Keep dashboard usable when status endpoint is temporarily unavailable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Restore last selection from localStorage after hydration.
   useEffect(() => {
@@ -919,6 +943,14 @@ export default function DashboardPageClient() {
         current={currentShareholderMeeting}
         onSaved={async () => {
           await mutateEventCalendar();
+        }}
+      />
+      <TokenSetupDialog
+        open={tokenSetupOpen}
+        onSaved={async () => {
+          setTokenSetupOpen(false);
+          await mutateGlobal(() => true, undefined, { revalidate: true });
+          router.refresh();
         }}
       />
     </div>

@@ -6,6 +6,16 @@ import type { DashboardPayloadResponse, OhlcvBar } from "@/types/analysis";
 import type { Market } from "@/types/market";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
+const apiGetMock = vi.fn();
+
+vi.mock("@/lib/api-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api-client")>();
+  return {
+    ...actual,
+    apiGet: (...args: unknown[]) => apiGetMock(...args),
+  };
+});
+
 vi.mock("@/components/dashboard/candlestick-chart", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/dashboard/candlestick-chart")>();
   return {
@@ -105,7 +115,13 @@ vi.mock("@/lib/hooks/useP11EventCalendar", () => ({ useP11EventCalendar: () => (
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 describe("Quote header — Phase 11-E", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiGetMock.mockResolvedValue({
+      data: { finmind: true, openai: false, anthropic: false, gemini: false, google: false },
+      meta: {},
+    });
+  });
 
   describe("11-E-F5: single-row quote layout", () => {
     it("renders quote-header-row as a single section", () => {

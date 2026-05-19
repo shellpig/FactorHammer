@@ -7,8 +7,22 @@ import { P11_TOOLTIP_TEXT } from "@/components/dashboard/tooltip-text";
 import type { DashboardPayloadResponse, OhlcvBar } from "@/types/analysis";
 import type { Market } from "@/types/market";
 
+const apiGetMock = vi.fn();
 const mockMutate = vi.fn();
 let mockLoading = false;
+
+vi.mock("@/lib/api-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api-client")>();
+  return {
+    ...actual,
+    apiGet: (...args: unknown[]) => apiGetMock(...args),
+  };
+});
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+  usePathname: () => "/dashboard",
+}));
 
 function buildBars(symbol: string): OhlcvBar[] {
   return [
@@ -258,6 +272,10 @@ describe("P11 panels", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoading = false;
+    apiGetMock.mockResolvedValue({
+      data: { finmind: true, openai: false, anthropic: false, gemini: false, google: false },
+      meta: {},
+    });
   });
 
   it("renders 11-B + 11-C panels for TW market", () => {
