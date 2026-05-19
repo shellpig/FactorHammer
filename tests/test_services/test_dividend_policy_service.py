@@ -111,6 +111,27 @@ def test_parser_no_matching_table_returns_empty() -> None:
     assert df.empty
 
 
+def test_parser_strips_float_decimal_in_period_and_payment_raw() -> None:
+    """When read_html infers a year-only column as float64, '2025' must not be
+    rendered as '2025.0' in period / payment_raw (display-facing fields)."""
+    html = """
+    <table>
+      <thead>
+        <tr><th>股利發放期間</th><th>股利所屬期間</th><th>現金股利</th><th>股票股利</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>2026</td><td>2025</td><td>6.6</td><td>0</td></tr>
+        <tr><td>2025</td><td>2024</td><td>5.296</td><td>0</td></tr>
+      </tbody>
+    </table>
+    """
+    df = extract_goodinfo_dividend_policy_from_html(html)
+    for value in df["period"].dropna().tolist():
+        assert not value.endswith(".0"), f"period must not carry float-decimal suffix: {value!r}"
+    for value in df["payment_raw"].dropna().tolist():
+        assert not value.endswith(".0"), f"payment_raw must not carry float-decimal suffix: {value!r}"
+
+
 def test_service_selects_oldest_undetermined_goodinfo_period_2330() -> None:
     """Goodinfo detail rows: choose older unpaid period, not year total or newest unpaid period."""
     html = """
@@ -283,6 +304,87 @@ def test_service_future_payment_date_selected_00929() -> None:
     assert result["period"] == "26M04"
     assert result["cash_dividend"] == pytest.approx(0.13)
     assert result["payment_date"] == "2026-05-20"
+
+
+def test_service_selects_annual_only_table_3711() -> None:
+    """3711-like: Goodinfo only has annual rows (no Q/H/M detail). The current-year
+    row has 股利發放期間=2026 (bare year, no M/DD, no 未定) and 股利所屬期間=2025.
+    Should be recognised as pending current-year dividend."""
+    html = """
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="3">股利發放期間</th>
+          <th rowspan="3">股利所屬期間</th>
+          <th colspan="6">股東股利 (元/股)</th>
+        </tr>
+        <tr>
+          <th colspan="3">現金股利</th>
+          <th colspan="3">股票股利</th>
+        </tr>
+        <tr>
+          <th>盈餘</th><th>公積</th><th>合計</th>
+          <th>盈餘</th><th>公積</th><th>合計</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>2026</td><td>2025</td><td>6.6</td><td>0</td><td>6.6</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>2025</td><td>2024</td><td>5.296</td><td>0</td><td>5.296</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>2024</td><td>2023</td><td>5.202</td><td>0</td><td>5.202</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>2023</td><td>2022</td><td>8.793</td><td>0</td><td>8.793</td><td>0</td><td>0</td><td>0</td></tr>
+      </tbody>
+    </table>
+    """
+    with (
+        patch("src.services.dividend_policy_service._load_cache", return_value=None),
+        patch("src.services.dividend_policy_service._save_cache"),
+        patch(
+            "src.services.dividend_policy_service.fetch_goodinfo_dividend_policy_html",
+            return_value=html,
+        ),
+    ):
+        result = get_goodinfo_dividend_policy("3711", today=TODAY_2026)
+
+    assert result["status"] == "current_year"
+    assert result["year"] == 2026
+    assert result["period"] == "2025"
+    assert result["payment_status"] == "undetermined"
+    assert result["payment_date"] is None
+    assert result["cash_dividend"] == pytest.approx(6.6)
+    assert result["stock_dividend"] == pytest.approx(0.0)
+
+
+def test_service_annual_only_table_past_years_not_selected() -> None:
+    """Annual-only table where the latest 股利發放期間 < today.year → not_found."""
+    html = """
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="3">股利發放期間</th>
+          <th rowspan="3">股利所屬期間</th>
+          <th colspan="3">現金股利</th>
+        </tr>
+        <tr>
+          <th>盈餘</th><th>公積</th><th>合計</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>2025</td><td>2024</td><td>5.296</td><td>0</td><td>5.296</td></tr>
+        <tr><td>2024</td><td>2023</td><td>5.202</td><td>0</td><td>5.202</td></tr>
+      </tbody>
+    </table>
+    """
+    with (
+        patch("src.services.dividend_policy_service._load_cache", return_value=None),
+        patch("src.services.dividend_policy_service._save_cache"),
+        patch(
+            "src.services.dividend_policy_service.fetch_goodinfo_dividend_policy_html",
+            return_value=html,
+        ),
+    ):
+        result = get_goodinfo_dividend_policy("0000", today=TODAY_2026)
+
+    assert result["status"] == "not_found"
 
 
 # ---------------------------------------------------------------------------

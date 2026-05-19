@@ -25,7 +25,7 @@ from src.core.config import get_data_dir
 
 _GOODINFO_URL_TEMPLATE = "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID={symbol}"
 _SOURCE_NOTE = "此為網頁抓取資料，請自行前往來源確認"
-_CACHE_SCHEMA_VERSION = 5
+_CACHE_SCHEMA_VERSION = 7
 _REQUEST_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -70,7 +70,12 @@ def _save_cache(symbol: str, today: pd.Timestamp, payload: dict[str, Any]) -> No
 
 
 def _normalize_text(value: Any) -> str:
-    return str(value).replace("\u3000", " ").strip()
+    text = str(value).replace("\u3000", " ").strip()
+    # pandas read_html may infer integer-only columns as float64, turning a
+    # cell like "2025" into "2025.0" after str(). Strip the trailing .0 so
+    # period / payment_raw render cleanly and match year-only regexes.
+    m = re.fullmatch(r"(-?\d+)\.0+", text)
+    return m.group(1) if m else text
 
 
 def _period_sort_key(value: Any) -> tuple[int, int, str]:
@@ -94,6 +99,24 @@ def _parse_payment_date(raw: str, year: int) -> pd.Timestamp | None:
         return pd.Timestamp(year=year, month=int(m.group(1)), day=int(m.group(2)), tz="Asia/Taipei")
     except (ValueError, OverflowError):
         return None
+
+
+def _is_bare_year_payment(payment_raw: str) -> bool:
+    """Detect payment_raw that contains only a 4-digit year (e.g. '2026' / '2026年')."""
+    return re.fullmatch(r"\s*\d{4}\s*年?\s*", payment_raw) is not None
+
+
+def _is_future_payment(payment_raw: str, year_in_row: int, today: pd.Timestamp) -> bool:
+    """True when payment_raw describes a current/future pending dividend."""
+    parsed = _parse_payment_date(payment_raw, year_in_row)
+    if parsed is not None:
+        return parsed >= today.normalize()
+    # Annual-summary symbols (e.g. 3711) only show 股利發放期間 as bare year and
+    # 股利所屬期間 as the fiscal year. When the dividend year is current/future
+    # and no M/DD has been announced, treat it as a pending payment.
+    if _is_bare_year_payment(payment_raw):
+        return year_in_row >= today.year
+    return False
 
 
 def _find_first_column(columns: pd.Index, keywords: tuple[str, ...], *, exclude: tuple[str, ...] = ()) -> Any | None:
@@ -338,11 +361,8 @@ def get_goodinfo_dividend_policy(
         undetermined["_period_key"] = undetermined["period"].map(_period_sort_key)
         latest = undetermined.sort_values(["year", "_period_key"]).iloc[0]
     else:
-        _far_past = pd.Timestamp("1970-01-01", tz="Asia/Taipei")
         future_mask = has_period & has_dividend & df.apply(
-            lambda r: (
-                _parse_payment_date(str(r.get("payment_raw", "")), int(r["year"])) or _far_past
-            ) >= today.normalize(),
+            lambda r: _is_future_payment(str(r.get("payment_raw", "")), int(r["year"]), today),
             axis=1,
         )
         future = df[future_mask].copy()
@@ -371,6 +391,11 @@ def get_goodinfo_dividend_policy(
 
     parsed_date = _parse_payment_date(str(latest.get("payment_raw", "")), year)
     payment_date_str = parsed_date.strftime("%Y-%m-%d") if parsed_date is not None else None
+
+    # Annual-summary rows have no M/DD — surface them as 未定 so the UI renders
+    # "股利發放時間未定" instead of a blank countdown slot.
+    if payment_status is None and parsed_date is None and _is_bare_year_payment(str(latest.get("payment_raw", ""))):
+        payment_status = "undetermined"
 
     if year == today.year:
         payload = _result(
