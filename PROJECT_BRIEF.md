@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-18
+最後更新：2026-05-19
 
 ---
 
@@ -239,7 +239,10 @@ risk:
 | 11-C | ✅ 完成 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta`；資料管理頁單檔刪除不動全市場股東會資料，`data_update` / `data_rebuild` 尾端只 refresh 一次；使用者已驗證完成 |
 | 11-D | ✅ 完成 | Goodinfo 股利政策 fallback：事件行事曆無正式未來除息資料時，不再顯示去年資料推估的 `[預估]`，改抓 Goodinfo 股利政策表；只顯示「股利發放期間=未定」或日期落在未來的待發放明細與現金 / 股票股利；過期或失敗顯示查無今年股利資料；使用者已驗證通過 |
 | 11-E | ✅ 完成 | UI/UX 收尾調整（純前端）：(1) Sidebar 工具名稱改 `FactorHammer`（不動 repo / package name）；(2) 名稱右下方版號 `v{version}`，build-time 從 `web/package.json` 注入；(3)「資料源未提供」字色改與「撈不到股東會資料」同黃色 token；(4) 股東會無資料文案改為「撈不到股東會資料，需要手動填入（或是ETF沒有股東會）」；(5) 報價列改一排，標籤 muted、數值原色、欄位以兩個全形空格分隔；(6) K 線右側加「前收」標籤，整組同色、漲紅跌綠、平盤灰；(7) 股東會編輯按鈕移到「事件行事曆」標題右側 8px 內聯；(8) 散戶多空比 placeholder 整塊移除；使用者已驗證完成 |
-| 12 | 📋 規格 | 首次執行 Token Onboarding 與 Portable Runtime 重整（規格已寫入規格書 / 開發設計方針 / 測試指南，實作未動工）：12-A install.bat 5 步驟 + portable Node v22.11.0 + SHA-256 + `run_factorhammer.bat` 改名 + `tools/` 加 .gitignore；12-B 擴充既有 `api/routers/config.py` 新增 `POST /api/config/secrets/validate` + FinMind 驗證 + `_write_env` 重構為共用 atomic helper（保留註解 / 空行 / 未知 keys / 不 sort）+ `get_secrets_status` 空白 fallback bug 修正；12-C 強制 block Token Setup Dialog（不可 ESC / overlay 關）+ FinMind 申請連結 + AI keys 選填折疊 + SWR 全域 mutate；12-D verifier 文件收尾 |
+| 12-A | 📋 規格 | Portable Node + install.bat 改版（規格已寫入三份主文件，實作未動工）：install.bat 5 步驟（系統檢查 / portable Node v22.11.0 下載 + SHA-256 驗證 / corepack 啟用 pnpm 11.1.1 / uv venv + sync / pnpm install）、`run_quanttraderV2.bat` 改名為 `run_factorhammer.bat` + PATH 注入 `tools\node\`、`web/package.json` 加 `packageManager` 欄位、`.gitignore` 加 `tools/` |
+| 12-B | 📋 規格 | Backend Config API 擴充（規格已寫入三份主文件，實作未動工）：擴充既有 `api/routers/config.py` 新增 `POST /api/config/secrets/validate` + FinMind 驗證流程（限流回 502 讓使用者重試，不允許繞過驗證寫入）、`_write_env` 重構為共用 atomic helper（保留註解 / 空行 / 未知 keys、不 sort、寫 `.env.tmp` + `os.replace`）、`get_secrets_status` 空白 fallback bug 修正；既有 `PUT /api/config/secrets` 行為與測試不被破壞 |
+| 12-C | 📋 規格 | Frontend Token Setup Dialog（規格已寫入三份主文件，實作未動工）：強制 block modal（無 X、ESC / overlay 都 preventDefault、儲存鈕灰至 FinMind 非空）、FinMind 申請連結、AI keys 選填折疊、SWR `mutate(() => true)` 全域 invalidate；不提供清空既有 AI key、不提供「先跳過」 |
+| 12-D | 📋 規格 | Verifier 文件收尾（規格已寫入三份主文件，實作未動工）：全文件 `run_quanttraderV2.bat` 殘留檢測、文件同步檢查清單；由 verifier 角色執行，不動代碼 |
 
 ## 當前待辦
 

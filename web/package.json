@@ -2,6 +2,7 @@
   "name": "quanttrader-web",
   "version": "0.2.0",
   "private": true,
+  "packageManager": "pnpm@11.1.1",
   "scripts": {
     "sync:mock": "node scripts/sync-dashboard-mock.mjs",
     "predev": "pnpm run sync:mock",

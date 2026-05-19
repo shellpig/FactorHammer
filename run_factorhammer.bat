@@ -2,13 +2,14 @@
 setlocal
 
 cd /d "%~dp0"
+if exist "%~dp0tools\node\node.exe" set "PATH=%~dp0tools\node;%PATH%"
 set "PYTHONPATH=%CD%"
 
 if exist "%USERPROFILE%\.local\bin\uv.exe" set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 if exist "%APPDATA%\uv\bin\uv.exe"         set "PATH=%APPDATA%\uv\bin;%PATH%"
 
 echo ================================================================
-echo   QuantTrader v2 - Dev Stack Launcher (Phase 10-D dashboard)
+echo   FactorHammer - Dev Stack Launcher
 echo ================================================================
 echo   Backend  : http://localhost:8000   (FastAPI)
 echo   Frontend : http://localhost:3000   (Next.js)
@@ -21,10 +22,10 @@ if not exist "web\node_modules" goto :install_web
 
 :start_services
 echo Starting backend on port 8000 ...
-start "QT-Backend-8000" cmd /k ".venv\Scripts\python.exe -m uvicorn api.main:app --reload --port 8000"
+start "FactorHammer-Backend-8000" cmd /k ".venv\Scripts\python.exe -m uvicorn api.main:app --reload --port 8000"
 
 echo Starting frontend on port 3000 ...
-start "QT-Frontend-3000" cmd /k "cd /d web && pnpm dev"
+start "FactorHammer-Frontend-3000" cmd /k "cd /d web && pnpm dev"
 
 echo.
 echo Waiting for frontend to be ready (max 60s) ...

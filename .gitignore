@@ -27,6 +27,7 @@ settings.local.json
 # local project state
 config.yaml
 舊文件/
+tools/
 
 # streamlit logs
 .streamlit_*.log
