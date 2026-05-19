@@ -409,10 +409,26 @@ def test_validate_finmind_token_success_200(mock_get: MagicMock) -> None:
     mock_get.return_value = _mock_response(status_code=200, json_body={"status": 200, "msg": "success"})
     validate_finmind_token("token")
     mock_get.assert_called_once_with(
-        "https://api.finmindtrade.com/api/v4/user_info",
-        params={"token": "token"},
+        "https://api.finmindtrade.com/api/v4/data",
+        params={
+            "dataset": "TaiwanStockInfo",
+            "data_id": "2330",
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-02",
+            "token": "token",
+        },
         timeout=5,
     )
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_http_400_is_invalid(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(
+        status_code=400,
+        json_body={"msg": "Token is illegal.", "status": 400},
+    )
+    with pytest.raises(FinMindTokenInvalid):
+        validate_finmind_token("bad-token")
 
 
 @patch("src.services.config_service.requests.get")

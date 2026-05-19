@@ -102,7 +102,9 @@ export function TokenSetupDialog({
 
           <div className="mt-4 space-y-3">
             <label className="block space-y-1">
-              <span className="text-sm text-slate-200">FinMind Token</span>
+              <span className="text-sm text-slate-200">
+                FinMind Token <span className="text-amber-300">(必須)</span>
+              </span>
               <div className="flex items-center gap-2">
                 <input
                   aria-label="FinMind Token"

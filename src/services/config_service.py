@@ -176,42 +176,41 @@ def get_secrets_status() -> dict[str, bool]:
 
 
 def validate_finmind_token(token: str) -> None:
-    """Validate FinMind token via API.
+    """Validate FinMind token via a lightweight data query.
+
+    Uses the same host/path as the data fetcher so a token that validates here
+    is guaranteed to work for fetcher calls (and vice-versa).
 
     Raises:
         FinMindTokenInvalid: token rejected by FinMind.
-        FinMindUnreachable: network/timeout/server-side errors.
+        FinMindUnreachable: network/timeout/server-side errors / rate-limited.
     """
-    url = "https://api.finmindtrade.com/api/v4/user_info"
+    url = "https://api.finmindtrade.com/api/v4/data"
+    params = {
+        "dataset": "TaiwanStockInfo",
+        "data_id": "2330",
+        "start_date": "2024-01-02",
+        "end_date": "2024-01-02",
+        "token": token,
+    }
     try:
-        resp = requests.get(url, params={"token": token}, timeout=5)
-    except (requests.ConnectionError, requests.Timeout) as exc:
-        raise FinMindUnreachable(str(exc)) from exc
-    except requests.RequestException as exc:
+        resp = requests.get(url, params=params, timeout=5)
+    except (requests.ConnectionError, requests.Timeout, requests.RequestException) as exc:
         raise FinMindUnreachable(str(exc)) from exc
 
-    if resp.status_code in (401, 403, 422):
-        raise FinMindTokenInvalid("Token rejected by FinMind.")
     if resp.status_code == 429 or resp.status_code >= 500:
         raise FinMindUnreachable(f"FinMind returned HTTP {resp.status_code}.")
     if resp.status_code != 200:
-        raise FinMindTokenInvalid(f"Unexpected status {resp.status_code}.")
+        raise FinMindTokenInvalid(f"FinMind rejected token (HTTP {resp.status_code}).")
 
     try:
         body = resp.json()
     except ValueError as exc:
         raise FinMindTokenInvalid("Invalid response from FinMind.") from exc
 
-    status = body.get("status")
-    msg = str(body.get("msg", "")).strip().lower()
-    if status in (200, "200", "success"):
+    if body.get("status") in (200, "200", "success"):
         return
-    if status is None:
-        raise FinMindTokenInvalid("Token rejected by FinMind.")
-
-    if _looks_like_invalid_token_message(msg):
-        raise FinMindTokenInvalid(body.get("msg", "Token rejected by FinMind."))
-    raise FinMindTokenInvalid(body.get("msg", "Token rejected by FinMind."))
+    raise FinMindTokenInvalid(str(body.get("msg") or "Token rejected by FinMind."))
 
 
 def get_strategy_presets_config() -> list[dict[str, Any]]:
@@ -302,10 +301,3 @@ def _write_env(path: Path, updates: dict[str, str]) -> None:
     tmp_path = path.with_name(f"{path.name}.tmp")
     tmp_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     os.replace(tmp_path, path)
-
-
-def _looks_like_invalid_token_message(message: str) -> bool:
-    lowered = message.lower()
-    token_signals = ("token", "api key", "apikey")
-    invalid_signals = ("invalid", "wrong", "expired", "unauthorized", "forbidden")
-    return any(t in lowered for t in token_signals) and any(i in lowered for i in invalid_signals)
