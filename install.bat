@@ -6,11 +6,15 @@ set "ROOT=%~dp0"
 set "NODE_VERSION=v22.13.1"
 set "PNPM_VERSION=11.1.1"
 set "PNPM_PACKAGE=pnpm@11.1.1"
+set "COREPACK_VERSION=0.33.0"
+set "COREPACK_PACKAGE=corepack@0.33.0"
 set "NODE_DIST=node-v22.13.1-win-x64"
 set "TOOLS_DIR=%ROOT%tools"
 set "NODE_DIR=%TOOLS_DIR%\node"
 set "NODE_EXE=%NODE_DIR%\node.exe"
-set "COREPACK_CMD=%NODE_DIR%\corepack.cmd"
+set "NPM_CMD=%NODE_DIR%\npm.cmd"
+set "COREPACK_HOME=%TOOLS_DIR%\corepack"
+set "LOCAL_COREPACK_JS=%COREPACK_HOME%\node_modules\corepack\dist\corepack.js"
 set "NODE_ZIP=%TOOLS_DIR%\%NODE_DIST%.zip"
 set "SHASUMS_FILE=%TOOLS_DIR%\SHASUMS256.txt"
 set "NODE_TMP_DIR=%TOOLS_DIR%\node_extract_tmp"
@@ -139,24 +143,37 @@ if /I not "%NODE_ACTUAL_VERSION%"=="%NODE_VERSION%" (
 )
 echo      Node version: %NODE_ACTUAL_VERSION%
 
-if not exist "%COREPACK_CMD%" (
-    echo  [ERROR] corepack is unavailable under portable Node.
+if not exist "%NPM_CMD%" (
+    echo  [ERROR] npm is unavailable under portable Node.
     pause
     exit /b 1
 )
-echo      corepack available.
+echo      npm available.
 
-echo      Preparing pnpm %PNPM_VERSION% through corepack ...
-set "PATH=%NODE_DIR%;%NODE_DIR%\node_modules\corepack\dist;%PATH%"
-call "%COREPACK_CMD%" enable
+echo      Installing local corepack %COREPACK_VERSION% under tools\corepack ...
+call "%NPM_CMD%" install --prefix "%COREPACK_HOME%" "%COREPACK_PACKAGE%"
 if %ERRORLEVEL% NEQ 0 (
-    echo  [ERROR] corepack enable failed.
+    echo  [ERROR] Failed to install local corepack %COREPACK_VERSION%.
     pause
     exit /b 1
 )
-call "%COREPACK_CMD%" prepare "%PNPM_PACKAGE%" --activate
+if not exist "%LOCAL_COREPACK_JS%" (
+    echo  [ERROR] local corepack.js not found at %LOCAL_COREPACK_JS%.
+    pause
+    exit /b 1
+)
+echo      local corepack ready.
+
+echo      Preparing pnpm %PNPM_VERSION% through local corepack ...
+call "%NODE_EXE%" "%LOCAL_COREPACK_JS%" enable
 if %ERRORLEVEL% NEQ 0 (
-    echo  [ERROR] corepack prepare %PNPM_PACKAGE% --activate failed.
+    echo  [ERROR] local corepack enable failed.
+    pause
+    exit /b 1
+)
+call "%NODE_EXE%" "%LOCAL_COREPACK_JS%" prepare "%PNPM_PACKAGE%" --activate
+if %ERRORLEVEL% NEQ 0 (
+    echo  [ERROR] local corepack prepare %PNPM_PACKAGE% --activate failed.
     pause
     exit /b 1
 )
@@ -164,7 +181,7 @@ if %ERRORLEVEL% NEQ 0 (
 pushd web
 set "PNPM_ACTUAL_VERSION="
 if exist "%PNPM_VERSION_LOG%" del /f /q "%PNPM_VERSION_LOG%" >nul 2>&1
-call "%COREPACK_CMD%" pnpm --version > "%PNPM_VERSION_LOG%" 2>&1
+call "%NODE_EXE%" "%LOCAL_COREPACK_JS%" pnpm --version > "%PNPM_VERSION_LOG%" 2>&1
 set "PNPM_VERSION_STATUS=%ERRORLEVEL%"
 for /f "usebackq delims=" %%V in ("%PNPM_VERSION_LOG%") do (
     if not defined PNPM_ACTUAL_VERSION set "PNPM_ACTUAL_VERSION=%%V"
@@ -172,7 +189,7 @@ for /f "usebackq delims=" %%V in ("%PNPM_VERSION_LOG%") do (
 if not defined PNPM_ACTUAL_VERSION (
     popd
     echo  [ERROR] pnpm version check failed with exit code %PNPM_VERSION_STATUS%.
-    echo  [ERROR] pnpm command is unavailable after corepack prepare.
+    echo  [ERROR] pnpm command is unavailable after local corepack prepare.
     if exist "%PNPM_VERSION_LOG%" (
         echo.
         echo  ----- pnpm version check output -----
@@ -190,7 +207,7 @@ if /I not "%PNPM_ACTUAL_VERSION%"=="%PNPM_VERSION%" (
 )
 echo      pnpm version: %PNPM_ACTUAL_VERSION%
 
-call "%COREPACK_CMD%" pnpm install --frozen-lockfile
+call "%NODE_EXE%" "%LOCAL_COREPACK_JS%" pnpm install --frozen-lockfile
 if %ERRORLEVEL% NEQ 0 (
     popd
     echo  [ERROR] pnpm install --frozen-lockfile failed.
