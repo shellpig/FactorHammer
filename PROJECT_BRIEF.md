@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-19
+最後更新：2026-05-20
 
 ---
 
@@ -16,6 +16,7 @@
 - Phase 10 全部完成（10-A ~ 10-H-2）；舊 Streamlit UI 已移除。
 - Phase 11 11-A / 11-B / 11-C / 11-D 已完成並驗證通過；11-D Goodinfo 股利政策 fallback 已上線。
 - Phase 11-E 已完成並驗證通過：純前端 UI/UX 收尾調整 8 項已上線，包含工具名稱改 `FactorHammer`、版號 build-time 注入、警示文字字色統一、股東會無資料文案修正、報價列改一排、K 線右側加「前收」、股東會編輯按鈕內聯、散戶多空比 placeholder 移除。
+- Phase 12 12-A / 12-B / 12-C 已實作；12-B / 12-C 已驗證完成；12-D 文件收尾已執行。**12-A 乾淨環境 install.bat 手動驗證待補，因此 Phase 12 尚未整體完成。**
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
@@ -233,28 +234,28 @@ risk:
 | 10-G-1 | ✅ 完成 | 基礎設施先行：新增 `sonner` toast + 10-C-2 banner 遷移、React Error Boundary（只接 render/lifecycle/hook 例外）、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton`、`cmdk` Command Palette（頁面跳轉 + 股票搜尋）；移除 `@radix-ui/react-toast`；補 7 檔前端測試與單檔更新/新增失敗 toast regression。tsc 0 errors + vitest **24 files / 148 tests passed** |
 | 10-G-2 | ✅ 完成 | 設定頁 4 分區：API key write-only UI（5 provider）、策略 preset CRUD（`POST/DELETE/restore` 三端點 + Dialog）、Dark↔Light 主題切換（沿用既有自製 `theme-provider.tsx`，**未引入 `next-themes`**，等價支援 `class="dark"` + localStorage）、AI toggle disabled + Radix Tooltip；pytest `test_config_api.py + test_config_svc.py` 28 passed（+6 strategy endpoints / +3 `delete_strategy_preset_by_name`）+ vitest **46 files / 290 tests passed**（+5 settings 元件測試 + use-config hook）+ tsc 0 errors |
 | 10-H-1 | ✅ 完成 | 收尾前置補強：Playwright E2E smoke 5 spec（desktop + mobile 兩 project、共 48 case）、手機 <768px 底部 Tab Bar（`sidebar.tsx` 拆 Desktop / Mobile + `pb-14`）、`web/src/tests/lib/theme-vars.test.ts` 補 `test_themes.py` CSS 變數驗證；測試遷移檢查表 7 行全部打勾。順手 bug fix：`backtest_service.py` `load_backtest_data` tz-aware filter、`StrategyPresetSelect.tsx` API URL 加 `NEXT_PUBLIC_API_URL` 前綴、`uv.lock` 同步 0.2.0。Gate：pytest 588 passed / vitest 48 files / 307 tests / tsc 0 errors / Playwright 48 tests pass |
-| 10-H-2 | ✅ 完成 | 實際移除與全專案回歸：刪 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` streamlit 三套件、7 個 Streamlit pytest 檔；`src/ai/advisor.py` 保留（10-F-2 + dashboard analysis 仍使用）；`src/backtest/report.py` `_apply_theme` 去除 ui 依賴 |
+| 10-H-2 | ✅ 完成 | 實際移除與全專案回歸：刪 `src/ui/`、舊 Streamlit 啟動腳本、`pyproject.toml` streamlit 三套件、7 個 Streamlit pytest 檔；`src/ai/advisor.py` 保留（10-F-2 + dashboard analysis 仍使用）；`src/backtest/report.py` `_apply_theme` 去除 ui 依賴 |
 | 11-A | ✅ 完成 | Dashboard 版面調整：chart 高度 400px → 300px；移除 K 線圖 KD / RSI / MACD 下方副圖但保留成交量；左欄 chart 下方新增兩塊、共 6 個 dashed placeholder panel；market=us 時 P11 下方兩塊隱藏；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位小數顯示修正；使用者實機驗證通過 |
 | 11-B | ✅ 完成 | 估值 / 獲利區塊：本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal；新增 PER / 月營收 fetcher，補 dividends / EPS storage + `data_meta`；P11 API namespace、service、frontend hooks / panels / Modal、同產業 PER cache + lock、US market 501 邊界與 route regression 已補；ETF 空資料說明、TTM PE 最近交易日價格、資料刪除 WinError 收尾皆已驗證完成 |
 | 11-C | ✅ 完成 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta`；資料管理頁單檔刪除不動全市場股東會資料，`data_update` / `data_rebuild` 尾端只 refresh 一次；使用者已驗證完成 |
 | 11-D | ✅ 完成 | Goodinfo 股利政策 fallback：事件行事曆無正式未來除息資料時，不再顯示去年資料推估的 `[預估]`，改抓 Goodinfo 股利政策表；只顯示「股利發放期間=未定」或日期落在未來的待發放明細與現金 / 股票股利；過期或失敗顯示查無今年股利資料；使用者已驗證通過 |
 | 11-E | ✅ 完成 | UI/UX 收尾調整（純前端）：(1) Sidebar 工具名稱改 `FactorHammer`（不動 repo / package name）；(2) 名稱右下方版號 `v{version}`，build-time 從 `web/package.json` 注入；(3)「資料源未提供」字色改與「撈不到股東會資料」同黃色 token；(4) 股東會無資料文案改為「撈不到股東會資料，需要手動填入（或是ETF沒有股東會）」；(5) 報價列改一排，標籤 muted、數值原色、欄位以兩個全形空格分隔；(6) K 線右側加「前收」標籤，整組同色、漲紅跌綠、平盤灰；(7) 股東會編輯按鈕移到「事件行事曆」標題右側 8px 內聯；(8) 散戶多空比 placeholder 整塊移除；使用者已驗證完成 |
-| 12-A | 📋 規格 | Portable Node + install.bat 改版（規格已寫入三份主文件，實作未動工）：install.bat 5 步驟（系統檢查 / portable Node v22.11.0 下載 + SHA-256 驗證 / corepack 啟用 pnpm 11.1.1 / uv venv + sync / pnpm install）、`run_quanttraderV2.bat` 改名為 `run_factorhammer.bat` + PATH 注入 `tools\node\`、`web/package.json` 加 `packageManager` 欄位、`.gitignore` 加 `tools/` |
-| 12-B | 📋 規格 | Backend Config API 擴充（規格已寫入三份主文件，實作未動工）：擴充既有 `api/routers/config.py` 新增 `POST /api/config/secrets/validate` + FinMind 驗證流程（限流回 502 讓使用者重試，不允許繞過驗證寫入）、`_write_env` 重構為共用 atomic helper（保留註解 / 空行 / 未知 keys、不 sort、寫 `.env.tmp` + `os.replace`）、`get_secrets_status` 空白 fallback bug 修正；既有 `PUT /api/config/secrets` 行為與測試不被破壞 |
-| 12-C | 📋 規格 | Frontend Token Setup Dialog（規格已寫入三份主文件，實作未動工）：強制 block modal（無 X、ESC / overlay 都 preventDefault、儲存鈕灰至 FinMind 非空）、FinMind 申請連結、AI keys 選填折疊、SWR `mutate(() => true)` 全域 invalidate；不提供清空既有 AI key、不提供「先跳過」 |
-| 12-D | 📋 規格 | Verifier 文件收尾（規格已寫入三份主文件，實作未動工）：全文件 `run_quanttraderV2.bat` 殘留檢測、文件同步檢查清單；由 verifier 角色執行，不動代碼 |
+| 12-A | ⚠️ 待手動驗證 | Portable Node + install.bat 改版已實作：install.bat 5 步驟、portable Node v22.11.0 下載 + SHA-256 驗證、corepack 啟用 pnpm 11.1.1、舊 V2 啟動腳本改為 `run_factorhammer.bat` + PATH 注入 `tools\node\`、`web/package.json` 加 `packageManager`、`.gitignore` 加 `tools/`。**缺口：乾淨環境 / 已有系統 Node / idempotent / 下載失敗等 12-A 手動驗收尚未完成。** |
+| 12-B | ✅ 完成 | Backend Config API 擴充已實作並驗證完成：`POST /api/config/secrets/validate`、FinMind token 驗證改用 FinMind data endpoint、`_write_env` atomic helper（保留註解 / 空行 / 未知 keys、不 sort、寫 `.env.tmp` + `os.replace`）、`get_secrets_status` 空白 fallback bug 修正；既有 `PUT /api/config/secrets` regression 通過 |
+| 12-C | ✅ 完成 | Frontend Token Setup Dialog 已實作並驗證完成：強制 block modal（無 X、ESC / overlay 都 preventDefault、儲存鈕灰至 FinMind 非空）、FinMind 申請連結、AI keys 選填折疊、SWR `mutate(() => true)` 全域 invalidate；不提供清空既有 AI key、不提供「先跳過」 |
+| 12-D | ✅ 已執行 | Verifier 文件收尾已執行：同步 12-A/B/C 狀態、保留 12-A 手動驗證缺口、檢查舊啟動腳本名殘留；Phase 12 整體完成仍等待 12-A 手動驗證 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–11 11-A~11-E 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸、11-D Goodinfo 股利政策 fallback、11-E UI/UX 收尾調整皆已驗證通過）。Phase 12 規格已寫入三份主文件，待使用者下「實作 12-A」或同等指令動工。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–11 11-A~11-E 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸、11-D Goodinfo 股利政策 fallback、11-E UI/UX 收尾調整皆已驗證通過）。Phase 12 12-A/B/C 已實作，12-B/C 已驗證完成，12-D 文件收尾已執行；12-A install.bat 乾淨環境手動驗證尚缺，因此 Phase 12 尚未整體完成。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
-2026-05-18 狀態（Phase 12 規格寫入）：
-- **P12 規格已寫入三份主文件**：`量化交易系統規格書_shellpig版.md` 新增 ### Phase 12 段落（含定位、4 個子階段、共通規則、API 合約、UI 規格、不做、風險）；`開發設計方針.md` 新增 ## Phase 12 段落（含 `_write_env` 重構程式碼、`validate_finmind_token` 完整 service 函式、router endpoint 範例、Dialog hooks 範例、SWR mutate 整合）；`測試指南.md` 新增 ## Phase 12 測試段落（12-A 安裝腳本 8 點手動驗收、12-B 14 條 router + 12 條 service 自動測試、12-C 16 條元件 + 3 條整合 + 10 點手動驗收、Phase 12 完成 Gate）。
-- **P12 規格四項拍板決定**：(1) endpoint 策略：擴充既有 `api/routers/config.py` 沿用 `GET /api/config/secrets/status`、新增 `POST /api/config/secrets/validate`，**不**改造既有 `PUT /api/config/secrets`；(2) angled `_write_env` 重構為共用 atomic helper，既有 `update_secrets` 受惠（保留註解 / 空行 / 未知 keys、不 sort、寫 `.env.tmp` + `os.replace`）；(3) modal 強制 block（無 X、ESC / overlay 都 preventDefault、儲存鈕灰至 FinMind 非空）；(4) Node 鎖死 v22.11.0 portable 落到 `tools\node\`，`.gitignore` 加 `tools/`，pnpm 鎖 `11.1.1`。
-- **P12 範圍邊界**：FinMind 驗證採固定流程「驗證成功才寫 .env」，限流時回 502 讓使用者重試，**不**允許繞過驗證寫入；modal 不提供清空既有 AI key、不提供「先跳過」；既有 `PUT /api/config/secrets` 行為與測試不被破壞。
-- **P12 角色拆分**：12-A / 12-B / 12-C 由 implementer 動代碼 + 測試 + 註解，**不動 .md 文件**；12-D 由 verifier 角色執行（規格書 / 開發設計方針 / 測試指南 / PROJECT_BRIEF 已於本批次同步。
+2026-05-20 狀態（Phase 12 verifier 文件收尾）：
+- **P12 實作狀態**：12-A commit `058a874` 已完成 portable runtime / install.bat / launcher 改名；12-B commit `988ed14` 已完成 secrets validation API；12-C commit `560a0e4` 已完成 token setup dialog；commit `0fd67ab` 修正 FinMind 驗證改走 data endpoint 並補 `(必須)` 標籤。
+- **P12 驗證狀態**：12-B / 12-C 使用者已確認驗證完成；本次 verifier 重新跑 P12 targeted gate：`tests/test_api/test_config_api.py + tests/test_services/test_config_svc.py` 54 passed、`web/ npx tsc --noEmit` 0 errors、`token-setup-dialog.test.tsx` 19 passed。
+- **P12 未完成缺口**：12-A 缺乾淨環境 install.bat 手動驗證（含無 Node / 已有系統 Node / idempotent / 下載失敗 / SHA-256 / pnpm 版本 / launcher 改名 / `.gitignore` 8 點）。此缺口完成前，Phase 12 不標整體完成。
+- **P12 文件狀態**：12-D 已同步 `PROJECT_BRIEF.md` 與 `驗證後已知問題.md`，並檢查舊啟動腳本名殘留；現役啟動入口以 `run_factorhammer.bat` 為準。
 
 過往驗證 recap（2026-05-10 ~ 2026-05-18）：
 - Phase 6-C → 11-E 各子階段陸續完成並通過驗證；逐 phase 範圍 / 邊界決定 / 驗證結果見上方「Phase 進度表」、commit 訊息與 `驗證後已知問題.md`。
@@ -301,10 +302,10 @@ risk:
 | 11-B：估值 / 獲利區塊 | 3871-3937 | 實作 PER / 月營收 / dividends / EPS 落地、valuation API、同產業 PER Modal 時必讀 |
 | 11-C：籌碼 / 事件區塊 | 3938-4049 | 實作法人持股成本、股東會 TWSE/TPEx fetcher、manual override、event calendar、資料管理頁互動規則時必讀 |
 | 11-E：UI/UX 收尾調整 | 4126-4170 | 實作工具名稱改 `FactorHammer`、版號 build-time 注入、警示文字字色統一、股東會無資料文案、報價列改一排、K 線右側加「前收」、編輯按鈕內聯、placeholder 移除時必讀 |
-| 12-A：Portable Node + install.bat 改版 | 4229-4325 | 實作 install.bat 5 步驟、portable Node v22.11.0 + SHA-256、corepack/pnpm 啟用、`run_quanttraderV2.bat` 改名為 `run_factorhammer.bat`、`web/package.json` packageManager、`.gitignore` 加 `tools/` 時必讀 |
+| 12-A：Portable Node + install.bat 改版 | 4229-4325 | 實作 install.bat 5 步驟、portable Node v22.11.0 + SHA-256、corepack/pnpm 啟用、舊 V2 啟動腳本改名為 `run_factorhammer.bat`、`web/package.json` packageManager、`.gitignore` 加 `tools/` 時必讀 |
 | 12-B：Backend Config API 擴充 | 4326-4422 | 實作 `POST /api/config/secrets/validate` + FinMind 驗證流程、`_write_env` atomic + 保留註解 / 空行 / 未知 keys 共用 helper、`get_secrets_status` 空白 fallback bug 修正時必讀 |
 | 12-C：Frontend Token Setup Dialog | 4423-4525 | 實作強制 block modal（不可 ESC / overlay 關）、FinMind 申請連結、AI keys 選填折疊、SWR `mutate(() => true)` 全域 invalidate 時必讀 |
-| 12-D：Verifier 文件收尾 | 4526-4552 | verifier 角色執行；含全文件 `run_quanttraderV2.bat` 殘留檢測指令、文件同步檢查清單 |
+| 12-D：Verifier 文件收尾 | 4526-4552 | verifier 角色執行；含舊啟動腳本名殘留檢測指令、文件同步檢查清單 |
 | 附錄 A：免責聲明全文 | 4585-4604 | 免責聲明文案 |
 | 附錄 B：架構決策補充 | 4606-4662 | 美股邊界與 AI provider 抽象 |
 
@@ -438,7 +439,7 @@ cd web && pnpm exec playwright test
 
 目標：使用者下載一個檔 → 點擊安裝 → 點擊執行檔即可用。FINMIND_TOKEN 改由 app 首次執行偵測 `.env` 缺失時跳設定頁（非安裝期處理）。
 
-> **與 Phase 12 的關係**：Phase 12 已先把「FINMIND_TOKEN 首次執行偵測 + 跳設定 modal」與「可攜式 Node v22.11.0 落到 `tools\node\`」兩塊雛形實作完成（規格已寫入，實作待動工）。未來 Inno Setup 打包階段可直接複用 P12 的 portable Node 結構與 onboarding modal，不必重做。P12 規格段落見「規格文件索引」內 Phase 12 索引行。
+> **與 Phase 12 的關係**：Phase 12 已先把「FINMIND_TOKEN 首次執行偵測 + 跳設定 modal」與「可攜式 Node v22.11.0 落到 `tools\node\`」兩塊雛形實作完成。未來 Inno Setup 打包階段可直接複用 P12 的 portable Node 結構與 onboarding modal，不必重做。P12 規格段落見「規格文件索引」內 Phase 12 索引行。
 
 **推薦方案**：Inno Setup 離線安裝包，內含可攜式 Python + 可攜式 Node（沿用 P12 `tools\node\` 結構） + 預下載 wheels + 預 build 前端。安裝到 `%LOCALAPPDATA%\QuantTrader\`（per-user，免 UAC）。Launcher 啟動 uvicorn + `node server.js`，開瀏覽器到 dashboard。
 
