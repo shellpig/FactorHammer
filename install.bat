@@ -147,6 +147,7 @@ if not exist "%COREPACK_CMD%" (
 echo      corepack available.
 
 echo      Preparing pnpm %PNPM_VERSION% through corepack ...
+set "PATH=%NODE_DIR%;%NODE_DIR%\node_modules\corepack\dist;%PATH%"
 call "%COREPACK_CMD%" enable
 if %ERRORLEVEL% NEQ 0 (
     echo  [ERROR] corepack enable failed.
@@ -163,7 +164,7 @@ if %ERRORLEVEL% NEQ 0 (
 pushd web
 set "PNPM_ACTUAL_VERSION="
 if exist "%PNPM_VERSION_LOG%" del /f /q "%PNPM_VERSION_LOG%" >nul 2>&1
-pnpm --version > "%PNPM_VERSION_LOG%" 2>&1
+call "%COREPACK_CMD%" pnpm --version > "%PNPM_VERSION_LOG%" 2>&1
 set "PNPM_VERSION_STATUS=%ERRORLEVEL%"
 for /f "usebackq delims=" %%V in ("%PNPM_VERSION_LOG%") do (
     if not defined PNPM_ACTUAL_VERSION set "PNPM_ACTUAL_VERSION=%%V"
@@ -189,7 +190,7 @@ if /I not "%PNPM_ACTUAL_VERSION%"=="%PNPM_VERSION%" (
 )
 echo      pnpm version: %PNPM_ACTUAL_VERSION%
 
-call pnpm install --frozen-lockfile
+call "%COREPACK_CMD%" pnpm install --frozen-lockfile
 if %ERRORLEVEL% NEQ 0 (
     popd
     echo  [ERROR] pnpm install --frozen-lockfile failed.
