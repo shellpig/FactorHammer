@@ -5,10 +5,12 @@ cd /d "%~dp0"
 set "ROOT=%~dp0"
 set "NODE_VERSION=v22.11.0"
 set "PNPM_VERSION=11.1.1"
+set "PNPM_PACKAGE=pnpm@11.1.1"
 set "NODE_DIST=node-v22.11.0-win-x64"
 set "TOOLS_DIR=%ROOT%tools"
 set "NODE_DIR=%TOOLS_DIR%\node"
 set "NODE_EXE=%NODE_DIR%\node.exe"
+set "NPM_CMD=%NODE_DIR%\npm.cmd"
 set "NODE_ZIP=%TOOLS_DIR%\%NODE_DIST%.zip"
 set "SHASUMS_FILE=%TOOLS_DIR%\SHASUMS256.txt"
 set "NODE_TMP_DIR=%TOOLS_DIR%\node_extract_tmp"
@@ -108,7 +110,7 @@ if exist "%NODE_EXE%" (
 echo      OK
 
 echo.
-echo [4/5] Enabling corepack and installing frontend dependencies...
+echo [4/5] Installing frontend dependencies...
 set "PATH=%NODE_DIR%;%PATH%"
 
 set "NODE_ACTUAL_VERSION="
@@ -125,28 +127,19 @@ if /I not "%NODE_ACTUAL_VERSION%"=="%NODE_VERSION%" (
 )
 echo      Node version: %NODE_ACTUAL_VERSION%
 
-corepack --version >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo  [ERROR] corepack is unavailable under portable Node.
+if not exist "%NPM_CMD%" (
+    echo  [ERROR] npm is unavailable under portable Node.
     pause
     exit /b 1
 )
-echo      corepack available.
+echo      npm available.
 
 pushd web
-corepack enable
-if %ERRORLEVEL% NEQ 0 (
-    popd
-    echo  [ERROR] corepack enable failed in web directory.
-    pause
-    exit /b 1
-)
-
 set "PNPM_ACTUAL_VERSION="
-for /f "usebackq delims=" %%V in (`pnpm --version 2^>nul`) do set "PNPM_ACTUAL_VERSION=%%V"
+for /f "usebackq delims=" %%V in (`"%NPM_CMD%" exec --yes --package "%PNPM_PACKAGE%" -- pnpm --version 2^>nul`) do set "PNPM_ACTUAL_VERSION=%%V"
 if not defined PNPM_ACTUAL_VERSION (
     popd
-    echo  [ERROR] pnpm command is unavailable after corepack enable.
+    echo  [ERROR] pnpm command is unavailable through npm exec.
     pause
     exit /b 1
 )
@@ -158,7 +151,7 @@ if /I not "%PNPM_ACTUAL_VERSION%"=="%PNPM_VERSION%" (
 )
 echo      pnpm version: %PNPM_ACTUAL_VERSION%
 
-call pnpm install --frozen-lockfile
+call "%NPM_CMD%" exec --yes --package "%PNPM_PACKAGE%" -- pnpm install --frozen-lockfile
 if %ERRORLEVEL% NEQ 0 (
     popd
     echo  [ERROR] pnpm install --frozen-lockfile failed.

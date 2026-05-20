@@ -3,6 +3,7 @@ setlocal
 
 cd /d "%~dp0"
 if exist "%~dp0tools\node\node.exe" set "PATH=%~dp0tools\node;%PATH%"
+set "PNPM_PACKAGE=pnpm@11.1.1"
 set "PYTHONPATH=%CD%"
 
 if exist "%USERPROFILE%\.local\bin\uv.exe" set "PATH=%USERPROFILE%\.local\bin;%PATH%"
@@ -54,8 +55,8 @@ exit /b 1
 :install_web
 echo [WARN] web\node_modules not found. Installing frontend deps...
 pushd web
-if exist "%~dp0tools\node\corepack.cmd" (
-    call "%~dp0tools\node\corepack.cmd" pnpm install
+if exist "%~dp0tools\node\npm.cmd" (
+    call "%~dp0tools\node\npm.cmd" exec --yes --package "%PNPM_PACKAGE%" -- pnpm install
 ) else (
     call pnpm install
 )
@@ -65,8 +66,8 @@ goto :start_services
 
 :frontend
 cd /d "%~dp0web"
-if exist "%~dp0tools\node\corepack.cmd" (
-    call "%~dp0tools\node\corepack.cmd" pnpm dev
+if exist "%~dp0tools\node\npm.cmd" (
+    call "%~dp0tools\node\npm.cmd" exec --yes --package "%PNPM_PACKAGE%" -- pnpm dev
 ) else (
     call pnpm dev
 )
