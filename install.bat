@@ -10,12 +10,11 @@ set "NODE_DIST=node-v22.13.1-win-x64"
 set "TOOLS_DIR=%ROOT%tools"
 set "NODE_DIR=%TOOLS_DIR%\node"
 set "NODE_EXE=%NODE_DIR%\node.exe"
-set "NPM_CMD=%NODE_DIR%\npm.cmd"
-set "PNPM_HOME=%TOOLS_DIR%\pnpm"
-set "PNPM_CLI=%PNPM_HOME%\node_modules\pnpm\bin\pnpm.cjs"
+set "COREPACK_CMD=%NODE_DIR%\corepack.cmd"
 set "NODE_ZIP=%TOOLS_DIR%\%NODE_DIST%.zip"
 set "SHASUMS_FILE=%TOOLS_DIR%\SHASUMS256.txt"
 set "NODE_TMP_DIR=%TOOLS_DIR%\node_extract_tmp"
+set "PNPM_VERSION_LOG=%TOOLS_DIR%\pnpm-version-check.log"
 set "NODE_ZIP_URL=https://nodejs.org/dist/v22.13.1/node-v22.13.1-win-x64.zip"
 set "NODE_SUMS_URL=https://nodejs.org/dist/v22.13.1/SHASUMS256.txt"
 
@@ -140,32 +139,45 @@ if /I not "%NODE_ACTUAL_VERSION%"=="%NODE_VERSION%" (
 )
 echo      Node version: %NODE_ACTUAL_VERSION%
 
-if not exist "%NPM_CMD%" (
-    echo  [ERROR] npm is unavailable under portable Node.
+if not exist "%COREPACK_CMD%" (
+    echo  [ERROR] corepack is unavailable under portable Node.
     pause
     exit /b 1
 )
-echo      npm available.
+echo      corepack available.
 
-echo      Installing pnpm %PNPM_VERSION% under tools\pnpm ...
-call "%NPM_CMD%" install --prefix "%PNPM_HOME%" "%PNPM_PACKAGE%"
+echo      Preparing pnpm %PNPM_VERSION% through corepack ...
+call "%COREPACK_CMD%" enable
 if %ERRORLEVEL% NEQ 0 (
-    echo  [ERROR] Failed to install pnpm %PNPM_VERSION% through portable npm.
+    echo  [ERROR] corepack enable failed.
     pause
     exit /b 1
 )
-if not exist "%PNPM_CLI%" (
-    echo  [ERROR] pnpm CLI not found at %PNPM_CLI%.
+call "%COREPACK_CMD%" prepare "%PNPM_PACKAGE%" --activate
+if %ERRORLEVEL% NEQ 0 (
+    echo  [ERROR] corepack prepare %PNPM_PACKAGE% --activate failed.
     pause
     exit /b 1
 )
 
 pushd web
 set "PNPM_ACTUAL_VERSION="
-for /f "usebackq delims=" %%V in (`"%NODE_EXE%" "%PNPM_CLI%" --version 2^>nul`) do set "PNPM_ACTUAL_VERSION=%%V"
+if exist "%PNPM_VERSION_LOG%" del /f /q "%PNPM_VERSION_LOG%" >nul 2>&1
+pnpm --version > "%PNPM_VERSION_LOG%" 2>&1
+set "PNPM_VERSION_STATUS=%ERRORLEVEL%"
+for /f "usebackq delims=" %%V in ("%PNPM_VERSION_LOG%") do (
+    if not defined PNPM_ACTUAL_VERSION set "PNPM_ACTUAL_VERSION=%%V"
+)
 if not defined PNPM_ACTUAL_VERSION (
     popd
-    echo  [ERROR] pnpm command is unavailable through %PNPM_CLI%.
+    echo  [ERROR] pnpm version check failed with exit code %PNPM_VERSION_STATUS%.
+    echo  [ERROR] pnpm command is unavailable after corepack prepare.
+    if exist "%PNPM_VERSION_LOG%" (
+        echo.
+        echo  ----- pnpm version check output -----
+        type "%PNPM_VERSION_LOG%"
+        echo  -------------------------------------
+    )
     pause
     exit /b 1
 )
@@ -177,7 +189,7 @@ if /I not "%PNPM_ACTUAL_VERSION%"=="%PNPM_VERSION%" (
 )
 echo      pnpm version: %PNPM_ACTUAL_VERSION%
 
-call "%NODE_EXE%" "%PNPM_CLI%" install --frozen-lockfile
+call pnpm install --frozen-lockfile
 if %ERRORLEVEL% NEQ 0 (
     popd
     echo  [ERROR] pnpm install --frozen-lockfile failed.

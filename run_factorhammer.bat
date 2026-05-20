@@ -4,8 +4,7 @@ setlocal
 cd /d "%~dp0"
 if exist "%~dp0tools\node\node.exe" set "PATH=%~dp0tools\node;%PATH%"
 set "PNPM_PACKAGE=pnpm@11.1.1"
-set "PNPM_HOME=%~dp0tools\pnpm"
-set "PNPM_CLI=%PNPM_HOME%\node_modules\pnpm\bin\pnpm.cjs"
+set "COREPACK_CMD=%~dp0tools\node\corepack.cmd"
 set "PYTHONPATH=%CD%"
 
 if exist "%USERPROFILE%\.local\bin\uv.exe" set "PATH=%USERPROFILE%\.local\bin;%PATH%"
@@ -56,27 +55,29 @@ exit /b 1
 
 :install_web
 echo [WARN] web\node_modules not found. Installing frontend deps...
-if not exist "%PNPM_CLI%" (
-    if exist "%~dp0tools\node\npm.cmd" (
-        call "%~dp0tools\node\npm.cmd" install --prefix "%PNPM_HOME%" "%PNPM_PACKAGE%"
-        if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
-    )
-)
+call :ensure_pnpm
+if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
 pushd web
-if exist "%PNPM_CLI%" (
-    call "%~dp0tools\node\node.exe" "%PNPM_CLI%" install
-) else (
-    call pnpm install
-)
+call pnpm install
 popd
 echo.
 goto :start_services
 
 :frontend
 cd /d "%~dp0web"
-if exist "%PNPM_CLI%" (
-    call "%~dp0tools\node\node.exe" "%PNPM_CLI%" dev
-) else (
-    call pnpm dev
+call :ensure_pnpm
+if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
+call pnpm dev
+exit /b %ERRORLEVEL%
+
+:ensure_pnpm
+pnpm --version >nul 2>&1
+if %ERRORLEVEL% EQU 0 exit /b 0
+if not exist "%COREPACK_CMD%" (
+    echo [ERROR] pnpm not found and portable corepack is unavailable.
+    exit /b 1
 )
+call "%COREPACK_CMD%" enable
+if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
+call "%COREPACK_CMD%" prepare "%PNPM_PACKAGE%" --activate
 exit /b %ERRORLEVEL%
