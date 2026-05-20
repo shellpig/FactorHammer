@@ -3,21 +3,21 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 set "ROOT=%~dp0"
-set "NODE_VERSION=v22.11.0"
+set "NODE_VERSION=v22.13.1"
 set "PNPM_VERSION=11.1.1"
 set "PNPM_PACKAGE=pnpm@11.1.1"
-set "NODE_DIST=node-v22.11.0-win-x64"
+set "NODE_DIST=node-v22.13.1-win-x64"
 set "TOOLS_DIR=%ROOT%tools"
 set "NODE_DIR=%TOOLS_DIR%\node"
 set "NODE_EXE=%NODE_DIR%\node.exe"
 set "NPM_CMD=%NODE_DIR%\npm.cmd"
 set "PNPM_HOME=%TOOLS_DIR%\pnpm"
-set "PNPM_CMD=%PNPM_HOME%\pnpm.cmd"
+set "PNPM_CLI=%PNPM_HOME%\node_modules\pnpm\bin\pnpm.cjs"
 set "NODE_ZIP=%TOOLS_DIR%\%NODE_DIST%.zip"
 set "SHASUMS_FILE=%TOOLS_DIR%\SHASUMS256.txt"
 set "NODE_TMP_DIR=%TOOLS_DIR%\node_extract_tmp"
-set "NODE_ZIP_URL=https://nodejs.org/dist/v22.11.0/node-v22.11.0-win-x64.zip"
-set "NODE_SUMS_URL=https://nodejs.org/dist/v22.11.0/SHASUMS256.txt"
+set "NODE_ZIP_URL=https://nodejs.org/dist/v22.13.1/node-v22.13.1-win-x64.zip"
+set "NODE_SUMS_URL=https://nodejs.org/dist/v22.13.1/SHASUMS256.txt"
 
 echo.
 echo  ====================================
@@ -101,7 +101,18 @@ echo      OK
 echo.
 echo [3/5] Checking portable Node.js (%NODE_VERSION%)...
 if exist "%NODE_EXE%" (
-    echo      Found %NODE_EXE%, skipping download.
+    set "NODE_EXISTING_VERSION="
+    for /f "usebackq delims=" %%V in (`"%NODE_EXE%" --version 2^>nul`) do set "NODE_EXISTING_VERSION=%%V"
+    if /I "!NODE_EXISTING_VERSION!"=="%NODE_VERSION%" (
+        echo      Found %NODE_EXE%, skipping download.
+    ) else (
+        echo      Found !NODE_EXISTING_VERSION!, expected %NODE_VERSION%. Reinstalling portable Node.
+        call :install_node_portable
+        if !ERRORLEVEL! NEQ 0 (
+            pause
+            exit /b 1
+        )
+    )
 ) else (
     call :install_node_portable
     if !ERRORLEVEL! NEQ 0 (
@@ -137,19 +148,24 @@ if not exist "%NPM_CMD%" (
 echo      npm available.
 
 echo      Installing pnpm %PNPM_VERSION% under tools\pnpm ...
-call "%NPM_CMD%" install --global --prefix "%PNPM_HOME%" "%PNPM_PACKAGE%"
+call "%NPM_CMD%" install --prefix "%PNPM_HOME%" "%PNPM_PACKAGE%"
 if %ERRORLEVEL% NEQ 0 (
     echo  [ERROR] Failed to install pnpm %PNPM_VERSION% through portable npm.
+    pause
+    exit /b 1
+)
+if not exist "%PNPM_CLI%" (
+    echo  [ERROR] pnpm CLI not found at %PNPM_CLI%.
     pause
     exit /b 1
 )
 
 pushd web
 set "PNPM_ACTUAL_VERSION="
-for /f "usebackq delims=" %%V in (`"%PNPM_CMD%" --version 2^>nul`) do set "PNPM_ACTUAL_VERSION=%%V"
+for /f "usebackq delims=" %%V in (`"%NODE_EXE%" "%PNPM_CLI%" --version 2^>nul`) do set "PNPM_ACTUAL_VERSION=%%V"
 if not defined PNPM_ACTUAL_VERSION (
     popd
-    echo  [ERROR] pnpm command is unavailable at %PNPM_CMD%.
+    echo  [ERROR] pnpm command is unavailable through %PNPM_CLI%.
     pause
     exit /b 1
 )
@@ -161,7 +177,7 @@ if /I not "%PNPM_ACTUAL_VERSION%"=="%PNPM_VERSION%" (
 )
 echo      pnpm version: %PNPM_ACTUAL_VERSION%
 
-call "%PNPM_CMD%" install --frozen-lockfile
+call "%NODE_EXE%" "%PNPM_CLI%" install --frozen-lockfile
 if %ERRORLEVEL% NEQ 0 (
     popd
     echo  [ERROR] pnpm install --frozen-lockfile failed.
@@ -238,7 +254,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 set "EXPECTED_HASH="
-for /f "usebackq delims=" %%H in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$line = Get-Content -LiteralPath '%SHASUMS_FILE%' | Where-Object { $_ -match ' node-v22.11.0-win-x64\.zip$' } | Select-Object -First 1; if (-not $line) { exit 1 }; ($line -split '\s+')[0].ToLowerInvariant()"`) do set "EXPECTED_HASH=%%H"
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$line = Get-Content -LiteralPath '%SHASUMS_FILE%' | Where-Object { $_ -match ' %NODE_DIST%\.zip$' } | Select-Object -First 1; if (-not $line) { exit 1 }; ($line -split '\s+')[0].ToLowerInvariant()"`) do set "EXPECTED_HASH=%%H"
 if not defined EXPECTED_HASH (
     echo        [WARN] Unable to resolve expected SHA-256 from SHASUMS256.txt.
     exit /b 1
