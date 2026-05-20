@@ -11,6 +11,8 @@ set "TOOLS_DIR=%ROOT%tools"
 set "NODE_DIR=%TOOLS_DIR%\node"
 set "NODE_EXE=%NODE_DIR%\node.exe"
 set "NPM_CMD=%NODE_DIR%\npm.cmd"
+set "PNPM_HOME=%TOOLS_DIR%\pnpm"
+set "PNPM_CMD=%PNPM_HOME%\pnpm.cmd"
 set "NODE_ZIP=%TOOLS_DIR%\%NODE_DIST%.zip"
 set "SHASUMS_FILE=%TOOLS_DIR%\SHASUMS256.txt"
 set "NODE_TMP_DIR=%TOOLS_DIR%\node_extract_tmp"
@@ -134,12 +136,20 @@ if not exist "%NPM_CMD%" (
 )
 echo      npm available.
 
+echo      Installing pnpm %PNPM_VERSION% under tools\pnpm ...
+call "%NPM_CMD%" install --global --prefix "%PNPM_HOME%" "%PNPM_PACKAGE%"
+if %ERRORLEVEL% NEQ 0 (
+    echo  [ERROR] Failed to install pnpm %PNPM_VERSION% through portable npm.
+    pause
+    exit /b 1
+)
+
 pushd web
 set "PNPM_ACTUAL_VERSION="
-for /f "usebackq delims=" %%V in (`"%NPM_CMD%" exec --yes --package "%PNPM_PACKAGE%" -- pnpm --version 2^>nul`) do set "PNPM_ACTUAL_VERSION=%%V"
+for /f "usebackq delims=" %%V in (`"%PNPM_CMD%" --version 2^>nul`) do set "PNPM_ACTUAL_VERSION=%%V"
 if not defined PNPM_ACTUAL_VERSION (
     popd
-    echo  [ERROR] pnpm command is unavailable through npm exec.
+    echo  [ERROR] pnpm command is unavailable at %PNPM_CMD%.
     pause
     exit /b 1
 )
@@ -151,7 +161,7 @@ if /I not "%PNPM_ACTUAL_VERSION%"=="%PNPM_VERSION%" (
 )
 echo      pnpm version: %PNPM_ACTUAL_VERSION%
 
-call "%NPM_CMD%" exec --yes --package "%PNPM_PACKAGE%" -- pnpm install --frozen-lockfile
+call "%PNPM_CMD%" install --frozen-lockfile
 if %ERRORLEVEL% NEQ 0 (
     popd
     echo  [ERROR] pnpm install --frozen-lockfile failed.
