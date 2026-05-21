@@ -28,6 +28,7 @@
 | **V3.0** | 2026/05/17 | 新增 **Phase 11 Dashboard 基本面與事件擴充**。11-A 先做版面調整（chart 400px→300px，左欄底部新增兩塊、共 6 個 placeholder）；11-B 實作估值 / 獲利區塊（本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal），新增 PER / 月營收 fetcher 與 PER / monthly_revenue / dividends / EPS 落地；11-C 實作籌碼 / 事件區塊（法人持股成本、除息與股東會事件行事曆、股東會手動覆蓋 Modal），新增 TWSE + TPEx 股東會全市場資料源與 manual override CSV。所有 P11 API 走 `/api/analysis/p11/*`，避免與既有 `/api/analysis/{section}` 動態路由衝突。股東會為全市場單一 parquet，不進 `data_meta`，改用獨立 JSON metadata。美股 P11 功能暫不支援，market=us 時隱藏下方兩塊。 |
 | **V3.1** | 2026/05/18 | 新增 **Phase 11-E（UI/UX 收尾調整）**。純前端版面調整 8 項：(1) Sidebar 工具顯示名稱改 `FactorHammer`（不動專案 / repo / package name）；(2) 名稱右下方兩行 stack 顯示版號 `v{version}`，version 從 `web/package.json` build-time 注入；(3)「資料源未提供」說明文字字色統一改用「撈不到股東會資料」黃色 token；(4) 事件行事曆股東會無資料文案改為「撈不到股東會資料，需要手動填入（或是ETF沒有股東會）」；(5) 個股分析頁報價列改一排，標籤 muted、數值原色、欄位以兩個全形空格分隔；(6) K 線右側新增「前收」標籤，整組同色、漲紅跌綠、平盤灰；(7) 股東會手動編輯按鈕從面板右上移到「事件行事曆」標題右側 8px 內聯；(8) 散戶多空比 placeholder 整塊移除。不動後端、不動 Python、不動 `name` / repo。 |
 | **V3.2** | 2026/05/20 | **Phase 12 verifier 文件收尾。** 12-A / 12-B / 12-C 已實作；12-B / 12-C 已驗證完成；12-D 同步文件狀態與舊啟動腳本名檢查。12-A install.bat 乾淨環境手動驗證仍待補，因此 Phase 12 不標整體完成。 |
+| **V3.3** | 2026/05/21 | 新增 **Phase 13 Dashboard 現有功能調整** 初版規格。13-A 聚焦個股分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 也必須強制重新呼叫 dashboard payload，先嘗試 `update_daily()` 再分析；隱藏無資料支撐的 `分 K` tab。13-B 聚焦指標說明與數值呈現：壓力 / 支撐補來源標籤或 tooltip，成交量統一以日K股數語意呈現，避免與即時報價來源單位混淆。 |
 | **V2.7** | 2026/05/16 | **10-E 規格審查補丁**（12 項）：(1) `JobManager.finish_cancelled_job()` 新增（含 `cancel_job()` race condition 修正——只設 status、不關 queue）；(2) `GET /api/jobs/{id}/result` 擴充允許 cancelled + partial result；(3) 取消 `api/routers/backtest.py` 冗餘端點，前端直接用 `GET /api/config` 取 preset 清單；(4) `initial_capital` 預設 `1000000`，需新增為 `run_backtest_job()` 參數並注入引擎；(5) DCA 序列化映射補充（equity_curve / trades / metrics null 欄位）；(6) `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表；(7) WFA 特化 `WfaProgress` interface 補充；(8) CSV blob 函式位置指定 `src/services/backtest_service.py`；(9) E2E Playwright 統一在 10-E-4 後撰寫；(10) **交易數量單位統一顯示「股」（shares），不做 1000 股→1 張轉換**（與舊 Streamlit 回測頁一致；「張」僅用於 10-D 儀表板的日成交量與籌碼顯示）；(11) 切換市場時 reset state（清空回測結果）；(12) DCA 批次比較 error message 明確定義為「DCA 不支援批次比較（請至單次回測使用）」。 |
 
 ---
@@ -4589,6 +4590,145 @@ Get-ChildItem -Recurse -Include *.md -Exclude 舊文件 |
 | 使用者既有 `.env` 有自定 keys | 寫入時被誤刪 | 重構後 `_write_env` 保留註解 / 空行 / 未知 keys；測試覆蓋此情境 |
 | 既有 `PUT /api/config/secrets` 行為被連動破壞 | 未來 Settings 頁回歸 fail | 12-B 只擴充 `_write_env` 內部實作，不動 `update_secrets` 對外介面；既有 router 測試需全綠 |
 | SWR mutate 範圍過大造成多餘請求 | 儲存成功瞬間 dashboard 重新載入所有 panel | 個人版單頁面 panel 不多，實測可接受；若有效能問題未來改為精準 mutate（列舉 known SWR keys） |
+
+---
+
+### Phase 13：Dashboard 現有功能調整
+
+#### Phase 13 定位
+
+Phase 13 不新增大型資料源、不改回測引擎、不擴 AI 功能，目標是針對 Phase 10-12 已完成的 Next.js Dashboard 做「現有功能語意整理與操作體感修正」。
+
+本階段優先修正個股分析頁中容易誤導使用者的互動：
+
+- 個股分析實際上以日線 / 盤後資料為主，少量即時報價只作輔助顯示。
+- 現有「分析」按鈕與股票輸入框 Enter 行為重複。
+- 現有「即時更新」文案容易讓使用者期待真正盤中更新，但實際只是重新呼叫 dashboard payload。
+- 台股 `分 K` tab 無 `intraday_df` 時會 fallback 成日K，看起來與日K完全相同。
+- 壓力 / 支撐數字來源未明示，使用者不易理解為何不同股票數量不同。
+- 成交量顯示需要明確區分日K股數與即時報價來源單位，避免誤讀。
+
+#### Phase 13 子階段
+
+| 子階段 | 名稱 | 範圍 |
+|:---|:---|:---|
+| 13-A | Dashboard 分析入口與日線定位整理 | 移除重複按鈕、Enter 成為唯一分析入口、同代碼 Enter 強制重跑 payload、隱藏無效分K |
+| 13-B | Dashboard 指標說明與數值呈現整理 | 壓力 / 支撐來源說明、成交量單位與日K語意統一 |
+
+#### 13-A：Dashboard 分析入口與日線定位整理
+
+**目標：** 讓個股分析頁的操作語意與實際資料流程一致。使用者輸入代碼後按 Enter，即表示「嘗試更新該標的日線資料並重新分析」。
+
+##### 行為規格
+
+1. 個股分析頁移除「分析」按鈕。
+2. 個股分析頁移除「即時更新」按鈕。
+3. 股票輸入框旁顯示提示文字：
+
+   ```text
+   輸入代碼後按 Enter 更新資料並分析
+   ```
+
+4. 股票輸入框 Enter 成為唯一分析入口。
+5. 輸入新代碼後按 Enter：
+   - 前端切換 `symbol`。
+   - 重新呼叫 `/api/dashboard/payload`。
+   - 後端現有 `build_dashboard_payload()` 必須維持先跑 `_sync_symbol_daily_data()` / `DataMaintenance.update_daily()`，再組分析 payload。
+6. 輸入目前相同代碼後按 Enter：
+   - 不得因 React state 值相同而無動作。
+   - 必須強制重新呼叫 dashboard payload（例如呼叫 SWR `mutate()`）。
+   - 後端同樣嘗試 `update_daily()` 後重新分析。
+7. Enter 觸發期間，需沿用既有 loading / error 呈現；不得新增需要使用者理解的第二種更新流程。
+8. 台股個股分析頁隱藏 `分 K` tab。
+9. 更保守的通用規則：只有當 `intraday_df.length > 0` 時才允許顯示 `分 K` tab；台股目前通常為 0，因此不顯示。
+10. `日 K / 週 K / 月 K` tab 保留。
+
+##### 不做
+
+| 項目 | 原因 |
+|:---|:---|
+| 新增真正台股分K資料管線 | 這是新資料功能，超出 13-A 的 UX cleanup 範圍 |
+| 新增資料更新 job 流程 | dashboard payload 既有會呼叫 `update_daily()`；13-A 只修正前端入口與同代碼重跑 |
+| WebSocket / polling 即時盤中更新 | 個人版目前定位非實盤工具 |
+| 改資料管理頁更新 / 重建流程 | 資料管理頁已有獨立 job flow，不混入 13-A |
+
+##### 驗收條件
+
+1. 畫面上不再出現「分析」按鈕。
+2. 畫面上不再出現「即時更新」按鈕。
+3. 股票輸入框旁出現 `輸入代碼後按 Enter 更新資料並分析`。
+4. 輸入不同代碼按 Enter 後，dashboard payload 重新呼叫。
+5. 輸入相同代碼按 Enter 後，dashboard payload 也重新呼叫。
+6. 同代碼 Enter 時後端仍走 `DataMaintenance.update_daily()` 路徑。
+7. 台股 dashboard 不顯示 `分 K` tab。
+8. 週K / 月K 切換仍可用。
+
+#### 13-B：Dashboard 指標說明與數值呈現整理
+
+**目標：** 讓使用者理解壓力 / 支撐與成交量的來源，避免把演算法去重或資料源單位差異誤判為資料錯誤。
+
+##### 壓力 / 支撐顯示規格
+
+1. 壓力區數字需顯示來源 label 或 tooltip。
+2. 支撐區數字需顯示來源 label 或 tooltip。
+3. 壓力來源至少包含現有 technical summary 的：
+   - `近60日高點`
+   - `近20日高點`
+4. 支撐來源至少包含現有 technical summary 的：
+   - `近期低點`
+   - `MA20`
+   - `MA60`
+5. tooltip 或標籤需說明：同一來源若價格過近會去重，因此有些股票只顯示一個壓力位，有些會顯示兩個。
+6. 範例語意：
+   - `3293` 可同時顯示 `近60日高點 805` 與 `近20日高點 795`。
+   - `6669` 若近60日高點與近20日高點同為 `5870`，只顯示一個壓力位屬正常。
+
+##### 成交量顯示規格
+
+1. K 線圖與個股分析主畫面的成交量以日K資料的 `volume` 為準，單位語意為「股」。
+2. 顯示格式需讓使用者可直覺對應台股常用說法，例如：
+
+   ```text
+   238萬股
+   ```
+
+   或完整數字：
+
+   ```text
+   2,379,159 股
+   ```
+
+3. 不得在同一區塊混用未標示單位的即時報價 `quote.volume` 與日K `daily_df.volume`。
+4. 若仍顯示即時報價來源的成交量，必須明確標示其來源與單位；若單位無法穩定確認，13-B 應優先隱藏該欄或改用最新日K成交量。
+5. `6669` 2026-05-21 日K成交量 `2,379,159` 應顯示為約 `238萬股`，不得顯示成與此數量級不一致的值。
+
+##### 驗收條件
+
+1. 壓力 / 支撐數字可看出來源 label，或 hover / focus 後可看到來源 tooltip。
+2. 壓力位去重規則有清楚說明。
+3. `3293` 類型資料可顯示兩個壓力來源。
+4. `6669` 類型資料只顯示一個壓力來源時，使用者能從說明理解原因。
+5. 成交量顯示不再讓日K股數與即時報價來源單位混淆。
+6. `6669` 2026-05-21 成交量可對應 `2,379,159` / 約 `238萬股`。
+
+#### Phase 13 不做
+
+| 項目 | 原因 |
+|:---|:---|
+| 改 `PROJECT_BRIEF.md` | 本次先補規格書 / 開發設計方針 / 測試指南；brief 待使用者後續說明 |
+| 新增台股盤中分K | 需重新定義資料源、儲存與 UI 合約，另開 phase |
+| 新增真正即時自動刷新 | 個股分析目前仍定位研究 / 盤後工具，不做交易終端 |
+| 改回測成交量單位 | 13-B 僅處理 dashboard 顯示，不動回測 |
+| 改壓力 / 支撐演算法核心 | 13-B 先補來源說明與呈現，不重寫技術分析模型 |
+
+#### Phase 13 風險
+
+| 風險 | 影響 | 緩解 |
+|:---|:---|:---|
+| 移除按鈕後使用者不知道如何分析 | 操作入口不明 | 明確提示 `輸入代碼後按 Enter 更新資料並分析`，並保留輸入框 placeholder |
+| 同代碼 Enter 未重抓 | 使用者以為已更新但資料沒變 | 同代碼分支必須呼叫 SWR `mutate()`，測試鎖定 |
+| 隱藏分K影響美股 intraday | 美股 9-G 原本有 intraday snapshot | 採 `intraday_df.length > 0` 才顯示分K，不用 market hard-code |
+| 即時報價成交量單位不明 | 使用者誤判成交量錯誤 | 13-B 優先改用日K成交量或明確標單位 |
 
 ---
 
