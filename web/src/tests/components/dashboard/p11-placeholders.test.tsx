@@ -356,7 +356,9 @@ describe("P11 panels", () => {
 
   it("formats TW levels by tick size (high price no decimals)", async () => {
     render(<DashboardPageClient />);
-    expect(await screen.findByText("533 / 30.43")).toBeInTheDocument();
-    expect(screen.getByText("28.42 / 23.07")).toBeInTheDocument();
+    expect(await screen.findByText("533")).toBeInTheDocument();
+    expect(screen.getByText("30.43")).toBeInTheDocument();
+    expect(screen.getByText("28.42")).toBeInTheDocument();
+    expect(screen.getByText("23.07")).toBeInTheDocument();
   });
 });

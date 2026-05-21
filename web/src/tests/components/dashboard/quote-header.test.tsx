@@ -134,7 +134,7 @@ describe("Quote header — Phase 11-E", () => {
       render(<DashboardPageClient />);
       const row = await screen.findByTestId("quote-header-row");
       // All 7 labels should be present
-      const labels = ["開盤", "最高", "最低", "前收", "成交量", "買量", "賣量"];
+      const labels = ["開盤", "最高", "最低", "前收", "日K成交量", "買量", "賣量"];
       for (const label of labels) {
         expect(row).toHaveTextContent(label);
       }
@@ -144,7 +144,7 @@ describe("Quote header — Phase 11-E", () => {
       render(<DashboardPageClient />);
       const row = await screen.findByTestId("quote-header-row");
       const muteSpans = row.querySelectorAll(".text-slate-500");
-      // At least 5 muted labels (開盤/最高/最低/前收/成交量; 買量/賣量 may vary)
+      // At least 5 muted labels (開盤/最高/最低/前收/日K成交量; 買量/賣量 may vary)
       expect(muteSpans.length).toBeGreaterThanOrEqual(5);
     });
   });

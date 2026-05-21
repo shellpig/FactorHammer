@@ -20,6 +20,7 @@ import {
 import type { OhlcvBar, PriceLevel } from "@/types/analysis";
 import type { Market } from "@/types/market";
 import { MARKET_DOWN_COLOR, MARKET_UP_COLOR } from "@/types/market";
+import { formatTwDailyVolume } from "@/lib/formatters";
 
 type ChartInterval = "day" | "week" | "month" | "minute";
 
@@ -312,10 +313,14 @@ export function CandlestickChart({
       const ma60Val = ma60DataRef.current.find((d) => d.time === param.time)?.value;
 
       const fmt = (v: number) => v.toFixed(2);
+      const volumeText =
+        market === "tw" && interval !== "minute"
+          ? formatTwDailyVolume(bar.volume)
+          : fmtVol(bar.volume);
       const lines = [
         `<span style="color:#94a3b8">${param.time}</span>`,
         `開 <b>${fmt(bar.open)}</b>  高 <b>${fmt(bar.high)}</b>  低 <b>${fmt(bar.low)}</b>  收 <b>${fmt(bar.close)}</b>`,
-        `成交量 <b>${fmtVol(bar.volume)}</b>`,
+        `成交量 <b>${volumeText}</b>`,
         [
           ma5Val != null ? `<span style="color:#f59e0b">MA5 ${fmt(ma5Val)}</span>` : "",
           ma20Val != null ? `<span style="color:#3b82f6">MA20 ${fmt(ma20Val)}</span>` : "",

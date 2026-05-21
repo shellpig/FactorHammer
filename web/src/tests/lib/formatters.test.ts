@@ -6,6 +6,7 @@ import {
   formatNumber,
   formatPct,
   formatVolume,
+  formatTwDailyVolume,
   formatDate,
   changeColor,
 } from "@/lib/formatters";
@@ -55,6 +56,20 @@ describe("formatVolume", () => {
 
   it("shows raw number for small values", () => {
     expect(formatVolume(999)).toBe("999");
+  });
+});
+
+describe("formatTwDailyVolume", () => {
+  it("formats millions in 萬股", () => {
+    expect(formatTwDailyVolume(2_379_159)).toBe("238萬股");
+  });
+
+  it("formats hundred-millions in 億股", () => {
+    expect(formatTwDailyVolume(123_000_000)).toBe("1.2億股");
+  });
+
+  it("formats small numbers in 股", () => {
+    expect(formatTwDailyVolume(999)).toBe("999股");
   });
 });
 

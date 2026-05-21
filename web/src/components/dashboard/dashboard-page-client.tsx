@@ -29,7 +29,12 @@ import { useP11InstitutionalCost } from "@/lib/hooks/useP11InstitutionalCost";
 import { useP11MonthlyRevenue } from "@/lib/hooks/useP11MonthlyRevenue";
 import { useP11Valuation } from "@/lib/hooks/useP11Valuation";
 import { useDashboard } from "@/lib/hooks/useDashboard";
-import { changeColor, formatNumber, formatPct } from "@/lib/formatters";
+import {
+  changeColor,
+  formatNumber,
+  formatPct,
+  formatTwDailyVolume,
+} from "@/lib/formatters";
 import type {
   BidAskStructure,
   CandlePattern,
@@ -159,14 +164,23 @@ function mapPatternRows(
   return [...c, ...p];
 }
 
+function getLatestDailyVolume(payload: DashboardPayloadResponse | undefined): number | null {
+  if (!payload) return null;
+  const last = payload.daily_df[payload.daily_df.length - 1];
+  if (!last || typeof last.volume !== "number") return null;
+  return last.volume;
+}
+
 function HeaderRow({
   quote,
   intradaySnapshot,
   market,
+  latestDailyVolume,
 }: {
   quote: RealtimeQuote | null;
   intradaySnapshot: USIntradaySnapshot | null;
   market: Market;
+  latestDailyVolume: number | null;
 }) {
   if (!quote && !intradaySnapshot) return null;
   if (!quote && intradaySnapshot) {
@@ -204,8 +218,12 @@ function HeaderRow({
       <span className="text-slate-500">前收</span>{"　"}
       <span className="[font-family:var(--font-mono)]">{formatNumber(quote.yesterday_close, 2)}</span>
       {"　　"}
-      <span className="text-slate-500">成交量</span>{"　"}
-      <span className="[font-family:var(--font-mono)]">{formatNumber(quote.volume, 0)}</span>
+      <span className="text-slate-500">{market === "tw" ? "日K成交量" : "成交量"}</span>{"　"}
+      <span className="[font-family:var(--font-mono)]">
+        {market === "tw"
+          ? (latestDailyVolume == null ? "—" : formatTwDailyVolume(latestDailyVolume))
+          : formatNumber(quote.volume, 0)}
+      </span>
       {isMarketOpen ? (
         <>
           {"　　"}
@@ -281,27 +299,56 @@ function LevelsPanel({
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
       <h3 className="mb-2 text-sm font-semibold text-slate-100">關鍵價位</h3>
-      <div className="space-y-1.5">
-        <div className="flex items-baseline justify-between gap-2">
-          <div className="flex shrink-0 items-center gap-1 text-xs text-slate-400">
+      <div className="space-y-2">
+        <div>
+          <div className="mb-1 flex items-center gap-1 text-xs text-slate-400">
             壓力區
             <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.resistance} />
           </div>
-          <div className="min-w-0 text-right text-base font-semibold text-rise [font-family:var(--font-mono)]">
-            {technical.resistance_levels
-              .map((item) => formatLevelPrice(item.value, market))
-              .join(" / ")}
+          <div className="space-y-1">
+            {technical.resistance_levels.length > 0 ? (
+              technical.resistance_levels.map((item) => (
+                <div
+                  key={`resistance-${item.label}-${item.value}`}
+                  data-testid="resistance-level-item"
+                  className="flex items-baseline justify-between gap-2 rounded-md border border-slate-800/80 bg-slate-900/40 px-2 py-1"
+                >
+                  <span className="text-base font-semibold text-rise [font-family:var(--font-mono)]">
+                    {formatLevelPrice(item.value, market)}
+                  </span>
+                  <span className="text-xs text-slate-300">{item.label}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-right text-base font-semibold text-slate-500 [font-family:var(--font-mono)]">—</p>
+            )}
           </div>
+          <p className="mt-1 text-[11px] text-slate-500">
+            近20日與近60日高點若價格太接近，系統會去重合併為單一壓力位。
+          </p>
         </div>
-        <div className="flex items-baseline justify-between gap-2">
-          <div className="flex shrink-0 items-center gap-1 text-xs text-slate-400">
+        <div>
+          <div className="mb-1 flex items-center gap-1 text-xs text-slate-400">
             支撐區
             <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.support} />
           </div>
-          <div className="min-w-0 text-right text-base font-semibold text-fall [font-family:var(--font-mono)]">
-            {technical.support_levels
-              .map((item) => formatLevelPrice(item.value, market))
-              .join(" / ")}
+          <div className="space-y-1">
+            {technical.support_levels.length > 0 ? (
+              technical.support_levels.map((item) => (
+                <div
+                  key={`support-${item.label}-${item.value}`}
+                  data-testid="support-level-item"
+                  className="flex items-baseline justify-between gap-2 rounded-md border border-slate-800/80 bg-slate-900/40 px-2 py-1"
+                >
+                  <span className="text-base font-semibold text-fall [font-family:var(--font-mono)]">
+                    {formatLevelPrice(item.value, market)}
+                  </span>
+                  <span className="text-xs text-slate-300">{item.label}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-right text-base font-semibold text-slate-500 [font-family:var(--font-mono)]">—</p>
+            )}
           </div>
         </div>
       </div>
@@ -850,6 +897,7 @@ export default function DashboardPageClient() {
   const titleName = data?.subject_name ?? "";
   const quote = data?.quote;
   const intradaySnapshot = data?.intraday_snapshot ?? null;
+  const latestDailyVolume = getLatestDailyVolume(data);
 
   const priceTone = useMemo(() => {
     if (quote) return changeColor(quote.change, market);
@@ -958,6 +1006,7 @@ export default function DashboardPageClient() {
                   quote={data.quote}
                   intradaySnapshot={data.intraday_snapshot}
                   market={market}
+                  latestDailyVolume={latestDailyVolume}
                 />
                 <ChartSection
                   payload={data}

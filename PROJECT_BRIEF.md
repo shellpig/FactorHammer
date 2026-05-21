@@ -17,7 +17,7 @@
 - Phase 11 11-A / 11-B / 11-C / 11-D 已完成並驗證通過；11-D Goodinfo 股利政策 fallback 已上線。
 - Phase 11-E 已完成並驗證通過：純前端 UI/UX 收尾調整 8 項已上線，包含工具名稱改 `FactorHammer`、版號 build-time 注入、警示文字字色統一、股東會無資料文案修正、報價列改一排、K 線右側加「前收」、股東會編輯按鈕內聯、散戶多空比 placeholder 移除。
 - Phase 12 12-A / 12-B / 12-C / 12-D 已完成；首次執行 Token Onboarding 與 Portable Runtime 重整已收束。
-- Phase 13 13-A 已完成並通過手動驗收：Dashboard 分析入口與日線定位整理（移除「分析 / 即時更新」按鈕、Enter 唯一入口、同代碼 Enter 走 SWR `mutate()`、隱藏無 intraday 資料的 `分 K` tab）。13-B 待實作：指標說明與數值呈現整理。
+- Phase 13 13-A / 13-B 已完成並通過驗證：Dashboard 分析入口與日線定位整理、指標說明與數值呈現整理（壓力 / 支撐來源 label、近20日 / 近60日高點去重說明、台股成交量以日K股數語意呈現）。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
@@ -246,18 +246,18 @@ risk:
 | 12-C | ✅ 完成 | Frontend Token Setup Dialog 已實作並驗證完成：強制 block modal（無 X、ESC / overlay 都 preventDefault、儲存鈕灰至 FinMind 非空）、FinMind 申請連結、AI keys 選填折疊、SWR `mutate(() => true)` 全域 invalidate；不提供清空既有 AI key、不提供「先跳過」 |
 | 12-D | ✅ 完成 | Verifier 文件收尾已完成：同步 12-A/B/C 狀態、檢查舊啟動腳本名殘留、更新現役啟動入口；Phase 12 整體完成 |
 | 13-A | ✅ 完成 | Dashboard 分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 走 SWR `mutate()` 強制重跑 dashboard payload，後端維持 `_sync_symbol_daily_data → DataMaintenance.update_daily()` 路徑；台股 `intraday_df=[]` 隱藏 `分 K` tab，美股 intraday 仍顯示；自動測試 8 case + 手動驗收 1-7 全通過 |
-| 13-B | ⏳ 待實作 | Dashboard 指標說明與數值呈現整理：壓力 / 支撐補來源 label 或 tooltip，說明近20日 / 近60日高點過近會合併；成交量統一以日K股數語意呈現，避免 `quote.volume` 與 `daily_df.volume` 單位混淆 |
+| 13-B | ✅ 完成 | Dashboard 指標說明與數值呈現整理：壓力 / 支撐補來源 label，說明近20日 / 近60日高點過近會合併；台股報價列與 K 線 tooltip 成交量統一以日K股數語意呈現，避免 `quote.volume` 與 `daily_df.volume` 單位混淆；`formatTwDailyVolume()` 補前端測試，使用者已完成人工驗證 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–12 全部完成；Phase 13-A 已完成並通過手動驗收（Dashboard 分析入口與日線定位整理）。Phase 13-B 待實作：指標說明與數值呈現整理。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–13 全部完成並通過驗證。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
-2026-05-21 狀態（Phase 13-A 完成）：
+2026-05-21 狀態（Phase 13-B 完成）：
 - **P12 狀態**：12-A / 12-B / 12-C / 12-D 已完成；現役啟動入口以 `run_factorhammer.bat` 為準。
 - **P13-A 完成**：移除「分析」/「即時更新」按鈕、`submitSymbol` 同代碼分支呼叫 `void mutate()`、`ChartSection` 以 `payload.intraday_df.length > 0` 決定分K tab 顯示、minute→day fallback。Gate：`npx tsc --noEmit` 0 errors、`pnpm test -- --run` 61 files / 399 tests pass（含 13-A 8 case）；手動驗收 1-7（控制列只剩三件、看不到舊按鈕、新代碼 Enter 載入、同代碼 Enter Network 重發 `/api/dashboard/payload`、台股只剩日/週/月 K、週/月 K 切換不空白）使用者已通過。
-- **P13-B 待實作**：壓力 / 支撐來源 label 或 tooltip、近20日 / 近60日高點過近會合併說明、成交量改以日K股數語意呈現避免 `quote.volume` 與 `daily_df.volume` 單位混淆。
+- **P13-B 完成**：`LevelsPanel` 改為逐筆顯示壓力 / 支撐價格與來源 label，補近20日 / 近60日高點過近會合併說明；台股報價列改顯示「日K成交量」且優先取最新日K `daily_df.volume`，K 線 tooltip 非分K成交量套用日K股數語意 formatter；Gate：`npx tsc --noEmit` 0 errors、`pnpm test -- --run` 61 files / 405 tests pass；使用者已完成人工驗證。
 
 過往驗證 recap（2026-05-10 ~ 2026-05-18）：
 - Phase 6-C → 11-E 各子階段陸續完成並通過驗證；逐 phase 範圍 / 邊界決定 / 驗證結果見上方「Phase 進度表」、commit 訊息與 `驗證後已知問題.md`。

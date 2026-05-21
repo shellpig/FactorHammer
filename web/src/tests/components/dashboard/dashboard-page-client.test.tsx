@@ -236,3 +236,115 @@ describe("13-A: Dashboard 分析入口與日線定位整理", () => {
     });
   });
 });
+
+describe("13-B: Dashboard 指標說明與數值呈現整理", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mutateGlobalMock.mockResolvedValue(undefined);
+    apiGetMock.mockResolvedValue({
+      data: { finmind: true, openai: false, anthropic: false, gemini: false, google: false },
+      meta: {},
+    });
+    useDashboardImpl.mockImplementation(defaultUseDashboardImpl);
+  });
+
+  async function waitForDashboard() {
+    await screen.findByTestId("candlestick-chart");
+  }
+
+  it("shows resistance/support source labels and dedupe explanation", async () => {
+    useDashboardImpl.mockImplementation((symbol: string | null) => {
+      const payload = symbol ? buildPayload(symbol) : undefined;
+      if (payload) {
+        payload.technical.resistance_levels = [
+          { value: 805, label: "近60日高點", kind: "resistance" },
+          { value: 795, label: "近20日高點", kind: "resistance" },
+        ];
+        payload.technical.support_levels = [
+          { value: 760, label: "近期低點", kind: "support" },
+          { value: 770, label: "MA20", kind: "support" },
+          { value: 750, label: "MA60", kind: "support" },
+        ];
+      }
+      return {
+        data: payload,
+        error: undefined,
+        isLoading: false,
+        mutate: mutateMock,
+      };
+    });
+
+    render(<DashboardPageClient />);
+    await waitForDashboard();
+
+    expect(screen.getByText("近60日高點")).toBeInTheDocument();
+    expect(screen.getByText("近20日高點")).toBeInTheDocument();
+    expect(screen.getByText("近期低點")).toBeInTheDocument();
+    expect(screen.getAllByText("MA20").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("MA60").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("近20日與近60日高點若價格太接近，系統會去重合併為單一壓力位。")).toBeInTheDocument();
+    expect(screen.getAllByTestId("resistance-level-item")).toHaveLength(2);
+    expect(screen.getAllByTestId("support-level-item")).toHaveLength(3);
+  });
+
+  it("renders one resistance level when duplicate highs are merged", async () => {
+    useDashboardImpl.mockImplementation((symbol: string | null) => {
+      const payload = symbol ? buildPayload(symbol) : undefined;
+      if (payload) {
+        payload.technical.resistance_levels = [
+          { value: 5870, label: "近60日高點", kind: "resistance" },
+        ];
+      }
+      return {
+        data: payload,
+        error: undefined,
+        isLoading: false,
+        mutate: mutateMock,
+      };
+    });
+
+    render(<DashboardPageClient />);
+    await waitForDashboard();
+
+    expect(screen.getAllByTestId("resistance-level-item")).toHaveLength(1);
+    expect(screen.getByText("近20日與近60日高點若價格太接近，系統會去重合併為單一壓力位。")).toBeInTheDocument();
+  });
+
+  it("formats quote-row volume as latest TW daily shares instead of ambiguous realtime volume", async () => {
+    useDashboardImpl.mockImplementation((symbol: string | null) => {
+      const payload = symbol ? buildPayload(symbol) : undefined;
+      if (payload) {
+        payload.daily_df = [
+          {
+            date: "2026-05-21T00:00:00+08:00",
+            open: 100,
+            high: 110,
+            low: 95,
+            close: 108,
+            volume: 2_379_159,
+            symbol: symbol ?? "2330",
+          },
+        ];
+        payload.quote = payload.quote
+          ? {
+              ...payload.quote,
+              volume: 20_000,
+            }
+          : null;
+      }
+      return {
+        data: payload,
+        error: undefined,
+        isLoading: false,
+        mutate: mutateMock,
+      };
+    });
+
+    render(<DashboardPageClient />);
+    const row = await screen.findByTestId("quote-header-row");
+
+    expect(row).toHaveTextContent("日K成交量");
+    expect(row).toHaveTextContent("238萬股");
+    expect(row).not.toHaveTextContent("20,000");
+  });
+});

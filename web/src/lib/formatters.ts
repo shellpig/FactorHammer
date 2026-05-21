@@ -37,6 +37,13 @@ export function formatVolume(value: number): string {
   return value.toLocaleString("en-US");
 }
 
+/** Format TW daily volume with share semantics (e.g. 2_379_159 -> "238萬股"). */
+export function formatTwDailyVolume(value: number): string {
+  if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}億股`;
+  if (value >= 10_000) return `${Math.round(value / 10_000).toLocaleString("en-US")}萬股`;
+  return `${Math.round(value).toLocaleString("en-US")}股`;
+}
+
 /** Format an ISO date string to "YYYY-MM-DD". */
 export function formatDate(isoString: string): string {
   return isoString.slice(0, 10);
