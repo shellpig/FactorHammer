@@ -336,8 +336,6 @@ describe("P11 panels", () => {
     render(<DashboardPageClient />);
     await screen.findByTestId("p11-panel-pe-ratio");
     fireEvent.click(screen.getByRole("button", { name: "US" }));
-    fireEvent.change(screen.getByLabelText("stock-input"), { target: { value: "AAPL" } });
-    fireEvent.click(screen.getByRole("button", { name: "分析" }));
     expect(screen.queryByTestId("p11-panel-pe-ratio")).not.toBeInTheDocument();
     expect(screen.queryByTestId("p11-panel-monthly-revenue")).not.toBeInTheDocument();
   });

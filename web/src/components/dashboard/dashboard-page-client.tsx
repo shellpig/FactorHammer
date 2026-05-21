@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { RefreshCw, Search, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { mutate as mutateGlobal } from "swr";
 import { MarketSwitcher } from "@/components/market-switcher";
@@ -672,11 +672,12 @@ function ChartSection({
   interval: ChartInterval;
   onIntervalChange: (next: ChartInterval) => void;
 }) {
+  const hasIntraday = payload.intraday_df.length > 0;
   const tabs: Array<{ value: ChartInterval; label: string }> = [
     { value: "day", label: "日 K" },
     { value: "week", label: "週 K" },
     { value: "month", label: "月 K" },
-    { value: "minute", label: "分 K" },
+    ...(hasIntraday ? [{ value: "minute" as ChartInterval, label: "分 K" }] : []),
   ];
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
@@ -835,6 +836,13 @@ export default function DashboardPageClient() {
     market,
     industryModalOpen,
   );
+
+  useEffect(() => {
+    if (interval === "minute" && data && data.intraday_df.length === 0) {
+      setInterval("day");
+    }
+  }, [interval, data]);
+
   const currentShareholderMeeting =
     eventCalendar?.next_shareholder_meeting ?? eventCalendar?.last_shareholder_meeting ?? null;
 
@@ -849,11 +857,16 @@ export default function DashboardPageClient() {
     return "text-slate-100";
   }, [quote, intradaySnapshot, market]);
 
-  function handleAnalyze() {
-    const normalized = normalizeSymbol(pendingSymbol);
-    if (!normalized) return;
+  function submitSymbol(value: string) {
+    const nextSymbol = normalizeSymbol(value);
+    if (!nextSymbol) return;
     setAiHint("");
-    setSymbol(normalized);
+    setPendingSymbol(nextSymbol);
+    if (symbol === nextSymbol) {
+      void mutate();
+      return;
+    }
+    setSymbol(nextSymbol);
   }
 
   function handleRetryBackendStartup() {
@@ -887,30 +900,12 @@ export default function DashboardPageClient() {
                   market={market}
                   value={pendingSymbol}
                   onInputChange={setPendingSymbol}
-                  onChange={(value) => {
-                    setPendingSymbol(value);
-                    setSymbol(normalizeSymbol(value));
-                    setAiHint("");
-                  }}
+                  onChange={submitSymbol}
                   className="w-32 min-w-0"
                 />
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-                  onClick={handleAnalyze}
-                >
-                  <Search className="h-4 w-4" />
-                  分析
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-                  onClick={() => void mutate()}
-                  disabled={!symbol}
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  即時更新
-                </button>
+                <p className="text-xs text-slate-500">
+                  輸入代碼後按 Enter 更新資料並分析
+                </p>
               </div>
 
               {/* Price row */}
@@ -940,7 +935,7 @@ export default function DashboardPageClient() {
 
             {!symbol ? (
               <section className="rounded-xl border border-dashed border-slate-700 bg-slate-950/40 p-8 text-center text-slate-400">
-                請輸入股票代碼或名稱後點選「分析」。
+                請輸入股票代碼後按 Enter 開始分析。
               </section>
             ) : null}
 

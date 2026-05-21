@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-20
+最後更新：2026-05-21
 
 ---
 
@@ -16,7 +16,8 @@
 - Phase 10 全部完成（10-A ~ 10-H-2）；舊 Streamlit UI 已移除。
 - Phase 11 11-A / 11-B / 11-C / 11-D 已完成並驗證通過；11-D Goodinfo 股利政策 fallback 已上線。
 - Phase 11-E 已完成並驗證通過：純前端 UI/UX 收尾調整 8 項已上線，包含工具名稱改 `FactorHammer`、版號 build-time 注入、警示文字字色統一、股東會無資料文案修正、報價列改一排、K 線右側加「前收」、股東會編輯按鈕內聯、散戶多空比 placeholder 移除。
-- Phase 12 12-A / 12-B / 12-C 已實作；12-B / 12-C 已驗證完成；12-D 文件收尾已執行。**12-A 乾淨環境 install.bat 手動驗證待補，因此 Phase 12 尚未整體完成。**
+- Phase 12 12-A / 12-B / 12-C / 12-D 已完成；首次執行 Token Onboarding 與 Portable Runtime 重整已收束。
+- Phase 13 13-A 已完成並通過手動驗收：Dashboard 分析入口與日線定位整理（移除「分析 / 即時更新」按鈕、Enter 唯一入口、同代碼 Enter 走 SWR `mutate()`、隱藏無 intraday 資料的 `分 K` tab）。13-B 待實作：指標說明與數值呈現整理。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
@@ -240,22 +241,23 @@ risk:
 | 11-C | ✅ 完成 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta`；資料管理頁單檔刪除不動全市場股東會資料，`data_update` / `data_rebuild` 尾端只 refresh 一次；使用者已驗證完成 |
 | 11-D | ✅ 完成 | Goodinfo 股利政策 fallback：事件行事曆無正式未來除息資料時，不再顯示去年資料推估的 `[預估]`，改抓 Goodinfo 股利政策表；只顯示「股利發放期間=未定」或日期落在未來的待發放明細與現金 / 股票股利；過期或失敗顯示查無今年股利資料；使用者已驗證通過 |
 | 11-E | ✅ 完成 | UI/UX 收尾調整（純前端）：(1) Sidebar 工具名稱改 `FactorHammer`（不動 repo / package name）；(2) 名稱右下方版號 `v{version}`，build-time 從 `web/package.json` 注入；(3)「資料源未提供」字色改與「撈不到股東會資料」同黃色 token；(4) 股東會無資料文案改為「撈不到股東會資料，需要手動填入（或是ETF沒有股東會）」；(5) 報價列改一排，標籤 muted、數值原色、欄位以兩個全形空格分隔；(6) K 線右側加「前收」標籤，整組同色、漲紅跌綠、平盤灰；(7) 股東會編輯按鈕移到「事件行事曆」標題右側 8px 內聯；(8) 散戶多空比 placeholder 整塊移除；使用者已驗證完成 |
-| 12-A | ⚠️ 待手動驗證 | Portable Node + install.bat 改版已實作：install.bat 5 步驟、portable Node v22.11.0 下載 + SHA-256 驗證、corepack 啟用 pnpm 11.1.1、舊 V2 啟動腳本改為 `run_factorhammer.bat` + PATH 注入 `tools\node\`、`web/package.json` 加 `packageManager`、`.gitignore` 加 `tools/`。**缺口：乾淨環境 / 已有系統 Node / idempotent / 下載失敗等 12-A 手動驗收尚未完成。** |
+| 12-A | ✅ 完成 | Portable Node + install.bat 改版已完成：install.bat 5 步驟、portable Node v22.11.0 下載 + SHA-256 驗證、corepack 啟用 pnpm 11.1.1、舊 V2 啟動腳本改為 `run_factorhammer.bat` + PATH 注入 `tools\node\`、`web/package.json` 加 `packageManager`、`.gitignore` 加 `tools/`；乾淨環境 / 已有系統 Node / idempotent / 下載失敗等手動驗收已完成 |
 | 12-B | ✅ 完成 | Backend Config API 擴充已實作並驗證完成：`POST /api/config/secrets/validate`、FinMind token 驗證改用 FinMind data endpoint、`_write_env` atomic helper（保留註解 / 空行 / 未知 keys、不 sort、寫 `.env.tmp` + `os.replace`）、`get_secrets_status` 空白 fallback bug 修正；既有 `PUT /api/config/secrets` regression 通過 |
 | 12-C | ✅ 完成 | Frontend Token Setup Dialog 已實作並驗證完成：強制 block modal（無 X、ESC / overlay 都 preventDefault、儲存鈕灰至 FinMind 非空）、FinMind 申請連結、AI keys 選填折疊、SWR `mutate(() => true)` 全域 invalidate；不提供清空既有 AI key、不提供「先跳過」 |
-| 12-D | ✅ 已執行 | Verifier 文件收尾已執行：同步 12-A/B/C 狀態、保留 12-A 手動驗證缺口、檢查舊啟動腳本名殘留；Phase 12 整體完成仍等待 12-A 手動驗證 |
+| 12-D | ✅ 完成 | Verifier 文件收尾已完成：同步 12-A/B/C 狀態、檢查舊啟動腳本名殘留、更新現役啟動入口；Phase 12 整體完成 |
+| 13-A | ✅ 完成 | Dashboard 分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 走 SWR `mutate()` 強制重跑 dashboard payload，後端維持 `_sync_symbol_daily_data → DataMaintenance.update_daily()` 路徑；台股 `intraday_df=[]` 隱藏 `分 K` tab，美股 intraday 仍顯示；自動測試 8 case + 手動驗收 1-7 全通過 |
+| 13-B | ⏳ 待實作 | Dashboard 指標說明與數值呈現整理：壓力 / 支撐補來源 label 或 tooltip，說明近20日 / 近60日高點過近會合併；成交量統一以日K股數語意呈現，避免 `quote.volume` 與 `daily_df.volume` 單位混淆 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–11 11-A~11-E 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸、11-D Goodinfo 股利政策 fallback、11-E UI/UX 收尾調整皆已驗證通過）。Phase 12 12-A/B/C 已實作，12-B/C 已驗證完成，12-D 文件收尾已執行；12-A install.bat 乾淨環境手動驗證尚缺，因此 Phase 12 尚未整體完成。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–12 全部完成；Phase 13-A 已完成並通過手動驗收（Dashboard 分析入口與日線定位整理）。Phase 13-B 待實作：指標說明與數值呈現整理。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
-2026-05-20 狀態（Phase 12 verifier 文件收尾）：
-- **P12 實作狀態**：12-A commit `058a874` 已完成 portable runtime / install.bat / launcher 改名；12-B commit `988ed14` 已完成 secrets validation API；12-C commit `560a0e4` 已完成 token setup dialog；commit `0fd67ab` 修正 FinMind 驗證改走 data endpoint 並補 `(必須)` 標籤。
-- **P12 驗證狀態**：12-B / 12-C 使用者已確認驗證完成；本次 verifier 重新跑 P12 targeted gate：`tests/test_api/test_config_api.py + tests/test_services/test_config_svc.py` 54 passed、`web/ npx tsc --noEmit` 0 errors、`token-setup-dialog.test.tsx` 19 passed。
-- **P12 未完成缺口**：12-A 缺乾淨環境 install.bat 手動驗證（含無 Node / 已有系統 Node / idempotent / 下載失敗 / SHA-256 / pnpm 版本 / launcher 改名 / `.gitignore` 8 點）。此缺口完成前，Phase 12 不標整體完成。
-- **P12 文件狀態**：12-D 已同步 `PROJECT_BRIEF.md` 與 `驗證後已知問題.md`，並檢查舊啟動腳本名殘留；現役啟動入口以 `run_factorhammer.bat` 為準。
+2026-05-21 狀態（Phase 13-A 完成）：
+- **P12 狀態**：12-A / 12-B / 12-C / 12-D 已完成；現役啟動入口以 `run_factorhammer.bat` 為準。
+- **P13-A 完成**：移除「分析」/「即時更新」按鈕、`submitSymbol` 同代碼分支呼叫 `void mutate()`、`ChartSection` 以 `payload.intraday_df.length > 0` 決定分K tab 顯示、minute→day fallback。Gate：`npx tsc --noEmit` 0 errors、`pnpm test -- --run` 61 files / 399 tests pass（含 13-A 8 case）；手動驗收 1-7（控制列只剩三件、看不到舊按鈕、新代碼 Enter 載入、同代碼 Enter Network 重發 `/api/dashboard/payload`、台股只剩日/週/月 K、週/月 K 切換不空白）使用者已通過。
+- **P13-B 待實作**：壓力 / 支撐來源 label 或 tooltip、近20日 / 近60日高點過近會合併說明、成交量改以日K股數語意呈現避免 `quote.volume` 與 `daily_df.volume` 單位混淆。
 
 過往驗證 recap（2026-05-10 ~ 2026-05-18）：
 - Phase 6-C → 11-E 各子階段陸續完成並通過驗證；逐 phase 範圍 / 邊界決定 / 驗證結果見上方「Phase 進度表」、commit 訊息與 `驗證後已知問題.md`。
@@ -271,11 +273,11 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~4660 行）
+### 量化交易系統規格書_shellpig版.md（~4812 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-29 | 查版本變更，最新為 `V3.1`（Phase 11-E UI/UX 收尾調整；含工具名稱改 `FactorHammer`、版號 build-time 注入、報價列改一排、K 線右側加「前收」等 8 項） |
+| 修訂歷史 | 3-31 | 查版本變更，最新為 `V3.3`（Phase 13 Dashboard 現有功能調整；含 13-A 分析入口與日線定位整理、13-B 指標說明與數值呈現整理） |
 | 專案願景與目標 | 47-62 | 理解定位 |
 | 技術語言與套件選型 | 64-91 | 技術決策參考 |
 | 系統架構（四層架構圖） | 93-177 | 理解整體結構 |
@@ -294,7 +296,8 @@ risk:
 | Phase 9 美股 US-1 / 9-G 支援 | 2369-2693 | 美股日 K、調整後價格、回測、技術分析、多市場架構、yfinance 1m intraday 時必讀 |
 | **Phase 10 前端架構重構（10-A~10-H）** | **2705-3756** | **Streamlit → Next.js + FastAPI 遷移、服務層抽離、API 設計、圖表、Responsive、主題系統時必讀。10-E / 10-G 細部規格詳於此區段** |
 | **Phase 11 Dashboard 基本面與事件擴充（11-A~11-E）** | **3768-4170** | **Dashboard 新增估值/獲利與籌碼/事件資訊、UI/UX 收尾調整時必讀；含 `/api/analysis/p11/*` namespace、PER/月營收/dividends/EPS、股東會 metadata、同產業 PER Modal UX、Goodinfo 股利政策 fallback、11-E 名稱/版號/報價列/前收標籤/placeholder 移除等 8 項** |
-| **Phase 12 首次執行 Token Onboarding 與 Portable Runtime 重整（12-A~12-D）** | **4172-4582** | **install.bat 改版、portable Node v22.11.0、`run_factorhammer.bat`、`POST /api/config/secrets/validate` + FinMind 驗證、`_write_env` atomic helper 重構、Token Setup Dialog 強制 block modal、SWR mutate；實作 12-A/B/C 時必讀** |
+| **Phase 12 首次執行 Token Onboarding 與 Portable Runtime 重整（12-A~12-D）** | **4172-4592** | **install.bat 改版、portable Node v22.11.0、`run_factorhammer.bat`、`POST /api/config/secrets/validate` + FinMind 驗證、`_write_env` atomic helper 重構、Token Setup Dialog 強制 block modal、SWR mutate；實作 12-A/B/C 時必讀** |
+| **Phase 13 Dashboard 現有功能調整（13-A~13-B）** | **4596-4731** | **Dashboard 分析入口與日線定位整理、同代碼 Enter 強制重跑 payload、隱藏無效分K、壓力 / 支撐來源說明、成交量日K股數語意統一時必讀** |
 | 子階段總覽 | 2666-2680 | Phase 總覽（含 Phase 11） |
 | 費用估算 | 2685-2703 | API / yfinance / TWSE / TPEx / Next.js / US-2 資料源成本 |
 | 10-E：回測研究工作台 | 2942-3387 | 實作 10-E-1~4、Job lifecycle、SSE、取消、CSV、toast/skeleton/error boundary/command palette 整合時必讀 |
@@ -302,14 +305,16 @@ risk:
 | 11-B：估值 / 獲利區塊 | 3871-3937 | 實作 PER / 月營收 / dividends / EPS 落地、valuation API、同產業 PER Modal 時必讀 |
 | 11-C：籌碼 / 事件區塊 | 3938-4049 | 實作法人持股成本、股東會 TWSE/TPEx fetcher、manual override、event calendar、資料管理頁互動規則時必讀 |
 | 11-E：UI/UX 收尾調整 | 4126-4170 | 實作工具名稱改 `FactorHammer`、版號 build-time 注入、警示文字字色統一、股東會無資料文案、報價列改一排、K 線右側加「前收」、編輯按鈕內聯、placeholder 移除時必讀 |
-| 12-A：Portable Node + install.bat 改版 | 4229-4325 | 實作 install.bat 5 步驟、portable Node v22.11.0 + SHA-256、corepack/pnpm 啟用、舊 V2 啟動腳本改名為 `run_factorhammer.bat`、`web/package.json` packageManager、`.gitignore` 加 `tools/` 時必讀 |
-| 12-B：Backend Config API 擴充 | 4326-4422 | 實作 `POST /api/config/secrets/validate` + FinMind 驗證流程、`_write_env` atomic + 保留註解 / 空行 / 未知 keys 共用 helper、`get_secrets_status` 空白 fallback bug 修正時必讀 |
-| 12-C：Frontend Token Setup Dialog | 4423-4525 | 實作強制 block modal（不可 ESC / overlay 關）、FinMind 申請連結、AI keys 選填折疊、SWR `mutate(() => true)` 全域 invalidate 時必讀 |
-| 12-D：Verifier 文件收尾 | 4526-4552 | verifier 角色執行；含舊啟動腳本名殘留檢測指令、文件同步檢查清單 |
-| 附錄 A：免責聲明全文 | 4585-4604 | 免責聲明文案 |
-| 附錄 B：架構決策補充 | 4606-4662 | 美股邊界與 AI provider 抽象 |
+| 12-A：Portable Node + install.bat 改版 | 4231-4327 | 實作 install.bat 5 步驟、portable Node v22.11.0 + SHA-256、corepack/pnpm 啟用、舊 V2 啟動腳本改名為 `run_factorhammer.bat`、`web/package.json` packageManager、`.gitignore` 加 `tools/` 時必讀 |
+| 12-B：Backend Config API 擴充 | 4328-4424 | 實作 `POST /api/config/secrets/validate` + FinMind 驗證流程、`_write_env` atomic + 保留註解 / 空行 / 未知 keys 共用 helper、`get_secrets_status` 空白 fallback bug 修正時必讀 |
+| 12-C：Frontend Token Setup Dialog | 4425-4537 | 實作強制 block modal（不可 ESC / overlay 關）、FinMind 申請連結、AI keys 選填折疊、SWR `mutate(() => true)` 全域 invalidate 時必讀 |
+| 12-D：Verifier 文件收尾 | 4538-4563 | verifier 角色執行；含舊啟動腳本名殘留檢測指令、文件同步檢查清單 |
+| 13-A：Dashboard 分析入口與日線定位整理 | 4618-4665 | 移除「分析 / 即時更新」按鈕、Enter 唯一入口、同代碼 Enter 呼叫 SWR `mutate()`、隱藏無 intraday 資料的 `分 K` tab 時必讀 |
+| 13-B：Dashboard 指標說明與數值呈現整理 | 4666-4713 | 壓力 / 支撐來源 label 或 tooltip、去重說明、成交量日K股數語意、避免即時報價量單位混淆時必讀 |
+| 附錄 A：免責聲明全文 | 4735-4754 | 免責聲明文案 |
+| 附錄 B：架構決策補充 | 4756-4812 | 美股邊界與 AI provider 抽象 |
 
-### 開發設計方針.md（~9615 行）
+### 開發設計方針.md（~9873 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -331,6 +336,7 @@ risk:
 | **Phase 10 前端架構重構（10-A~10-H）** | **6293-8405** | **服務層抽離、FastAPI 骨架、Next.js 前端、API 端點、圖表元件、Job manager、config 安全、測試遷移檢查表實作時必讀。10-C / 10-E / 10-G 細部設計皆在此段** |
 | **Phase 11 Dashboard 基本面與事件擴充** | **8406-9170** | **實作 P11 前必讀：11-A 前端 placeholder、11-B data/service/API/frontend、11-C TWSEFetcher/股東會 metadata/manual override/event calendar、資料管理整合、11-D Goodinfo 股利政策 fallback、11-E UI/UX 收尾調整** |
 | **Phase 12 首次執行 Token Onboarding 與 Portable Runtime 重整** | **9174-9615** | **實作 P12 前必讀：12-A install.bat 內部結構與 portable Node 流程、12-B `_write_env` atomic helper + `validate_finmind_token` 程式碼、12-C Token Setup Dialog hooks 範例 + SWR mutate 整合、既有測試 mock 調整** |
+| **Phase 13 Dashboard 現有功能調整** | **9619-9873** | **實作 P13 前必讀：13-A Enter 提交與同代碼 `mutate()`、分K tab 條件顯示；13-B 壓力 / 支撐來源說明、成交量 formatter 與報價列成交量來源規則** |
 | 10-E 回測研究工作台 | 6920-7480 | 實作 backtest jobs、partial cancellation、CSV blob、共用 hook/元件時必讀 |
 | 10-G 設定頁 + 全局整合 | 7649-8119 | 實作 toast、Error Boundary、Skeleton、Command Palette、settings/secrets/theme/preset CRUD 時必讀 |
 | 11-B 資料層 / Service / API / 前端 | 8509-8705 | 實作 PER、monthly_revenue、dividends/EPS storage、valuation/monthly/dividend/industry PER API 與 panel 時必讀 |
@@ -340,8 +346,10 @@ risk:
 | 12-A install.bat / Portable Node | 9190-9259 | install.bat 內部 5 步驟與 PATH 注入時機、portable Node 下載 / SHA-256 / 解壓扁平化、`run_factorhammer.bat` PATH 注入時必讀 |
 | 12-B Config API 擴充 + `_write_env` 重構 | 9260-9449 | `validate_finmind_token` 完整程式碼、router endpoint 範例、共用 `_write_env` atomic helper、`get_secrets_status` bug 修法時必讀 |
 | 12-C Token Setup Dialog 元件 | 9450-9608 | Dialog hooks 範例、儲存 handler、外部連結 JSX、`dashboard-page-client` 整合、既有測試 mock 調整時必讀 |
+| 13-A Dashboard 分析入口與日線定位整理 | 9631-9755 | `DashboardPageClient` submitSymbol helper、同代碼 `mutate()`、移除按鈕與未用 icon import、`分 K` tab 依 `intraday_df.length` 顯示時必讀 |
+| 13-B Dashboard 指標說明與數值呈現整理 | 9756-9866 | `LevelsPanel` label / tooltip、`formatTwDailyVolume()`、報價列成交量優先用最新日K `volume`、避免 `quote.volume` 單位混淆時必讀 |
 
-### 測試指南.md（~4125 行）
+### 測試指南.md（~4244 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -363,14 +371,17 @@ risk:
 | **Phase 10 測試（10-A~10-H）** | **2606-3238** | **服務層、API 端點、前端 Vitest、E2E Playwright、測試遷移檢查表。10-E / 10-G 測試規格已拆段** |
 | **Phase 11 測試（11-A~11-E）** | **3239-3765** | **P11 自動測試 / 手動驗收 / Gate；含 fetcher、storage、maintenance/job、service、API、frontend、namespace regression、股東會 metadata、資料管理互動測試、Goodinfo fallback 測試、11-E UI/UX 純前端測試** |
 | **Phase 12 測試（12-A~12-D）** | **3768-4024** | **P12 安裝腳本 / Backend Config API / Frontend Token Dialog 測試；含 install.bat 乾淨機器手動驗收 8 點、`secrets/validate` router 14 case + service 12 case、Token Setup Dialog 16 case + 整合 3 case、onboarding 手動驗收 10 點、Phase 12 完成 Gate** |
+| **Phase 13 測試（13-A~13-B）** | **4027-4141** | **Dashboard 現有功能調整測試；含移除按鈕、Enter 提示、新 / 同代碼 Enter 重新請求、分K tab 條件顯示、壓力 / 支撐來源、成交量日K股數語意** |
 | 10-E 回測工作台測試 | 2786-2939 | 驗 10-E-1~4：backtest jobs、cancelled partial result、CSV、toast/skeleton/error panel |
 | 10-G 設定頁 + 全局整合測試 | 3005-3092 | 驗 10-G-1 toast/error boundary/skeleton/command palette 與 10-G-2 settings |
 | 11-E UI/UX 收尾調整測試 | 3696-3740 | 驗 11-E：sidebar 名稱 + 版號、警示文字字色、quote header 一排、K 線「前收」標籤、編輯按鈕位置、placeholder 移除 |
 | 12-A 安裝腳本手動驗收 | 3777-3851 | 乾淨機器情境、已有系統 Node 機器、idempotent、下載失敗模擬、SHA-256 不符、pnpm 版本驗證、改名 / .gitignore |
 | 12-B Config API 測試 | 3853-3922 | 14 條 router case + 12 條 service case；含 atomic / 保留性 / FinMind 三條路徑、既有 `PUT /api/config/secrets` regression |
 | 12-C Token Setup Dialog 測試 | 3923-3994 | 16 條元件 case + 3 條整合 case + 10 點手動驗收；含強制 block、各錯誤訊息、SWR mutate、不清空既有 key |
-| 全專案最終回歸 | 4026-4067 | Phase 完成後 |
-| 測試數量統計總覽 | 4068-4127 | 測試統計（含 Phase 11 估算；P12 屬腳本 + onboarding 類，未計入測試數量總覽表） |
+| 13-A Dashboard 分析入口與日線定位整理測試 | 4037-4079 | 驗移除「分析 / 即時更新」、Enter 提示、新 / 同代碼 Enter 重新請求、無 intraday 隱藏分K、有 intraday 保留分K |
+| 13-B Dashboard 指標說明與數值呈現整理測試 | 4080-4124 | 驗壓力 / 支撐來源 label 或 tooltip、去重說明、成交量 `2_379_159` 顯示為 `238萬股` 或完整股數、避免 `quote.volume` 單位混淆 |
+| 全專案最終回歸 | 4143-4183 | Phase 完成後 |
+| 測試數量統計總覽 | 4185-4244 | 測試統計（含 Phase 11 估算；P12 屬腳本 + onboarding 類，未計入測試數量總覽表） |
 
 ### web/_design/ — 10-C 視覺設計稿（Phase 10-C 實作必讀）
 
