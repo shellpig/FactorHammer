@@ -9,6 +9,7 @@ const apiGetMock = vi.fn();
 const apiPostMock = vi.fn();
 const mutateGlobalMock = vi.fn();
 const refreshMock = vi.fn();
+const useDashboardMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: refreshMock, push: vi.fn() }),
@@ -33,12 +34,15 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
 });
 
 vi.mock("@/lib/hooks/useDashboard", () => ({
-  useDashboard: () => ({
-    data: undefined,
-    error: undefined,
-    isLoading: false,
-    mutate: vi.fn(),
-  }),
+  useDashboard: (...args: unknown[]) => {
+    useDashboardMock(...args);
+    return {
+      data: undefined,
+      error: undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("@/lib/hooks/useP11Valuation", () => ({ useP11Valuation: () => ({ data: undefined }) }));
@@ -77,9 +81,17 @@ vi.mock("@/components/dashboard/candlestick-chart", () => ({
 describe("TokenSetupDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    apiGetMock.mockResolvedValue({
-      data: { finmind: true, openai: false, anthropic: false, gemini: false, google: false },
-      meta: {},
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/health") {
+        return Promise.resolve({ data: { status: "ok" }, meta: {} });
+      }
+      if (path === "/api/config/secrets/status") {
+        return Promise.resolve({
+          data: { finmind: true, openai: false, anthropic: false, gemini: false, google: false },
+          meta: {},
+        });
+      }
+      return Promise.reject(new Error(`unexpected path: ${path}`));
     });
     mutateGlobalMock.mockResolvedValue(undefined);
   });
@@ -257,31 +269,62 @@ describe("TokenSetupDialog", () => {
 describe("Dashboard token onboarding integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useDashboardMock.mockClear();
     mutateGlobalMock.mockResolvedValue(undefined);
     apiPostMock.mockResolvedValue({ data: { updated: true }, meta: {} });
   });
 
   it("opens token dialog when finmind token is missing", async () => {
-    apiGetMock.mockResolvedValue({
-      data: { finmind: false, openai: false, anthropic: false, gemini: false, google: false },
-      meta: {},
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/health") {
+        return Promise.resolve({ data: { status: "ok" }, meta: {} });
+      }
+      if (path === "/api/config/secrets/status") {
+        return Promise.resolve({
+          data: { finmind: false, openai: false, anthropic: false, gemini: false, google: false },
+          meta: {},
+        });
+      }
+      return Promise.reject(new Error(`unexpected path: ${path}`));
     });
 
     render(<DashboardPageClient />);
 
     expect(await screen.findByRole("heading", { name: "設定 API Token" })).toBeInTheDocument();
+    expect(apiGetMock).toHaveBeenCalledWith("/api/health");
     expect(apiGetMock).toHaveBeenCalledWith("/api/config/secrets/status");
   });
 
-  it("does not show modal on first failure while retries are pending", async () => {
-    apiGetMock.mockRejectedValue(new Error("network"));
+  it("shows startup overlay while backend health check is pending", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/health") {
+        return new Promise(() => undefined);
+      }
+      return Promise.reject(new Error(`unexpected path: ${path}`));
+    });
+
+    render(<DashboardPageClient />);
+
+    expect(await screen.findByTestId("startup-overlay")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "設定 API Token" })).not.toBeInTheDocument();
+    expect(apiGetMock).toHaveBeenCalledWith("/api/health");
+    expect(apiGetMock).not.toHaveBeenCalledWith("/api/config/secrets/status");
+    expect(useDashboardMock.mock.calls.every(([symbol]) => symbol === null)).toBe(true);
+  });
+
+  it("does not show modal on first health-check failure while retries are pending", async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/health") {
+        return Promise.reject(new Error("network"));
+      }
+      return Promise.reject(new Error(`unexpected path: ${path}`));
+    });
 
     render(<DashboardPageClient />);
 
     await waitFor(() => {
-      expect(apiGetMock).toHaveBeenCalledWith("/api/config/secrets/status");
+      expect(apiGetMock).toHaveBeenCalledWith("/api/health");
     });
-    // Retries still in progress; modal must not flash before all 5 attempts finish
     expect(screen.queryByRole("heading", { name: "設定 API Token" })).not.toBeInTheDocument();
   });
 
@@ -295,22 +338,40 @@ describe("Dashboard token onboarding integration", () => {
       vi.useRealTimers();
     });
 
-    it("forces token modal after all 5 retries fail", async () => {
-      apiGetMock.mockRejectedValue(new Error("network"));
-      render(<DashboardPageClient />);
-      // 4 delays × 1 s between 5 attempts = 4 000 ms total; advance 5 s to be safe
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(5000);
+    it("shows timeout message after backend health retries are exhausted", async () => {
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/health") {
+          return Promise.reject(new Error("network"));
+        }
+        return Promise.reject(new Error(`unexpected path: ${path}`));
       });
-      expect(screen.getByRole("heading", { name: "設定 API Token" })).toBeInTheDocument();
+      render(<DashboardPageClient />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(screen.getByText("後端啟動逾時，請確認 FactorHammer-Backend-8000 視窗是否有錯誤。")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "重新檢查" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "設定 API Token" })).not.toBeInTheDocument();
     });
 
-    it("shows modal when a retry succeeds with finmind: false", async () => {
+    it("shows modal when backend retry succeeds and finmind is missing", async () => {
       apiGetMock
-        .mockRejectedValueOnce(new Error("network"))
-        .mockResolvedValue({
-          data: { finmind: false, openai: false, anthropic: false, gemini: false, google: false },
-          meta: {},
+        .mockImplementationOnce((path: string) => {
+          if (path === "/api/health") return Promise.reject(new Error("network"));
+          return Promise.reject(new Error(`unexpected path: ${path}`));
+        })
+        .mockImplementationOnce((path: string) => {
+          if (path === "/api/health") return Promise.resolve({ data: { status: "ok" }, meta: {} });
+          return Promise.reject(new Error(`unexpected path: ${path}`));
+        })
+        .mockImplementationOnce((path: string) => {
+          if (path === "/api/config/secrets/status") {
+            return Promise.resolve({
+              data: { finmind: false, openai: false, anthropic: false, gemini: false, google: false },
+              meta: {},
+            });
+          }
+          return Promise.reject(new Error(`unexpected path: ${path}`));
         });
       render(<DashboardPageClient />);
       await act(async () => {
@@ -318,12 +379,21 @@ describe("Dashboard token onboarding integration", () => {
       });
       expect(screen.getByRole("heading", { name: "設定 API Token" })).toBeInTheDocument();
     });
+
   });
 
   it("closes dialog and triggers global mutate + refresh on save success", async () => {
-    apiGetMock.mockResolvedValue({
-      data: { finmind: false, openai: false, anthropic: false, gemini: false, google: false },
-      meta: {},
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/health") {
+        return Promise.resolve({ data: { status: "ok" }, meta: {} });
+      }
+      if (path === "/api/config/secrets/status") {
+        return Promise.resolve({
+          data: { finmind: false, openai: false, anthropic: false, gemini: false, google: false },
+          meta: {},
+        });
+      }
+      return Promise.reject(new Error(`unexpected path: ${path}`));
     });
 
     render(<DashboardPageClient />);

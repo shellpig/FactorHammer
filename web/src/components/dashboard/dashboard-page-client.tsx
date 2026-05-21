@@ -64,6 +64,8 @@ function normalizeSymbol(raw: string): string {
 
 const LS_SYMBOL = "qt-last-symbol";
 const LS_MARKET = "qt-last-market";
+const BACKEND_HEALTH_RETRY_INTERVAL_MS = 1000;
+const BACKEND_HEALTH_TIMEOUT_MS = 60_000;
 
 function readLastSymbol(): string {
   try {
@@ -84,6 +86,43 @@ function readLastMarket(): Market {
 
 function renderRatio(ratio: number): string {
   return `${(ratio * 100).toFixed(2)}%`;
+}
+
+function StartupOverlay({
+  timedOut,
+  onRetry,
+}: {
+  timedOut: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/92 p-6"
+      data-testid="startup-overlay"
+    >
+      <section className="w-full max-w-xl rounded-xl border border-slate-700 bg-slate-900/90 p-6 text-center">
+        <h2 className="text-lg font-semibold text-slate-100">工具初始化中...</h2>
+        {!timedOut ? (
+          <p className="mt-3 text-sm text-slate-300">
+            正在啟動後端服務，完成後會自動進入分析頁面。
+          </p>
+        ) : (
+          <>
+            <p className="mt-3 text-sm text-amber-200">
+              後端啟動逾時，請確認 FactorHammer-Backend-8000 視窗是否有錯誤。
+            </p>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-4 inline-flex items-center rounded-md border border-slate-600 px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-800"
+            >
+              重新檢查
+            </button>
+          </>
+        )}
+      </section>
+    </div>
+  );
 }
 
 function twTickSize(price: number): number {
@@ -688,14 +727,49 @@ export default function DashboardPageClient() {
   const [industryModalOpen, setIndustryModalOpen] = useState(false);
   const [shareholderDialogOpen, setShareholderDialogOpen] = useState(false);
   const [tokenSetupOpen, setTokenSetupOpen] = useState(false);
+  const [backendReady, setBackendReady] = useState(false);
+  const [backendTimedOut, setBackendTimedOut] = useState(false);
+  const [backendProbeSeed, setBackendProbeSeed] = useState(0);
   // Gate dashboard fetch on secrets/status: do not fire useDashboard until we know
-  // FinMind is configured (or the status endpoint failed in a degraded way).
+  // FinMind is configured (or user completed token setup).
   // Without this, the dashboard fetch races the modal and the user briefly sees
   // a fetch error before the forced token-setup modal appears.
   const [secretsChecked, setSecretsChecked] = useState(false);
   const [finmindReady, setFinmindReady] = useState(false);
 
   useEffect(() => {
+    if (backendReady) return;
+    let cancelled = false;
+    const maxAttempts = Math.max(
+      1,
+      Math.ceil(BACKEND_HEALTH_TIMEOUT_MS / BACKEND_HEALTH_RETRY_INTERVAL_MS),
+    );
+    void (async () => {
+      for (let i = 0; i < maxAttempts; i++) {
+        try {
+          await apiGet<{ status: string }>("/api/health");
+          if (cancelled) return;
+          setBackendTimedOut(false);
+          setBackendReady(true);
+          return;
+        } catch {
+          if (cancelled) return;
+          if (i < maxAttempts - 1) {
+            await new Promise<void>((resolve) =>
+              setTimeout(resolve, BACKEND_HEALTH_RETRY_INTERVAL_MS),
+            );
+          }
+        }
+      }
+      if (!cancelled) setBackendTimedOut(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [backendReady, backendProbeSeed]);
+
+  useEffect(() => {
+    if (!backendReady || secretsChecked) return;
     let cancelled = false;
     void (async () => {
       for (let i = 0; i < 5; i++) {
@@ -721,7 +795,7 @@ export default function DashboardPageClient() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [backendReady, secretsChecked]);
 
   // Restore last selection UI immediately so market switcher / input reflect history.
   useEffect(() => {
@@ -780,6 +854,11 @@ export default function DashboardPageClient() {
     if (!normalized) return;
     setAiHint("");
     setSymbol(normalized);
+  }
+
+  function handleRetryBackendStartup() {
+    setBackendTimedOut(false);
+    setBackendProbeSeed((prev) => prev + 1);
   }
 
   return (
@@ -968,7 +1047,7 @@ export default function DashboardPageClient() {
         }}
       />
       <TokenSetupDialog
-        open={tokenSetupOpen}
+        open={tokenSetupOpen && backendReady}
         onSaved={async () => {
           setTokenSetupOpen(false);
           setFinmindReady(true);
@@ -976,6 +1055,9 @@ export default function DashboardPageClient() {
           router.refresh();
         }}
       />
+      {!backendReady ? (
+        <StartupOverlay timedOut={backendTimedOut} onRetry={handleRetryBackendStartup} />
+      ) : null}
     </div>
   );
 }
