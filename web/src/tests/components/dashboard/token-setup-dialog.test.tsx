@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPageClient from "@/components/dashboard/dashboard-page-client";
 import { TokenSetupDialog } from "@/components/dashboard/token-setup-dialog";
 import { ApiClientError } from "@/lib/api-client";
@@ -273,7 +273,7 @@ describe("Dashboard token onboarding integration", () => {
     expect(apiGetMock).toHaveBeenCalledWith("/api/config/secrets/status");
   });
 
-  it("keeps dashboard usable when status endpoint fails", async () => {
+  it("does not show modal on first failure while retries are pending", async () => {
     apiGetMock.mockRejectedValue(new Error("network"));
 
     render(<DashboardPageClient />);
@@ -281,7 +281,43 @@ describe("Dashboard token onboarding integration", () => {
     await waitFor(() => {
       expect(apiGetMock).toHaveBeenCalledWith("/api/config/secrets/status");
     });
+    // Retries still in progress; modal must not flash before all 5 attempts finish
     expect(screen.queryByRole("heading", { name: "設定 API Token" })).not.toBeInTheDocument();
+  });
+
+  describe("retry exhaustion (fake timers)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    });
+
+    it("forces token modal after all 5 retries fail", async () => {
+      apiGetMock.mockRejectedValue(new Error("network"));
+      render(<DashboardPageClient />);
+      // 4 delays × 1 s between 5 attempts = 4 000 ms total; advance 5 s to be safe
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(screen.getByRole("heading", { name: "設定 API Token" })).toBeInTheDocument();
+    });
+
+    it("shows modal when a retry succeeds with finmind: false", async () => {
+      apiGetMock
+        .mockRejectedValueOnce(new Error("network"))
+        .mockResolvedValue({
+          data: { finmind: false, openai: false, anthropic: false, gemini: false, google: false },
+          meta: {},
+        });
+      render(<DashboardPageClient />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+      expect(screen.getByRole("heading", { name: "設定 API Token" })).toBeInTheDocument();
+    });
   });
 
   it("closes dialog and triggers global mutate + refresh on save success", async () => {

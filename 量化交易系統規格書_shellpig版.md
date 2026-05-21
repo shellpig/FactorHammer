@@ -4500,12 +4500,12 @@ export function TokenSetupDialog({
 `dashboard-page-client.tsx` 改動概要：
 
 - `useEffect` 入口呼叫 `apiGet<SecretsStatus>("/api/config/secrets/status")`；`res.data.finmind === false` 時開啟 modal
-- status endpoint 失敗時不顯示 modal（降級 UX，非 hard fail），讓 dashboard 嘗試載入（失敗時各 panel 自己回報）
+- status endpoint 失敗時先 retry 5 次（每次間隔約 1 秒）；若仍失敗則強制開啟 modal，且不放行 dashboard fetch
 - **Dashboard fetch gate**：在 `secrets/status` 回應前，**禁止觸發 `useDashboard` 等 SWR fetch**。具體做法是「不要在 status 回應前 `setSymbol(...)`」，因為 `useDashboard(symbol, market)` 用 `symbol ? key : null` 作 SWR key，`symbol = null` 即不發 request。
     - `secretsChecked` / `finmindReady` 兩個 boolean state 共同管控：
         - status 成功且 `finmind === true` → `finmindReady = true`
         - status 成功且 `finmind === false` → 開 modal、`finmindReady` 維持 `false`
-        - status 失敗 → `finmindReady = true`（降級 UX）
+        - status 連續 5 次失敗 → 開 modal、`finmindReady` 維持 `false`
         - 任一 case 結束 → `secretsChecked = true`
     - localStorage 還原拆兩步：`market` / `pendingSymbol` 立刻還原（純 UI），`symbol`（觸發 fetch）等 `secretsChecked && finmindReady` 才設
 - `onSaved` callback：關閉 modal → **`setFinmindReady(true)`**（解除 gate，讓初始 fetch 開始）→ `mutate(() => true, undefined, { revalidate: true })` 觸發所有 SWR key 重抓 → `router.refresh()`
@@ -4521,7 +4521,7 @@ export function TokenSetupDialog({
 | 未設 token 時開 dashboard | Modal 自動跳出，不可關閉 |
 | 未設 token + localStorage 已有上次 symbol | **Modal 跳出前不得發 `/api/dashboard/payload` 請求**；畫面不得閃過「分析失敗」紅色 banner |
 | 已設 token 時開 dashboard | Modal 不跳，dashboard 正常 |
-| status endpoint 失敗 | Modal 不跳，dashboard 嘗試載入（降級 UX，非 hard fail） |
+| status endpoint 失敗 | Retry 5 次；仍失敗時強制跳 modal，不得放行 dashboard fetch |
 | 儲存鈕灰掉 | FinMind 欄空白時灰；輸入後解灰 |
 | 儲存中 | 按鈕灰、顯示 spinner、輸入框 disabled |
 | Token 無效 | 紅字錯誤「Token 無效…」、modal 保持開、按鈕恢復可按 |

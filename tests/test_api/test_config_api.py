@@ -28,6 +28,11 @@ def test_health_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_api_responses_have_no_cache_header() -> None:
+    response = client.get("/api/health")
+    assert response.headers.get("cache-control") == "no-store"
+
+
 # ---------------------------------------------------------------------------
 # GET /api/config
 # ---------------------------------------------------------------------------

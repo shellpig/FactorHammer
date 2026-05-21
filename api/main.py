@@ -9,7 +9,7 @@ Or via:
 from __future__ import annotations
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers import ai, analysis, config, data, jobs, realtime
@@ -39,6 +39,15 @@ app.include_router(jobs.router)
 app.include_router(analysis.router)
 app.include_router(realtime.router)
 app.include_router(ai.router)
+
+
+# ── No-cache middleware ───────────────────────────────────────────────────
+@app.middleware("http")
+async def add_no_cache(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 # ── Health ────────────────────────────────────────────────────────────────

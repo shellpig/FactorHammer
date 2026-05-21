@@ -698,19 +698,24 @@ export default function DashboardPageClient() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      try {
-        const status = await apiGet<Record<string, boolean>>("/api/config/secrets/status");
-        if (cancelled) return;
-        if (status.data.finmind) {
-          setFinmindReady(true);
-        } else {
+      for (let i = 0; i < 5; i++) {
+        try {
+          const status = await apiGet<Record<string, boolean>>("/api/config/secrets/status");
+          if (cancelled) return;
+          if (status.data.finmind) setFinmindReady(true);
+          else setTokenSetupOpen(true);
+          setSecretsChecked(true);
+          return;
+        } catch {
+          if (cancelled) return;
+          if (i < 4) {
+            await new Promise<void>((r) => setTimeout(r, 1000));
+            continue;
+          }
+          // 5 retries exhausted — force modal; do not degrade to finmindReady=true
           setTokenSetupOpen(true);
+          setSecretsChecked(true);
         }
-      } catch {
-        // Degraded UX: status endpoint failed; let dashboard try (spec 12-C).
-        if (!cancelled) setFinmindReady(true);
-      } finally {
-        if (!cancelled) setSecretsChecked(true);
       }
     })();
     return () => {
