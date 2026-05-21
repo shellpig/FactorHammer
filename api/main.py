@@ -18,8 +18,8 @@ from src.core.config import get_project_root
 load_dotenv(get_project_root() / ".env", override=False)
 
 app = FastAPI(
-    title="QuantTrader API",
-    description="Backend API for QuantTrader — Taiwan/US stock research toolkit.",
+    title="FactorHammer API",
+    description="Backend API for FactorHammer — Taiwan/US stock research toolkit.",
     version="0.2.0",
 )
 

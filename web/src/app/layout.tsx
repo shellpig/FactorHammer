@@ -11,7 +11,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
 export const metadata: Metadata = {
-  title: "QuantTrader — 台股量化研究",
+  title: "FactorHammer — 台股量化研究",
   description: "台股 / 美股量化交易研究工具：個股分析、回測、AI 問答。",
 };
 

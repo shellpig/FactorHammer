@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { ChatPageClient } from "@/components/ai/chat-page-client";
 
 export const metadata: Metadata = {
-  title: "AI 問答 | QuantTrader",
+  title: "AI 問答 | FactorHammer",
   description: "AI 股市問答助手。",
 };
 
