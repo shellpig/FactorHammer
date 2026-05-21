@@ -75,7 +75,7 @@ export function BatchCompareTab() {
   const [market, setMarket] = useState<Market>("tw");
   const [symbol, setSymbol] = useState("");
   const [startDate, setStartDate] = useState("2020-01-01");
-  const [endDate, setEndDate] = useState("2024-12-31");
+  const [endDate, setEndDate] = useState("2026-04-30");
   const [initialCapital, setInitialCapital] = useState(1_000_000);
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
   const [expandedPresetIndex, setExpandedPresetIndex] = useState<number | null>(null);

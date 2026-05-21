@@ -102,7 +102,7 @@ export function SingleRunTab() {
   const [market, setMarket] = useState<Market>("tw");
   const [symbol, setSymbol] = useState("");
   const [startDate, setStartDate] = useState("2020-01-01");
-  const [endDate, setEndDate] = useState("2024-12-31");
+  const [endDate, setEndDate] = useState("2026-04-30");
   const [engine, setEngine] = useState<EngineType>("vectorized");
   const [presetIndex, setPresetIndex] = useState(0);
   const [initialCapital, setInitialCapital] = useState(1_000_000);

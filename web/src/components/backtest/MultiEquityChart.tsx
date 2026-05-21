@@ -48,7 +48,7 @@ function normalizeTime(time: Time): string | null {
   return null;
 }
 
-export function MultiEquityChart({ summaries, height = 260 }: MultiEquityChartProps) {
+export function MultiEquityChart({ summaries, height = 520 }: MultiEquityChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const lineRefs = useRef<Array<ISeriesApi<"Line">>>([]);
@@ -116,7 +116,7 @@ export function MultiEquityChart({ summaries, height = 260 }: MultiEquityChartPr
     for (const line of lines) {
       const series = chartRef.current.addSeries(LineSeries, {
         color: line.color,
-        lineWidth: 2,
+        lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: true,
         title: line.name,
