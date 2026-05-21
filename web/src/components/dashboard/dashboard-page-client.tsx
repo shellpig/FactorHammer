@@ -688,6 +688,12 @@ export default function DashboardPageClient() {
   const [industryModalOpen, setIndustryModalOpen] = useState(false);
   const [shareholderDialogOpen, setShareholderDialogOpen] = useState(false);
   const [tokenSetupOpen, setTokenSetupOpen] = useState(false);
+  // Gate dashboard fetch on secrets/status: do not fire useDashboard until we know
+  // FinMind is configured (or the status endpoint failed in a degraded way).
+  // Without this, the dashboard fetch races the modal and the user briefly sees
+  // a fetch error before the forced token-setup modal appears.
+  const [secretsChecked, setSecretsChecked] = useState(false);
+  const [finmindReady, setFinmindReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -695,11 +701,16 @@ export default function DashboardPageClient() {
       try {
         const status = await apiGet<Record<string, boolean>>("/api/config/secrets/status");
         if (cancelled) return;
-        if (!status.data.finmind) {
+        if (status.data.finmind) {
+          setFinmindReady(true);
+        } else {
           setTokenSetupOpen(true);
         }
       } catch {
-        // Keep dashboard usable when status endpoint is temporarily unavailable.
+        // Degraded UX: status endpoint failed; let dashboard try (spec 12-C).
+        if (!cancelled) setFinmindReady(true);
+      } finally {
+        if (!cancelled) setSecretsChecked(true);
       }
     })();
     return () => {
@@ -707,14 +718,20 @@ export default function DashboardPageClient() {
     };
   }, []);
 
-  // Restore last selection from localStorage after hydration.
+  // Restore last selection UI immediately so market switcher / input reflect history.
   useEffect(() => {
     const savedMarket = readLastMarket();
     const savedSymbol = readLastSymbol();
     setMarket(savedMarket);
     setPendingSymbol(savedSymbol);
-    setSymbol(savedSymbol);
   }, []);
+
+  // Trigger the initial dashboard fetch only after the secrets check completes.
+  useEffect(() => {
+    if (!secretsChecked || !finmindReady) return;
+    if (symbol !== null) return;
+    setSymbol(readLastSymbol());
+  }, [secretsChecked, finmindReady, symbol]);
 
   useEffect(() => {
     if (symbol) localStorage.setItem(LS_SYMBOL, symbol);
@@ -949,6 +966,7 @@ export default function DashboardPageClient() {
         open={tokenSetupOpen}
         onSaved={async () => {
           setTokenSetupOpen(false);
+          setFinmindReady(true);
           await mutateGlobal(() => true, undefined, { revalidate: true });
           router.refresh();
         }}

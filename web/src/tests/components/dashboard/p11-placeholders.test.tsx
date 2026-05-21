@@ -278,17 +278,19 @@ describe("P11 panels", () => {
     });
   });
 
-  it("renders 11-B + 11-C panels for TW market", () => {
+  it("renders 11-B + 11-C panels for TW market", async () => {
     render(<DashboardPageClient />);
-    expect(screen.getByTestId("p11-panel-pe-ratio")).toBeInTheDocument();
+    // Dashboard fetch is gated on secrets/status (P12-C-onboarding-race); await render.
+    expect(await screen.findByTestId("p11-panel-pe-ratio")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-monthly-revenue")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-historical-dividend-pe")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-institutional-cost")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-event-calendar")).toBeInTheDocument();
   });
 
-  it("11-E-F8: retail-sentiment placeholder is removed", () => {
+  it("11-E-F8: retail-sentiment placeholder is removed", async () => {
     render(<DashboardPageClient />);
+    await screen.findByTestId("p11-panel-pe-ratio");
     expect(screen.queryByTestId("p11-panel-retail-sentiment")).not.toBeInTheDocument();
     expect(screen.queryByText("散戶多空比")).not.toBeInTheDocument();
   });
@@ -316,22 +318,23 @@ describe("P11 panels", () => {
     expect(el).not.toHaveClass("text-slate-500");
   });
 
-  it("renders tooltip trigger for each 11-B panel title", () => {
+  it("renders tooltip trigger for each 11-B panel title", async () => {
     render(<DashboardPageClient />);
-    expect(screen.getByLabelText(P11_TOOLTIP_TEXT.pe_ratio)).toBeInTheDocument();
+    expect(await screen.findByLabelText(P11_TOOLTIP_TEXT.pe_ratio)).toBeInTheDocument();
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.monthly_revenue)).toBeInTheDocument();
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.historical_dividend_pe)).toBeInTheDocument();
   });
 
-  it("opens same-industry modal without triggering dashboard mutate", () => {
+  it("opens same-industry modal without triggering dashboard mutate", async () => {
     render(<DashboardPageClient />);
-    fireEvent.click(screen.getByRole("button", { name: "同產業 ->" }));
+    fireEvent.click(await screen.findByRole("button", { name: "同產業 ->" }));
     expect(mockMutate).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("does not render P11 block in US market", () => {
+  it("does not render P11 block in US market", async () => {
     render(<DashboardPageClient />);
+    await screen.findByTestId("p11-panel-pe-ratio");
     fireEvent.click(screen.getByRole("button", { name: "US" }));
     fireEvent.change(screen.getByLabelText("stock-input"), { target: { value: "AAPL" } });
     fireEvent.click(screen.getByRole("button", { name: "分析" }));
@@ -339,22 +342,23 @@ describe("P11 panels", () => {
     expect(screen.queryByTestId("p11-panel-monthly-revenue")).not.toBeInTheDocument();
   });
 
-  it("uses 300px chart loading skeleton height", () => {
+  it("uses 300px chart loading skeleton height", async () => {
     mockLoading = true;
     render(<DashboardPageClient />);
-    expect(screen.getByTestId("dashboard-chart-skeleton")).toHaveClass("h-[300px]");
+    const skel = await screen.findByTestId("dashboard-chart-skeleton");
+    expect(skel).toHaveClass("h-[300px]");
   });
 
-  it("renders compact inline rows in chip panel", () => {
+  it("renders compact inline rows in chip panel", async () => {
     render(<DashboardPageClient />);
-    expect(screen.getByTestId("chip-bid-ask-inline")).toHaveTextContent("53.00% /");
+    expect(await screen.findByTestId("chip-bid-ask-inline")).toHaveTextContent("53.00% /");
     expect(screen.getByTestId("chip-margin-inline")).toHaveTextContent("+300");
     expect(screen.getByTestId("chip-short-inline")).toHaveTextContent("-120");
   });
 
-  it("formats TW levels by tick size (high price no decimals)", () => {
+  it("formats TW levels by tick size (high price no decimals)", async () => {
     render(<DashboardPageClient />);
-    expect(screen.getByText("533 / 30.43")).toBeInTheDocument();
+    expect(await screen.findByText("533 / 30.43")).toBeInTheDocument();
     expect(screen.getByText("28.42 / 23.07")).toBeInTheDocument();
   });
 });

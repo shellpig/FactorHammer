@@ -4501,15 +4501,25 @@ export function TokenSetupDialog({
 
 - `useEffect` 入口呼叫 `apiGet<SecretsStatus>("/api/config/secrets/status")`；`res.data.finmind === false` 時開啟 modal
 - status endpoint 失敗時不顯示 modal（降級 UX，非 hard fail），讓 dashboard 嘗試載入（失敗時各 panel 自己回報）
-- `onSaved` callback：關閉 modal → `mutate(() => true, undefined, { revalidate: true })` 觸發所有 SWR key 重抓 → `router.refresh()`
+- **Dashboard fetch gate**：在 `secrets/status` 回應前，**禁止觸發 `useDashboard` 等 SWR fetch**。具體做法是「不要在 status 回應前 `setSymbol(...)`」，因為 `useDashboard(symbol, market)` 用 `symbol ? key : null` 作 SWR key，`symbol = null` 即不發 request。
+    - `secretsChecked` / `finmindReady` 兩個 boolean state 共同管控：
+        - status 成功且 `finmind === true` → `finmindReady = true`
+        - status 成功且 `finmind === false` → 開 modal、`finmindReady` 維持 `false`
+        - status 失敗 → `finmindReady = true`（降級 UX）
+        - 任一 case 結束 → `secretsChecked = true`
+    - localStorage 還原拆兩步：`market` / `pendingSymbol` 立刻還原（純 UI），`symbol`（觸發 fetch）等 `secretsChecked && finmindReady` 才設
+- `onSaved` callback：關閉 modal → **`setFinmindReady(true)`**（解除 gate，讓初始 fetch 開始）→ `mutate(() => true, undefined, { revalidate: true })` 觸發所有 SWR key 重抓 → `router.refresh()`
 
 `mutate(() => true, ...)` 全域 invalidate 範圍寬，避免「token 寫入成功後，原本 401/403 失敗的 panel 不會自動恢復」。
+
+**為何需要 gate**：若 dashboard fetch 不 gate，初次乾淨環境（localStorage 已有 `qt-last-symbol`、`.env` 無 FinMind token）下，`useDashboard` 會在 `secrets/status` 還沒回來時就先打 `/api/dashboard/payload`，後端因無 token 直接回錯，UI 先顯示「分析失敗：...」紅色 banner；過一陣子 status 回來才彈強制 modal，造成「先看到錯誤畫面、再看到強制 modal」的 UX 退化（已知問題 [P12-C-onboarding-race]）。
 
 ##### 12-C 驗收
 
 | 項目 | 驗收條件 |
 |:---|:---|
 | 未設 token 時開 dashboard | Modal 自動跳出，不可關閉 |
+| 未設 token + localStorage 已有上次 symbol | **Modal 跳出前不得發 `/api/dashboard/payload` 請求**；畫面不得閃過「分析失敗」紅色 banner |
 | 已設 token 時開 dashboard | Modal 不跳，dashboard 正常 |
 | status endpoint 失敗 | Modal 不跳，dashboard 嘗試載入（降級 UX，非 hard fail） |
 | 儲存鈕灰掉 | FinMind 欄空白時灰；輸入後解灰 |

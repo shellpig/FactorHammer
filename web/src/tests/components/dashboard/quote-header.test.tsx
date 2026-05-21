@@ -124,20 +124,15 @@ describe("Quote header — Phase 11-E", () => {
   });
 
   describe("11-E-F5: single-row quote layout", () => {
-    it("renders quote-header-row as a single section", () => {
+    it("renders quote-header-row as a single section", async () => {
       render(<DashboardPageClient />);
-      // Trigger load by clicking 分析
-      const btn = screen.getByRole("button", { name: "分析" });
-      btn.click();
-      // wait for synchronous state update
-      expect(screen.getByTestId("quote-header-row")).toBeInTheDocument();
+      // Dashboard fetch is gated on secrets/status (P12-C-onboarding-race); await render.
+      expect(await screen.findByTestId("quote-header-row")).toBeInTheDocument();
     });
 
-    it("shows all 7 quote fields with muted labels", () => {
+    it("shows all 7 quote fields with muted labels", async () => {
       render(<DashboardPageClient />);
-      screen.getByRole("button", { name: "分析" }).click();
-
-      const row = screen.getByTestId("quote-header-row");
+      const row = await screen.findByTestId("quote-header-row");
       // All 7 labels should be present
       const labels = ["開盤", "最高", "最低", "前收", "成交量", "買量", "賣量"];
       for (const label of labels) {
@@ -145,11 +140,9 @@ describe("Quote header — Phase 11-E", () => {
       }
     });
 
-    it("label elements have muted class", () => {
+    it("label elements have muted class", async () => {
       render(<DashboardPageClient />);
-      screen.getByRole("button", { name: "分析" }).click();
-
-      const row = screen.getByTestId("quote-header-row");
+      const row = await screen.findByTestId("quote-header-row");
       const muteSpans = row.querySelectorAll(".text-slate-500");
       // At least 5 muted labels (開盤/最高/最低/前收/成交量; 買量/賣量 may vary)
       expect(muteSpans.length).toBeGreaterThanOrEqual(5);
