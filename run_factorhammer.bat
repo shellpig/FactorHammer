@@ -31,7 +31,7 @@ if not exist "web\node_modules" goto :install_web
 
 :start_services
 echo Starting backend on port 8000 ...
-start "FactorHammer-Backend-8000" cmd /k ".venv\Scripts\python.exe -m uvicorn api.main:app --reload --port 8000"
+start "FactorHammer-Backend-8000" cmd /k ".venv\Scripts\python.exe -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000"
 
 echo Starting frontend on port 3000 ...
 start "FactorHammer-Frontend-3000" cmd /k call "%~f0" frontend
@@ -73,7 +73,7 @@ goto :start_services
 cd /d "%~dp0web"
 call :ensure_pnpm
 if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
-call "%NODE_EXE%" "%LOCAL_COREPACK_JS%" pnpm dev
+call "%NODE_EXE%" "%LOCAL_COREPACK_JS%" pnpm dev -H 0.0.0.0
 exit /b %ERRORLEVEL%
 
 :ensure_pnpm

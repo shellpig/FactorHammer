@@ -4785,7 +4785,7 @@ Phase 14 仍假設：
 | # | 位置 | 動作 |
 |:---|:---|:---|
 | 1 | `run_factorhammer.bat` 啟動 uvicorn 那行 | 加 `--host 0.0.0.0` |
-| 2 | `run_factorhammer.bat` 啟動 `pnpm dev` 那行 | 加 `-- -H 0.0.0.0`（避免 Next.js 預設綁 localhost） |
+| 2 | `run_factorhammer.bat` 啟動 `pnpm dev` 那行 | 加 `-H 0.0.0.0`（避免 Next.js 預設綁 localhost；pnpm 9+ 不需要 `--` 分隔符） |
 | 3 | `web/next.config.ts` | 新增 `rewrites()`，把 `/api/:path*` 反代到 `http://127.0.0.1:8000/api/:path*` |
 | 4 | `web/src/lib/api-client.ts` 的 `BASE_URL` | 預設值改為空字串 `""`（同源），保留 `NEXT_PUBLIC_API_URL` 覆蓋優先順序 |
 

@@ -1,8 +1,9 @@
 // API client (Phase 10-B)
 // Wraps fetch: base URL, error handling, TypeScript generics
 
-const BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Phase 14-A：預設走 same-origin proxy（next.config.ts rewrites）。
+// NEXT_PUBLIC_API_URL 保留為 escape hatch，正常情境**不要設**。
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 // ---------------------------------------------------------------------------
 // Error type

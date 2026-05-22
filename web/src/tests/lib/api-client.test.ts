@@ -115,4 +115,39 @@ describe("apiFetch", () => {
     const headers = opts.headers as Record<string, string>;
     expect(headers["Content-Type"]).toBe("application/json");
   });
+
+  // Phase 14-A: BASE_URL behavior tests
+  it("api-client 預設走 same-origin（NEXT_PUBLIC_API_URL 未設時）", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({}),
+    } as Response);
+
+    await apiFetch("/api/data/symbols");
+
+    const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    // NEXT_PUBLIC_API_URL not set in test env → BASE_URL = "" → relative same-origin path
+    expect(url).toBe("/api/data/symbols");
+  });
+
+  it("api-client 接受 NEXT_PUBLIC_API_URL 覆蓋（escape hatch）", async () => {
+    vi.resetModules();
+    const prevUrl = process.env.NEXT_PUBLIC_API_URL;
+    process.env.NEXT_PUBLIC_API_URL = "http://100.64.0.1:8000";
+    const { apiFetch: apiFetchEscaped } = await import("@/lib/api-client");
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({}),
+    } as Response);
+
+    await apiFetchEscaped("/api/data/symbols");
+
+    const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://100.64.0.1:8000/api/data/symbols");
+
+    if (prevUrl === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+    else process.env.NEXT_PUBLIC_API_URL = prevUrl;
+    vi.resetModules();
+  });
 });

@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-21
+最後更新：2026-05-22
 
 ---
 
@@ -18,7 +18,7 @@
 - Phase 11-E 已完成並驗證通過：純前端 UI/UX 收尾調整 8 項已上線，包含工具名稱改 `FactorHammer`、版號 build-time 注入、警示文字字色統一、股東會無資料文案修正、報價列改一排、K 線右側加「前收」、股東會編輯按鈕內聯、散戶多空比 placeholder 移除。
 - Phase 12 12-A / 12-B / 12-C / 12-D 已完成；首次執行 Token Onboarding 與 Portable Runtime 重整已收束。
 - Phase 13 13-A / 13-B 已完成並通過驗證：Dashboard 分析入口與日線定位整理、指標說明與數值呈現整理（壓力 / 支撐來源 label、近20日 / 近60日高點去重說明、台股成交量以日K股數語意呈現）。
-- Phase 14 14-A 規格已寫入三份主文件（實作未動工）：LAN / Tailscale 多裝置存取，採 proxy 同源方案（Next.js `rewrites()` 反代 `/api/*` 至 `127.0.0.1:8000`、uvicorn / `pnpm dev` 綁 `0.0.0.0`、api-client `BASE_URL` 預設空字串走相對路徑、CORS 不動、`NEXT_PUBLIC_API_URL` 保留 escape hatch）。
+- Phase 14 14-A 已完成並通過驗證：LAN / Tailscale 多裝置存取，採 proxy 同源方案（Next.js `rewrites()` 反代 `/api/*` 至 `127.0.0.1:8000`、uvicorn / `pnpm dev` 綁 `0.0.0.0`、api-client `BASE_URL` 預設空字串走相對路徑、CORS 不動、`NEXT_PUBLIC_API_URL` 保留 escape hatch）；順手把 Next.js dev indicator 搬到右上角避免遮 Mobile Tab Bar。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
@@ -248,17 +248,19 @@ risk:
 | 12-D | ✅ 完成 | Verifier 文件收尾已完成：同步 12-A/B/C 狀態、檢查舊啟動腳本名殘留、更新現役啟動入口；Phase 12 整體完成 |
 | 13-A | ✅ 完成 | Dashboard 分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 走 SWR `mutate()` 強制重跑 dashboard payload，後端維持 `_sync_symbol_daily_data → DataMaintenance.update_daily()` 路徑；台股 `intraday_df=[]` 隱藏 `分 K` tab，美股 intraday 仍顯示；自動測試 8 case + 手動驗收 1-7 全通過 |
 | 13-B | ✅ 完成 | Dashboard 指標說明與數值呈現整理：壓力 / 支撐補來源 label，說明近20日 / 近60日高點過近會合併；台股報價列與 K 線 tooltip 成交量統一以日K股數語意呈現，避免 `quote.volume` 與 `daily_df.volume` 單位混淆；`formatTwDailyVolume()` 補前端測試，使用者已完成人工驗證 |
-| 14-A | 📋 規格 | LAN / Tailscale 多裝置存取（規格已寫入三份主文件，實作未動工）：`run_factorhammer.bat` uvicorn 加 `--host 0.0.0.0`、`pnpm dev` 加 `-- -H 0.0.0.0`；`web/next.config.ts` 新增 `rewrites()` 反代 `/api/:path*` → `http://127.0.0.1:8000/api/:path*`；`web/src/lib/api-client.ts` `BASE_URL` 預設值改為空字串；FastAPI CORS 不動；`NEXT_PUBLIC_API_URL` 保留為 escape hatch |
+| 14-A | ✅ 完成 | LAN / Tailscale 多裝置存取：`run_factorhammer.bat` uvicorn 加 `--host 0.0.0.0`、`pnpm dev` 加 `-H 0.0.0.0`（pnpm 9+ 不需 `--` 分隔符）；`web/next.config.ts` 新增 `rewrites()` 反代 `/api/:path*` → `http://127.0.0.1:8000/api/:path*`、`devIndicators.position: top-right`（避免 Mobile Tab Bar 被遮）；`web/src/lib/api-client.ts` `BASE_URL` 預設值改為空字串；FastAPI CORS 不動；`NEXT_PUBLIC_API_URL` 保留為 escape hatch。Gate：tsc 0 errors、vitest 61 files / 407 tests pass（含 14-A 兩條 escape hatch / same-origin 新案）、pytest `tests/test_api` 120 passed；手動驗收 M1（PC 本機同源）、M2（rewrites 生效）、M3（同 Wi-Fi 手機）、M4（Tailscale）、M6（手機端 Token Setup Dialog onboarding）全通過，M5 自動測試已涵蓋故跳過 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–13 全部完成並通過驗證；Phase 14-A 規格已寫入三份主文件，待使用者下「實作 14-A」或同等指令動工。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–14-A 全部完成並通過驗證。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
-2026-05-22 狀態（Phase 14-A 規格寫入）：
-- **P14 規格已寫入三份主文件**：規格書新增 `### Phase 14：區網與遠端存取（多裝置使用）` 段落（含定位、子階段、14-A proxy 同源鎖定路徑與 A/B 比較表、必須動的四項、安全模型、驗收條件、不做與風險）；開發設計方針新增 `## Phase 14：區網與遠端存取（多裝置使用）` 段落（含 `run_factorhammer.bat` 兩行改法、`next.config.ts` `rewrites()` 範例、`api-client.ts` `BASE_URL` 改動、CORS 不動的解釋、Tailscale 行為說明、`NEXT_PUBLIC_API_URL` escape hatch 去留、Windows Defender 行為、測試要求）；測試指南新增 `## Phase 14：區網與遠端存取測試` 段落（含 vitest 兩條新案例、pytest regression 範圍、Playwright 不變、6 個手動驗收情境 14-A-M1 ~ M6、Phase 14 完成 Gate）。
-- **P14-A 鎖定 proxy 同源**：經 A/B 對照後鎖定 A 案。動工只動 `run_factorhammer.bat`、`web/next.config.ts`、`web/src/lib/api-client.ts` 三檔；CORS、所有 service / router / 既有 vitest 與 pytest 一律不動。
+2026-05-22 狀態（Phase 14-A 完成）：
+- **P14-A 實作完成**：`run_factorhammer.bat` 後端 uvicorn 改綁 `--host 0.0.0.0`、前端 `pnpm dev -H 0.0.0.0`（規格原本寫 `-- -H 0.0.0.0`，實機跑 pnpm 11 + Next.js 15.3 時 `next dev` 會把 `--` 當 positional 並把 `-H` 誤判為 project directory 直接退出；驗證階段抓到後改為 `-H 0.0.0.0`，規格書 4788 / 設計方針 9889 / 9915 / 9921 四處同步修正並保留反例註解）；`web/next.config.ts` 加 `rewrites()` 把 `/api/:path*` 反代到 `http://127.0.0.1:8000/api/:path*`、另加 `devIndicators.position: "top-right"` 避免手機底部 Tab Bar 被 Next.js dev 浮動鈕遮擋；`web/src/lib/api-client.ts` `BASE_URL` 預設值由 `"http://localhost:8000"` 改為 `""` 走 same-origin proxy，保留 `NEXT_PUBLIC_API_URL` escape hatch；vitest 補兩條（`預設走 same-origin` / `接受 NEXT_PUBLIC_API_URL 覆蓋`）。
+- **Gate**：`npx tsc --noEmit` 0 errors、`pnpm test -- --run` 61 files / 407 tests pass（13-B baseline 405 → +2 即 14-A 新案）、`pytest tests/test_api -m "not integration"` 120 passed in ~3s（CORS regression 無破壞）。手動驗收 M1（PC 同源 `localhost:3000`）、M2（`/api/data/symbols` proxy）、M3（同 Wi-Fi `192.168.18.5:3000` 手機載入 2330）、M4（Tailscale 跨網路）、M6（手機端 Token Setup Dialog 正常驗證 FinMind token）使用者皆已通過；M5（`NEXT_PUBLIC_API_URL` escape hatch）已由 vitest 自動測試涵蓋，手動驗收略過。
+- **手機端剩餘觀察**：Next.js 15.3 dev mode 在手機 console 報 hydration mismatch（推測時間 / locale 格式相關，PC 端原本就存在）；屬 dev-only 行為，production build 不會跳 overlay，14-A 不處理，另票追蹤。
+- **規格 / 設計方針 / 測試指南三份主文件**：14-A 段落於前一輪已寫入，本輪只同步修正 `pnpm dev` 指令寫法錯誤。
 
 2026-05-21 狀態（Phase 13-B 完成）：
 - **P12 狀態**：12-A / 12-B / 12-C / 12-D 已完成；現役啟動入口以 `run_factorhammer.bat` 為準。
@@ -357,7 +359,7 @@ risk:
 | 12-C Token Setup Dialog 元件 | 9450-9608 | Dialog hooks 範例、儲存 handler、外部連結 JSX、`dashboard-page-client` 整合、既有測試 mock 調整時必讀 |
 | 13-A Dashboard 分析入口與日線定位整理 | 9631-9755 | `DashboardPageClient` submitSymbol helper、同代碼 `mutate()`、移除按鈕與未用 icon import、`分 K` tab 依 `intraday_df.length` 顯示時必讀 |
 | 13-B Dashboard 指標說明與數值呈現整理 | 9756-9866 | `LevelsPanel` label / tooltip、`formatTwDailyVolume()`、報價列成交量優先用最新日K `volume`、避免 `quote.volume` 單位混淆時必讀 |
-| 14-A LAN / Tailscale 存取（proxy 同源） | 9879-10005 | `run_factorhammer.bat` uvicorn `--host 0.0.0.0` 與 `pnpm dev -- -H 0.0.0.0`、`next.config.ts` `rewrites()`、`api-client.ts` `BASE_URL` 改空字串、CORS 不動的原因、`NEXT_PUBLIC_API_URL` escape hatch、Tailscale 行為說明時必讀 |
+| 14-A LAN / Tailscale 存取（proxy 同源） | 9879-10005 | `run_factorhammer.bat` uvicorn `--host 0.0.0.0` 與 `pnpm dev -H 0.0.0.0`、`next.config.ts` `rewrites()` + `devIndicators.position`、`api-client.ts` `BASE_URL` 改空字串、CORS 不動的原因、`NEXT_PUBLIC_API_URL` escape hatch、Tailscale 行為說明時必讀 |
 
 ### 測試指南.md（~4346 行）
 
