@@ -23,7 +23,7 @@ import {
 import { SWEEP_DEFAULTS, SWEEP_PARAM_SPECS } from "./sweep-constants";
 import type { SweepStrategyType } from "./sweep-types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 const OPTIMIZE_METRIC_OPTIONS = [
   { value: "sharpe_ratio", label: "Sharpe Ratio" },

@@ -13,7 +13,7 @@ import { MAX_SWEEP_COMBOS, SWEEP_DEFAULTS } from "./sweep-constants";
 import type { BacktestSweepResult, SweepStrategyType } from "./sweep-types";
 import { createDefaultParamInputs, type SweepStartPayload } from "./sweep-helpers";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 function parseFilename(disposition: string | null): string {
   if (!disposition) return "sweep_result.csv";

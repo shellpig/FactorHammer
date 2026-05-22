@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-client";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export type DataJobStatus = "idle" | "running" | "complete" | "error";
 
