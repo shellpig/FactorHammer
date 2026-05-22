@@ -19,6 +19,7 @@
 - Phase 12 12-A / 12-B / 12-C / 12-D 已完成；首次執行 Token Onboarding 與 Portable Runtime 重整已收束。
 - Phase 13 13-A / 13-B 已完成並通過驗證：Dashboard 分析入口與日線定位整理、指標說明與數值呈現整理（壓力 / 支撐來源 label、近20日 / 近60日高點去重說明、台股成交量以日K股數語意呈現）。
 - Phase 14 14-A 已完成並通過驗證：LAN / Tailscale 多裝置存取，採 proxy 同源方案（Next.js `rewrites()` 反代 `/api/*` 至 `127.0.0.1:8000`、uvicorn / `pnpm dev` 綁 `0.0.0.0`、api-client `BASE_URL` 預設空字串走相對路徑、CORS 不動、`NEXT_PUBLIC_API_URL` 保留 escape hatch）；順手把 Next.js dev indicator 搬到右上角避免遮 Mobile Tab Bar。
+- Phase 14 14-B 規格已寫入三份主文件（實作未動工）：手機端 UI 收尾，鎖定資料管理頁 mobile 隱藏「區間」「K 棒數」次要欄 + 名稱欄 truncate（A4 案），Mobile Tab Bar `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value 繞過 `globals.css` 沒寫 `@theme` 造成 Tailwind v4 utility 失效的問題（C 案）；不補 `@theme`、不動桌機、不動 API。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
@@ -249,18 +250,24 @@ risk:
 | 13-A | ✅ 完成 | Dashboard 分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 走 SWR `mutate()` 強制重跑 dashboard payload，後端維持 `_sync_symbol_daily_data → DataMaintenance.update_daily()` 路徑；台股 `intraday_df=[]` 隱藏 `分 K` tab，美股 intraday 仍顯示；自動測試 8 case + 手動驗收 1-7 全通過 |
 | 13-B | ✅ 完成 | Dashboard 指標說明與數值呈現整理：壓力 / 支撐補來源 label，說明近20日 / 近60日高點過近會合併；台股報價列與 K 線 tooltip 成交量統一以日K股數語意呈現，避免 `quote.volume` 與 `daily_df.volume` 單位混淆；`formatTwDailyVolume()` 補前端測試，使用者已完成人工驗證 |
 | 14-A | ✅ 完成 | LAN / Tailscale 多裝置存取：`run_factorhammer.bat` uvicorn 加 `--host 0.0.0.0`、`pnpm dev` 加 `-H 0.0.0.0`（pnpm 9+ 不需 `--` 分隔符）；`web/next.config.ts` 新增 `rewrites()` 反代 `/api/:path*` → `http://127.0.0.1:8000/api/:path*`、`devIndicators.position: top-right`（避免 Mobile Tab Bar 被遮）；`web/src/lib/api-client.ts` `BASE_URL` 預設值改為空字串；FastAPI CORS 不動；`NEXT_PUBLIC_API_URL` 保留為 escape hatch。Gate：tsc 0 errors、vitest 61 files / 407 tests pass（含 14-A 兩條 escape hatch / same-origin 新案）、pytest `tests/test_api` 120 passed；手動驗收 M1（PC 本機同源）、M2（rewrites 生效）、M3（同 Wi-Fi 手機）、M4（Tailscale）、M6（手機端 Token Setup Dialog onboarding）全通過，M5 自動測試已涵蓋故跳過 |
+| 14-B | 📋 規格 | 手機端 UI 收尾（規格已寫入三份主文件，實作未動工）：(1) **資料管理頁 mobile (A4)**：DataTable「區間」「K 棒數」欄頭與欄體加 `hidden lg:table-cell`，「名稱」欄補 `min-w-[6rem] max-w-[10rem] truncate` + `title={row.name}`；(2) **Mobile Tab Bar 透明 (C)**：`sidebar.tsx` / `stock-selector.tsx` / `ai/chat-input.tsx` 三處 `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value 繞過 `globals.css` 沒寫 Tailwind v4 `@theme` 造成 utility 失效的問題；不補 `@theme`、不動桌機、不動 API。三條 vitest 新案 + 4 條手動驗收 M1（PC regression）/ M2（mobile 4 欄 + truncate）/ M3（Tab Bar 不透明）/ M4（主題切換）|
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–14-A 全部完成並通過驗證。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–14-A 全部完成並通過驗證；Phase 14-B 規格已寫入三份主文件，待使用者下「實作 14-B」或同等指令動工。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
 2026-05-22 狀態（Phase 14-A 完成）：
 - **P14-A 實作完成**：`run_factorhammer.bat` 後端 uvicorn 改綁 `--host 0.0.0.0`、前端 `pnpm dev -H 0.0.0.0`（規格原本寫 `-- -H 0.0.0.0`，實機跑 pnpm 11 + Next.js 15.3 時 `next dev` 會把 `--` 當 positional 並把 `-H` 誤判為 project directory 直接退出；驗證階段抓到後改為 `-H 0.0.0.0`，規格書 4788 / 設計方針 9889 / 9915 / 9921 四處同步修正並保留反例註解）；`web/next.config.ts` 加 `rewrites()` 把 `/api/:path*` 反代到 `http://127.0.0.1:8000/api/:path*`、另加 `devIndicators.position: "top-right"` 避免手機底部 Tab Bar 被 Next.js dev 浮動鈕遮擋；`web/src/lib/api-client.ts` `BASE_URL` 預設值由 `"http://localhost:8000"` 改為 `""` 走 same-origin proxy，保留 `NEXT_PUBLIC_API_URL` escape hatch；vitest 補兩條（`預設走 same-origin` / `接受 NEXT_PUBLIC_API_URL 覆蓋`）。
 - **Gate**：`npx tsc --noEmit` 0 errors、`pnpm test -- --run` 61 files / 407 tests pass（13-B baseline 405 → +2 即 14-A 新案）、`pytest tests/test_api -m "not integration"` 120 passed in ~3s（CORS regression 無破壞）。手動驗收 M1（PC 同源 `localhost:3000`）、M2（`/api/data/symbols` proxy）、M3（同 Wi-Fi `192.168.18.5:3000` 手機載入 2330）、M4（Tailscale 跨網路）、M6（手機端 Token Setup Dialog 正常驗證 FinMind token）使用者皆已通過；M5（`NEXT_PUBLIC_API_URL` escape hatch）已由 vitest 自動測試涵蓋，手動驗收略過。
 - **手機端剩餘觀察**：Next.js 15.3 dev mode 在手機 console 報 hydration mismatch（推測時間 / locale 格式相關，PC 端原本就存在）；屬 dev-only 行為，production build 不會跳 overlay，14-A 不處理，另票追蹤。
 - **規格 / 設計方針 / 測試指南三份主文件**：14-A 段落於前一輪已寫入，本輪只同步修正 `pnpm dev` 指令寫法錯誤。
+
+2026-05-22 狀態（Phase 14-B 規格寫入）：
+- **P14-B 規格已寫入三份主文件**：規格書新增 `#### 14-B：手機端 UI 收尾` 段落（含目標、A4 + C 鎖定路徑、不動的部分 6 項、必須動的四檔、安全模型、驗收條件、不做 5 項、風險 4 項）；開發設計方針新增 `### 14-B：手機端 UI 收尾` 段落（含 DataTable mobile 修法、`bg-[hsl(var(--background))]` arbitrary value 修法、為什麼不補 `@theme`、14-B 測試要求）；測試指南新增 `### 14-B：手機端 UI 收尾測試` 段落（含 vitest 三條新案、Playwright mobile 補測建議、4 條手動驗收 M1 ~ M4、Phase 14-B 完成 Gate）；`### 14 共用注意` 同步擴充涵蓋 14-A / 14-B 共通邊界。
+- **P14-B 鎖定 A4 + C**：經 4 案 / 3 案對照後鎖定。動工只動 `web/src/components/data/DataTable.tsx`、`web/src/components/sidebar.tsx`、`web/src/components/stock-selector.tsx`、`web/src/components/ai/chat-input.tsx` 四檔；`globals.css`、`layout.tsx`、所有後端、桌機 DataTable、既有 vitest / pytest / Playwright 一律不動。
+- **根因摘要**：Tailwind v4（`@tailwindcss/postcss`）需 `@theme` 區塊把 CSS 變數註冊為 design token；`globals.css` 沒寫 `@theme` → `bg-background` utility 編譯後無 CSS rule → Mobile Tab Bar 透明 → 滾動時內容穿透疊字。14-B 不補 `@theme`（影響範圍過大，另票追蹤），改用 arbitrary value `bg-[hsl(var(--background))]` 在 4 處受影響元件上繞過。
 
 2026-05-21 狀態（Phase 13-B 完成）：
 - **P12 狀態**：12-A / 12-B / 12-C / 12-D 已完成；現役啟動入口以 `run_factorhammer.bat` 為準。
@@ -306,7 +313,7 @@ risk:
 | **Phase 11 Dashboard 基本面與事件擴充（11-A~11-E）** | **3768-4170** | **Dashboard 新增估值/獲利與籌碼/事件資訊、UI/UX 收尾調整時必讀；含 `/api/analysis/p11/*` namespace、PER/月營收/dividends/EPS、股東會 metadata、同產業 PER Modal UX、Goodinfo 股利政策 fallback、11-E 名稱/版號/報價列/前收標籤/placeholder 移除等 8 項** |
 | **Phase 12 首次執行 Token Onboarding 與 Portable Runtime 重整（12-A~12-D）** | **4172-4592** | **install.bat 改版、portable Node v22.11.0、`run_factorhammer.bat`、`POST /api/config/secrets/validate` + FinMind 驗證、`_write_env` atomic helper 重構、Token Setup Dialog 強制 block modal、SWR mutate；實作 12-A/B/C 時必讀** |
 | **Phase 13 Dashboard 現有功能調整（13-A~13-B）** | **4596-4731** | **Dashboard 分析入口與日線定位整理、同代碼 Enter 強制重跑 payload、隱藏無效分K、壓力 / 支撐來源說明、成交量日K股數語意統一時必讀** |
-| **Phase 14 區網與遠端存取（14-A）** | **4735-4829** | **LAN / Tailscale 多裝置存取規格；含 proxy 同源 vs 環境變數 A/B 對照、`run_factorhammer.bat` host 改動、Next.js `rewrites()`、`api-client.ts` `BASE_URL` 預設值、CORS 不動的原因、安全模型、Tailscale 行為時必讀** |
+| **Phase 14 區網與遠端存取與手機 UI 收尾（14-A / 14-B）** | **4735-4901** | **14-A LAN / Tailscale 多裝置存取規格、proxy 同源 vs 環境變數 A/B 對照、`run_factorhammer.bat` host 改動、Next.js `rewrites()`、`api-client.ts` `BASE_URL` 預設值、CORS 不動的原因、安全模型、Tailscale 行為；14-B 手機端 UI 收尾規格、資料管理頁 mobile A4 隱藏次要欄、Mobile Tab Bar `bg-background` 改 arbitrary value 修 Tailwind v4 utility 失效、不補 `@theme` 的理由時必讀** |
 | 子階段總覽 | 2666-2680 | Phase 總覽（含 Phase 11） |
 | 費用估算 | 2685-2703 | API / yfinance / TWSE / TPEx / Next.js / US-2 資料源成本 |
 | 10-E：回測研究工作台 | 2942-3387 | 實作 10-E-1~4、Job lifecycle、SSE、取消、CSV、toast/skeleton/error boundary/command palette 整合時必讀 |
@@ -320,7 +327,8 @@ risk:
 | 12-D：Verifier 文件收尾 | 4538-4563 | verifier 角色執行；含舊啟動腳本名殘留檢測指令、文件同步檢查清單 |
 | 13-A：Dashboard 分析入口與日線定位整理 | 4618-4665 | 移除「分析 / 即時更新」按鈕、Enter 唯一入口、同代碼 Enter 呼叫 SWR `mutate()`、隱藏無 intraday 資料的 `分 K` tab 時必讀 |
 | 13-B：Dashboard 指標說明與數值呈現整理 | 4666-4713 | 壓力 / 支撐來源 label 或 tooltip、去重說明、成交量日K股數語意、避免即時報價量單位混淆時必讀 |
-| 14-A：LAN / Tailscale 存取（proxy 同源） | 4754-4829 | 14-A 目標、proxy 同源 vs 環境變數 A/B 對照、CORS 不動的原因、必須動的四項、Phase 14-A 不做與風險時必讀 |
+| 14-A：LAN / Tailscale 存取（proxy 同源） | 4755-4830 | 14-A 目標、proxy 同源 vs 環境變數 A/B 對照、CORS 不動的原因、必須動的四項、Phase 14-A 不做與風險時必讀 |
+| 14-B：手機端 UI 收尾 | 4831-4901 | 14-B 目標、資料管理頁 mobile A4（隱藏次要欄 + 名稱欄 truncate）/ Mobile Tab Bar C（arbitrary value）鎖定路徑、不動的部分、必須動的四檔、Phase 14-B 不做與風險時必讀 |
 | 附錄 A：免責聲明全文 | 4832-4851 | 免責聲明文案 |
 | 附錄 B：架構決策補充 | 4853-4909 | 美股邊界與 AI provider 抽象 |
 
@@ -347,7 +355,7 @@ risk:
 | **Phase 11 Dashboard 基本面與事件擴充** | **8406-9170** | **實作 P11 前必讀：11-A 前端 placeholder、11-B data/service/API/frontend、11-C TWSEFetcher/股東會 metadata/manual override/event calendar、資料管理整合、11-D Goodinfo 股利政策 fallback、11-E UI/UX 收尾調整** |
 | **Phase 12 首次執行 Token Onboarding 與 Portable Runtime 重整** | **9174-9615** | **實作 P12 前必讀：12-A install.bat 內部結構與 portable Node 流程、12-B `_write_env` atomic helper + `validate_finmind_token` 程式碼、12-C Token Setup Dialog hooks 範例 + SWR mutate 整合、既有測試 mock 調整** |
 | **Phase 13 Dashboard 現有功能調整** | **9619-9873** | **實作 P13 前必讀：13-A Enter 提交與同代碼 `mutate()`、分K tab 條件顯示；13-B 壓力 / 支撐來源說明、成交量 formatter 與報價列成交量來源規則** |
-| **Phase 14 區網與遠端存取** | **9875-10012** | **實作 P14 前必讀：14-A `run_factorhammer.bat` 兩行改法、`next.config.ts` `rewrites()` 範例、`api-client.ts` `BASE_URL` 預設改空字串、CORS 不動的原因、`NEXT_PUBLIC_API_URL` escape hatch 去留** |
+| **Phase 14 區網與遠端存取與手機 UI 收尾** | **9875-10140** | **實作 P14 前必讀：14-A `run_factorhammer.bat` 兩行改法、`next.config.ts` `rewrites()` 範例、`api-client.ts` `BASE_URL` 預設改空字串、CORS 不動的原因、`NEXT_PUBLIC_API_URL` escape hatch 去留；14-B DataTable mobile 隱藏次要欄與名稱欄 truncate 設計、Tab Bar `bg-[hsl(var(--background))]` arbitrary value 修法、`stock-selector` / `chat-input` 順手修、為什麼不補 `@theme`** |
 | 10-E 回測研究工作台 | 6920-7480 | 實作 backtest jobs、partial cancellation、CSV blob、共用 hook/元件時必讀 |
 | 10-G 設定頁 + 全局整合 | 7649-8119 | 實作 toast、Error Boundary、Skeleton、Command Palette、settings/secrets/theme/preset CRUD 時必讀 |
 | 11-B 資料層 / Service / API / 前端 | 8509-8705 | 實作 PER、monthly_revenue、dividends/EPS storage、valuation/monthly/dividend/industry PER API 與 panel 時必讀 |
@@ -359,7 +367,8 @@ risk:
 | 12-C Token Setup Dialog 元件 | 9450-9608 | Dialog hooks 範例、儲存 handler、外部連結 JSX、`dashboard-page-client` 整合、既有測試 mock 調整時必讀 |
 | 13-A Dashboard 分析入口與日線定位整理 | 9631-9755 | `DashboardPageClient` submitSymbol helper、同代碼 `mutate()`、移除按鈕與未用 icon import、`分 K` tab 依 `intraday_df.length` 顯示時必讀 |
 | 13-B Dashboard 指標說明與數值呈現整理 | 9756-9866 | `LevelsPanel` label / tooltip、`formatTwDailyVolume()`、報價列成交量優先用最新日K `volume`、避免 `quote.volume` 單位混淆時必讀 |
-| 14-A LAN / Tailscale 存取（proxy 同源） | 9879-10005 | `run_factorhammer.bat` uvicorn `--host 0.0.0.0` 與 `pnpm dev -H 0.0.0.0`、`next.config.ts` `rewrites()` + `devIndicators.position`、`api-client.ts` `BASE_URL` 改空字串、CORS 不動的原因、`NEXT_PUBLIC_API_URL` escape hatch、Tailscale 行為說明時必讀 |
+| 14-A LAN / Tailscale 存取（proxy 同源） | 9879-10006 | `run_factorhammer.bat` uvicorn `--host 0.0.0.0` 與 `pnpm dev -H 0.0.0.0`、`next.config.ts` `rewrites()` + `devIndicators.position`、`api-client.ts` `BASE_URL` 改空字串、CORS 不動的原因、`NEXT_PUBLIC_API_URL` escape hatch、Tailscale 行為說明時必讀 |
+| 14-B 手機端 UI 收尾 | 10007-10133 | DataTable mobile `hidden lg:table-cell` 隱藏「區間」「K 棒數」、「名稱」欄 `min-w-[6rem] max-w-[10rem] truncate` + `title`、Mobile Tab Bar 改 `bg-[hsl(var(--background))]` arbitrary value、`stock-selector` / `chat-input` 順手修、為什麼不在 14-B 補 `@theme`、14-B 測試要求時必讀 |
 
 ### 測試指南.md（~4346 行）
 
@@ -384,7 +393,7 @@ risk:
 | **Phase 11 測試（11-A~11-E）** | **3239-3765** | **P11 自動測試 / 手動驗收 / Gate；含 fetcher、storage、maintenance/job、service、API、frontend、namespace regression、股東會 metadata、資料管理互動測試、Goodinfo fallback 測試、11-E UI/UX 純前端測試** |
 | **Phase 12 測試（12-A~12-D）** | **3768-4024** | **P12 安裝腳本 / Backend Config API / Frontend Token Dialog 測試；含 install.bat 乾淨機器手動驗收 8 點、`secrets/validate` router 14 case + service 12 case、Token Setup Dialog 16 case + 整合 3 case、onboarding 手動驗收 10 點、Phase 12 完成 Gate** |
 | **Phase 13 測試（13-A~13-B）** | **4027-4141** | **Dashboard 現有功能調整測試；含移除按鈕、Enter 提示、新 / 同代碼 Enter 重新請求、分K tab 條件顯示、壓力 / 支撐來源、成交量日K股數語意** |
-| **Phase 14 測試（14-A）** | **4143-4242** | **LAN / Tailscale 多裝置存取測試；含 vitest `api-client BASE_URL` 兩條新案例、`tests/test_api` regression、Playwright 不動、6 個手動驗收情境 14-A-M1 ~ M6（本機既有路徑、proxy rewrites 生效、同 Wi-Fi 手機、Tailscale 跨網路、`NEXT_PUBLIC_API_URL` escape hatch、Token Dialog 跨裝置）、Phase 14 完成 Gate** |
+| **Phase 14 測試（14-A / 14-B）** | **4143-4320** | **14-A LAN / Tailscale 多裝置存取測試（vitest `api-client BASE_URL` 兩條新案、`tests/test_api` regression、Playwright 不動、6 個手動驗收 14-A-M1 ~ M6、Phase 14 完成 Gate）；14-B 手機端 UI 收尾測試（vitest DataTable 兩條 + Sidebar 一條新案、4 個手動驗收 14-B-M1 ~ M4、Playwright mobile 建議補測、Phase 14-B 完成 Gate）** |
 | 10-E 回測工作台測試 | 2786-2939 | 驗 10-E-1~4：backtest jobs、cancelled partial result、CSV、toast/skeleton/error panel |
 | 10-G 設定頁 + 全局整合測試 | 3005-3092 | 驗 10-G-1 toast/error boundary/skeleton/command palette 與 10-G-2 settings |
 | 11-E UI/UX 收尾調整測試 | 3696-3740 | 驗 11-E：sidebar 名稱 + 版號、警示文字字色、quote header 一排、K 線「前收」標籤、編輯按鈕位置、placeholder 移除 |
@@ -394,6 +403,7 @@ risk:
 | 13-A Dashboard 分析入口與日線定位整理測試 | 4037-4079 | 驗移除「分析 / 即時更新」、Enter 提示、新 / 同代碼 Enter 重新請求、無 intraday 隱藏分K、有 intraday 保留分K |
 | 13-B Dashboard 指標說明與數值呈現整理測試 | 4080-4124 | 驗壓力 / 支撐來源 label 或 tooltip、去重說明、成交量 `2_379_159` 顯示為 `238萬股` 或完整股數、避免 `quote.volume` 單位混淆 |
 | 14-A LAN / Tailscale 存取測試 | 4145-4242 | 驗 14-A：vitest `api-client BASE_URL` 預設空字串 + escape hatch、6 個手動驗收（本機既有路徑、proxy rewrites、同 Wi-Fi、Tailscale、`NEXT_PUBLIC_API_URL` 覆蓋、Token Dialog 跨裝置）、Phase 14 完成 Gate |
+| 14-B 手機端 UI 收尾測試 | 4243-4320 | 驗 14-B：vitest DataTable mobile 隱藏次要欄 + 名稱欄 truncate / title、Sidebar Mobile Tab Bar arbitrary value className、Playwright mobile 補測（4 欄 + computed bg）、4 個手動驗收 M1（PC regression）/ M2（mobile 4 欄 + 名稱 truncate）/ M3（Tab Bar 不透明 + computed bg）/ M4（主題切換）、Phase 14-B 完成 Gate |
 | 全專案最終回歸 | 4245-4285 | Phase 完成後 |
 | 測試數量統計總覽 | 4287-4346 | 測試統計（含 Phase 11 估算；P12 屬腳本 + onboarding 類、P14 屬部署面，未計入測試數量總覽表） |
 

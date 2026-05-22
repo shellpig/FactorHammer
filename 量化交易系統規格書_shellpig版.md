@@ -4748,6 +4748,7 @@ Phase 14 仍假設：
 | 階段 | 名稱 | 簡述 |
 |:---|:---|:---|
 | 14-A | LAN / Tailscale 存取（proxy 同源） | uvicorn / Next.js 綁 `0.0.0.0`、Next.js `rewrites()` 反代 `/api/*` → `127.0.0.1:8000`、前端永遠走相對路徑 |
+| 14-B | 手機端 UI 收尾 | 資料管理頁 mobile 隱藏「區間」「K 棒數」次要欄、名稱欄 truncate + title；Mobile Tab Bar `bg-background` 改 arbitrary value 修正 Tailwind v4 token utility 失效造成的透明 / 疊字 |
 
 未來若需要 HTTPS、密碼保護、多使用者帳號、雲端託管，皆屬 Phase 14 之外，需另開 phase 規劃。
 
@@ -4826,6 +4827,75 @@ Phase 14 仍假設：
 | Tailscale 中繼回家速度慢 | dashboard 載入延遲 | 屬使用者網路條件，文件提示而不在程式層處理 |
 | Next.js dev rewrites 多一跳 | 本機開發延遲多幾 ms | 量級可忽略，無需優化 |
 | 既有 `NEXT_PUBLIC_API_URL` 被誤用 | 強制走絕對 URL，跳過 proxy | api-client.ts 預設值空字串、註解標明只能在特殊 debug 情境設定 |
+
+#### 14-B：手機端 UI 收尾
+
+##### 目標
+
+14-A 把 dashboard 與資料管理頁送上手機後出現兩個 mobile-specific UX 缺陷，14-B 負責收尾。範圍只限：
+
+1. **資料管理頁手機版**：DataTable 桌機固定欄寬，在 mobile (<1024px) 寬度下 body 水平 overflow，iOS Safari 自動 zoom-out 整個 visual viewport 來避免水平捲軸，連帶把 Mobile Tab Bar 一起縮小、各欄資訊擠壓到「名稱」欄只顯示單字、底部 Tab Bar 字也跟著變小。
+2. **Mobile Tab Bar 透明導致內容穿透疊字**：`sidebar.tsx` Mobile Tab Bar 使用 Tailwind utility `bg-background`，但 `web/src/app/globals.css` 沒有 Tailwind v4 `@theme` 區塊把 `--background` 註冊成 design token，導致該 utility 編譯後無對應 CSS rule、Tab Bar 永遠透明、頁面滾動時內容文字穿透到 Tab Bar 區域與 icon / label 疊在一起。
+
+14-B 不引入新功能、不動 API、不動資料層、不動桌機行為。
+
+##### 鎖定路徑
+
+| 子問題 | 方案 |
+|:---|:---|
+| 資料管理頁手機版 | **A4：mobile 隱藏次要欄**。`lg` 以下 DataTable 只顯示「代碼 / 名稱 / 狀態 / 動作」4 欄，藏「區間」「K 棒數」；名稱欄手機端最小寬度 ≥ 6 個中文字（`min-w-[6rem]`）、過長以 `truncate` 截斷補 `…`、補 `title` attr 讓桌機 hover / 手機長按 / A11y 讀取看完整名稱 |
+| Mobile Tab Bar 透明 | **C：arbitrary value + 順手修同類用法**。`sidebar.tsx` Tab Bar 的 `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value 繞過 utility 失效；順手修 `stock-selector.tsx`、`ai/chat-input.tsx` 另兩處同樣壞掉的 `bg-background`。**不**補 `@theme` 區塊（屬於 Tailwind v4 + shadcn 完整重構，另開 ticket） |
+
+##### 不動的部分
+
+1. **`globals.css` 的 `@theme` 區塊**：不補。Tailwind v4 + shadcn 完整重構影響範圍涵蓋所有 `bg-card` / `bg-popover` / `bg-muted` / `text-foreground` / `border-input` 等 token utility，元件視覺從未在「token 正確套用」情境測過，補後不可預期，超出 14-B 範圍。
+2. **DataTable 桌機版**：欄寬、欄順序、互動完全不動，桌機 5 欄完整顯示。
+3. **既有「+ 新增標的」、「重新整理列表」按鈕位置**：mobile 維持目前位置，不改 FAB。
+4. **後端 API / service / fetcher / storage**：完全不動。
+5. **`layout.tsx` `<main>` 的 `pb-14 lg:pb-0`**：不動，padding 規格正確。
+6. **既有 vitest / pytest / Playwright spec**：不改寫。
+
+##### 必須動的檔案
+
+| # | 位置 | 動作 |
+|:---|:---|:---|
+| 1 | `web/src/components/data/DataTable.tsx`（或對應 mobile-aware 子元件） | 「區間」「K 棒數」欄頭與欄體加 `hidden lg:table-cell`；「名稱」欄補 `min-w-[6rem] max-w-[10rem] truncate` + `title={row.name}` |
+| 2 | `web/src/components/sidebar.tsx` Mobile Tab Bar `<nav>` | `bg-background` → `bg-[hsl(var(--background))]` |
+| 3 | `web/src/components/stock-selector.tsx` | 同上替換 `bg-background` → `bg-[hsl(var(--background))]` |
+| 4 | `web/src/components/ai/chat-input.tsx` | 同上替換 `bg-background` → `bg-[hsl(var(--background))]` |
+
+實作細節（程式碼範例、breakpoint 選定、為什麼用 arbitrary value）見 `開發設計方針.md` Phase 14-B 段落。
+
+##### 安全模型
+
+無安全面異動（純 UI/CSS）。
+
+##### 驗收條件（與測試指南對應）
+
+- PC 桌機 dashboard / data / settings / backtest / ai 五頁視覺與互動完全不變（regression）。
+- mobile 寬度（<1024px）資料管理頁：DataTable 只顯示 4 欄、body 不再 horizontal overflow、Tab Bar 不再被 iOS Safari auto-zoom 縮小、名稱欄顯示完整或 `…` 截斷可長按看完整名稱。
+- mobile 寬度任一頁：滾動時 Mobile Tab Bar 不透明，背後內容不會穿透到 icon / label 區域，computed `background-color` 不為 `transparent`。
+- 主題切換 Dark ↔ Light，Mobile Tab Bar 跟著主題色切換。
+- vitest / pytest / Playwright 既有測試全綠，不需改 mock。
+
+##### Phase 14-B 不做
+
+| 不做 | 理由 |
+|:---|:---|
+| 補 Tailwind v4 `@theme` 完整重構 | 範圍過大、可能撞到未測過的元件視覺，應另開 ticket |
+| DataTable mobile 改卡片堆疊（B 案） | 工程量大，A4 + Tab Bar 不透明已能解決使用者實機觀察到的所有問題 |
+| 全頁面 mobile UX audit | 14-B 只收使用者實際撞到的兩件，避免 scope creep |
+| 修手機端 hydration mismatch | 與 14-B 無關、屬 dev-only overlay、另票追蹤 |
+| 改桌機 DataTable 行為 | 14-B 不動桌機 |
+
+##### Phase 14-B 風險
+
+| 風險 | 影響 | 緩解 |
+|:---|:---|:---|
+| arbitrary value 修法日後若補 `@theme`，會出現雙重定義 | 視覺無影響但代碼重複 | 4 處改動上方註解標記「Phase 14-B 暫修，補 @theme 後可清理回 `bg-background`」 |
+| 名稱欄 truncate 長按看 title 在手機未必直覺 | 體驗稍差但功能不損 | 名稱第一段 6 字基本可辨識主要 ETF / 個股；A11y 仍透過 `title` 提供完整名稱 |
+| 隱藏的「區間」「K 棒數」資訊手機看不到 | 手機用戶看不到資料區間與 K 棒數 | 需要看的情境屬桌機重度使用情境，可接受；未來如有 mobile 詳情頁可補回 |
+| `bg-[hsl(var(--background))]` arbitrary value 語法在 Tailwind v4 build-time 失敗 | Tab Bar 仍透明 | 補 vitest 案例 `Mobile Tab Bar 套用不透明背景` 檢查 className 字串、build 後 manual M3 驗證 computed bg |
 
 ---
 
