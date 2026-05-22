@@ -206,8 +206,8 @@ export function DataPageClient() {
       </div>
 
       {/* ── Toolbar ── */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex flex-1 max-w-xl items-center gap-2">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
+        <div className="flex w-full min-w-0 items-center gap-2 lg:max-w-xl lg:flex-1">
           <label className="flex h-9 flex-1 items-center gap-2 rounded-md border border-slate-700/80 bg-slate-900/70 px-3 focus-within:border-slate-500">
             <Search className="h-4 w-4 shrink-0 text-slate-500" />
             <input
@@ -215,43 +215,43 @@ export function DataPageClient() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="搜尋代碼（例：2330、AAPL）"
-              className="flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+              className="min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
             />
           </label>
           <button
             onClick={() => setShowAddDialog(true)}
             disabled={isJobRunning}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-slate-100 px-3 text-sm font-medium text-slate-900 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex h-9 min-w-[7.25rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-slate-100 px-4 text-sm font-medium text-slate-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Plus className="h-4 w-4" />
             新增標的
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="grid grid-cols-3 gap-2 lg:flex lg:items-center">
           <button
             onClick={() => mutate()}
             disabled={isJobRunning}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-900/40 px-3 text-sm text-slate-200 hover:bg-slate-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex h-10 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-slate-700/80 bg-slate-900/40 px-2.5 text-[13px] text-slate-200 hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-40 lg:h-9 lg:px-3 lg:text-sm"
           >
             <RefreshCw className="h-3.5 w-3.5" />
-            重新整理列表
+            重新整理
           </button>
           <button
             onClick={handleUpdateAll}
             disabled={isJobRunning || rows.length === 0}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-900/40 px-3 text-sm text-slate-200 hover:bg-slate-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex h-10 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-slate-700/80 bg-slate-900/40 px-2.5 text-[13px] text-slate-200 hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-40 lg:h-9 lg:px-3 lg:text-sm"
           >
             <RefreshCw className="h-3.5 w-3.5" />
-            全部更新
+            更新
           </button>
           <button
             onClick={() => setShowRebuildDialog(true)}
             disabled={isJobRunning || rows.length === 0}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-900/40 px-3 text-sm text-slate-200 hover:bg-slate-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex h-10 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-slate-700/80 bg-slate-900/40 px-2.5 text-[13px] text-slate-200 hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-40 lg:h-9 lg:px-3 lg:text-sm"
           >
             <Hammer className="h-3.5 w-3.5" />
-            全部重建
+            重建
           </button>
         </div>
       </div>

@@ -61,7 +61,8 @@ export function StockSelector({
       onKeyDown={handleKeyDown}
       placeholder={placeholder ?? defaultPlaceholder}
       className={cn(
-        "w-full rounded-lg border border-border bg-background px-3 py-2",
+        // Phase 14-B: temporary arbitrary value fix; remove after @theme token mapping is added.
+        "w-full rounded-lg border border-border bg-[hsl(var(--background))] px-3 py-2",
         "text-sm text-foreground placeholder:text-muted-foreground",
         "focus:outline-none focus:ring-2 focus:ring-ring",
         className,

@@ -15,8 +15,11 @@ interface DataTableProps {
   isJobRunning?: boolean;
 }
 
-// col layout: code | name+variant | range | bars | status | actions
-const GRID = "grid-cols-[100px_1fr_220px_80px_100px_180px]";
+// col layout:
+// mobile: code | name+variant | status | actions
+// desktop: code | name+variant | range | bars | status | actions
+const GRID =
+  "grid-cols-[92px_minmax(6rem,1fr)_92px_126px] lg:grid-cols-[100px_minmax(0,1fr)_220px_80px_100px_180px]";
 
 export function DataTable({ rows, onDelete, onUpdate, isJobRunning = false }: DataTableProps) {
   if (rows.length === 0) {
@@ -35,8 +38,8 @@ export function DataTable({ rows, onDelete, onUpdate, isJobRunning = false }: Da
       >
         <div>代碼</div>
         <div>名稱</div>
-        <div>區間</div>
-        <div className="text-right">K 棒數</div>
+        <div className="hidden lg:block">區間</div>
+        <div className="hidden lg:block text-right">K 棒數</div>
         <div>狀態</div>
         <div className="pr-1 text-right">動作</div>
       </div>
@@ -56,7 +59,10 @@ export function DataTable({ rows, onDelete, onUpdate, isJobRunning = false }: Da
             </div>
 
             {/* 名稱 (name from backend; fallback to symbol; raw+adj badge for US) */}
-            <div className="text-slate-100 truncate">
+            <div
+              className="min-w-[6rem] max-w-[10rem] text-slate-100 truncate"
+              title={row.name ?? row.symbol}
+            >
               {row.name ?? row.symbol}
               {row.market === "us" && (
                 <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-500">
@@ -66,14 +72,14 @@ export function DataTable({ rows, onDelete, onUpdate, isJobRunning = false }: Da
             </div>
 
             {/* 區間 */}
-            <div className="font-mono text-[12.5px] text-slate-300 truncate">
+            <div className="hidden lg:block font-mono text-[12.5px] text-slate-300 truncate">
               {row.firstDate ?? "—"}
               <span className="text-slate-500"> ~ </span>
               {row.lastDate ?? "—"}
             </div>
 
             {/* K 棒數 */}
-            <div className="font-mono text-right text-slate-300">
+            <div className="hidden lg:block font-mono text-right text-slate-300">
               {row.bars > 0 ? row.bars.toLocaleString() : "—"}
             </div>
 

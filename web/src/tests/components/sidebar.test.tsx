@@ -54,4 +54,11 @@ describe("Sidebar", () => {
     const dashboardLink = screen.getByTestId("sidebar-nav-dashboard");
     expect(dashboardLink).toHaveAttribute("aria-current", "page");
   });
+
+  it("uses opaque mobile tab bar background class", () => {
+    render(<Sidebar />);
+    const mobileNav = screen.getByLabelText("手機底部導覽");
+    expect(mobileNav).toHaveClass("bg-[hsl(var(--background))]");
+    expect(mobileNav).not.toHaveClass("bg-background");
+  });
 });

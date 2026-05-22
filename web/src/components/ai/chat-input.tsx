@@ -42,7 +42,8 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
         onKeyDown={handleKeyDown}
         disabled={disabled}
         className={cn(
-          "flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground",
+          // Phase 14-B: temporary arbitrary value fix; remove after @theme token mapping is added.
+          "flex-1 rounded-lg border border-border bg-[hsl(var(--background))] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground",
           "outline-none focus:border-primary focus:ring-1 focus:ring-primary/30",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}

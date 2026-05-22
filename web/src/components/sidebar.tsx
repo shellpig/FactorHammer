@@ -92,8 +92,9 @@ export function Sidebar() {
       </aside>
 
       {/* ── Mobile: bottom tab bar ── */}
+      {/* Phase 14-B: bg-background utility currently not emitted; use arbitrary value until @theme ticket. */}
       <nav
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-50 h-14 bg-background border-t border-border"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-50 h-14 bg-[hsl(var(--background))] border-t border-border"
         aria-label="手機底部導覽"
       >
         <div className="grid grid-cols-5 h-full">

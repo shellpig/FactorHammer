@@ -58,4 +58,33 @@ describe("DataTable", () => {
     render(<DataTable rows={rows} onDelete={vi.fn()} />);
     expect(screen.queryByText("raw+adj")).not.toBeInTheDocument();
   });
+
+  it("marks 區間 / K 棒數 columns as mobile-hidden", () => {
+    const rows = [makeRow({ symbol: "2330" })];
+    render(<DataTable rows={rows} onDelete={vi.fn()} />);
+
+    const rangeHeader = screen.getByText("區間");
+    const barsHeader = screen.getByText("K 棒數");
+    expect(rangeHeader).toHaveClass("hidden", "lg:block");
+    expect(barsHeader).toHaveClass("hidden", "lg:block");
+
+    const row = screen.getByTestId("data-row-2330");
+    const hiddenCells = row.querySelectorAll("div.hidden.lg\\:block");
+    expect(hiddenCells.length).toBeGreaterThanOrEqual(2);
+    const rangeCell = hiddenCells[0];
+    const barsCell = hiddenCells[1];
+    expect(rangeCell).toHaveClass("hidden", "lg:block");
+    expect(barsCell).toHaveClass("hidden", "lg:block");
+  });
+
+  it("adds truncate + title for long name cell", () => {
+    const longName = "群益台灣精選高息超長名稱測試";
+    const rows = [makeRow({ symbol: "00919", name: longName })];
+    render(<DataTable rows={rows} onDelete={vi.fn()} />);
+
+    const nameCell = screen.getByTitle(longName);
+    expect(nameCell).toHaveClass("truncate");
+    expect(nameCell).toHaveClass("min-w-[6rem]");
+    expect(nameCell).toHaveClass("max-w-[10rem]");
+  });
 });

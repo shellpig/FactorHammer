@@ -164,9 +164,25 @@ describe("DataPageClient toast migration", () => {
     };
   });
 
+  it("keeps mobile toolbar buttons on two rows without wrapping labels", () => {
+    render(<DataPageClient />);
+
+    const addButton = screen.getByRole("button", { name: "新增標的" });
+    expect(addButton).toHaveClass("min-w-[7.25rem]");
+    expect(addButton).toHaveClass("whitespace-nowrap");
+
+    const refreshButton = screen.getByRole("button", { name: "重新整理" });
+    const updateButton = screen.getByRole("button", { name: "更新" });
+    const rebuildButton = screen.getByRole("button", { name: "重建" });
+    expect(refreshButton.parentElement).toHaveClass("grid", "grid-cols-3", "lg:flex");
+    for (const button of [refreshButton, updateButton, rebuildButton]) {
+      expect(button).toHaveClass("h-10", "whitespace-nowrap", "lg:h-9");
+    }
+  });
+
   it("shows toast for update all completion and no inline result banner", async () => {
     const view = render(<DataPageClient />);
-    await userEvent.click(screen.getByRole("button", { name: "全部更新" }));
+    await userEvent.click(screen.getByRole("button", { name: "更新" }));
     expect(mockStartJob).toHaveBeenCalledWith("data_update", { market: "tw", all: true });
 
     mockJobState = {
@@ -186,7 +202,7 @@ describe("DataPageClient toast migration", () => {
 
   it("shows failure toast list when rebuild all has failed symbols", async () => {
     const view = render(<DataPageClient />);
-    await userEvent.click(screen.getByRole("button", { name: "全部重建" }));
+    await userEvent.click(screen.getByRole("button", { name: "重建" }));
     await userEvent.click(screen.getByRole("button", { name: "confirm-rebuild" }));
     expect(mockStartJob).toHaveBeenCalledWith("data_rebuild", { market: "tw", all: true });
 

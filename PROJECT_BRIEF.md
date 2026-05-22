@@ -19,7 +19,7 @@
 - Phase 12 12-A / 12-B / 12-C / 12-D 已完成；首次執行 Token Onboarding 與 Portable Runtime 重整已收束。
 - Phase 13 13-A / 13-B 已完成並通過驗證：Dashboard 分析入口與日線定位整理、指標說明與數值呈現整理（壓力 / 支撐來源 label、近20日 / 近60日高點去重說明、台股成交量以日K股數語意呈現）。
 - Phase 14 14-A 已完成並通過驗證：LAN / Tailscale 多裝置存取，採 proxy 同源方案（Next.js `rewrites()` 反代 `/api/*` 至 `127.0.0.1:8000`、uvicorn / `pnpm dev` 綁 `0.0.0.0`、api-client `BASE_URL` 預設空字串走相對路徑、CORS 不動、`NEXT_PUBLIC_API_URL` 保留 escape hatch）；順手把 Next.js dev indicator 搬到右上角避免遮 Mobile Tab Bar。
-- Phase 14 14-B 規格已寫入三份主文件（實作未動工）：手機端 UI 收尾，鎖定資料管理頁 mobile 隱藏「區間」「K 棒數」次要欄 + 名稱欄 truncate（A4 案），Mobile Tab Bar `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value 繞過 `globals.css` 沒寫 `@theme` 造成 Tailwind v4 utility 失效的問題（C 案）；不補 `@theme`、不動桌機、不動 API。
+- Phase 14 14-B 已完成並通過驗證：手機端 UI 收尾，資料管理頁 mobile 隱藏「區間」「K 棒數」次要欄 + 名稱欄 truncate，toolbar 改為 mobile-only 兩列避免按鈕文字直排，Mobile Tab Bar / StockSelector / AI ChatInput `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value；不補 `@theme`、不動 API。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
@@ -250,13 +250,13 @@ risk:
 | 13-A | ✅ 完成 | Dashboard 分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 走 SWR `mutate()` 強制重跑 dashboard payload，後端維持 `_sync_symbol_daily_data → DataMaintenance.update_daily()` 路徑；台股 `intraday_df=[]` 隱藏 `分 K` tab，美股 intraday 仍顯示；自動測試 8 case + 手動驗收 1-7 全通過 |
 | 13-B | ✅ 完成 | Dashboard 指標說明與數值呈現整理：壓力 / 支撐補來源 label，說明近20日 / 近60日高點過近會合併；台股報價列與 K 線 tooltip 成交量統一以日K股數語意呈現，避免 `quote.volume` 與 `daily_df.volume` 單位混淆；`formatTwDailyVolume()` 補前端測試，使用者已完成人工驗證 |
 | 14-A | ✅ 完成 | LAN / Tailscale 多裝置存取：`run_factorhammer.bat` uvicorn 加 `--host 0.0.0.0`、`pnpm dev` 加 `-H 0.0.0.0`（pnpm 9+ 不需 `--` 分隔符）；`web/next.config.ts` 新增 `rewrites()` 反代 `/api/:path*` → `http://127.0.0.1:8000/api/:path*`、`devIndicators.position: top-right`（避免 Mobile Tab Bar 被遮）；`web/src/lib/api-client.ts` `BASE_URL` 預設值改為空字串；FastAPI CORS 不動；`NEXT_PUBLIC_API_URL` 保留為 escape hatch。Gate：tsc 0 errors、vitest 61 files / 407 tests pass（含 14-A 兩條 escape hatch / same-origin 新案）、pytest `tests/test_api` 120 passed；手動驗收 M1（PC 本機同源）、M2（rewrites 生效）、M3（同 Wi-Fi 手機）、M4（Tailscale）、M6（手機端 Token Setup Dialog onboarding）全通過，M5 自動測試已涵蓋故跳過 |
-| 14-B | 📋 規格 | 手機端 UI 收尾（規格已寫入三份主文件，實作未動工）：(1) **資料管理頁 mobile (A4)**：DataTable「區間」「K 棒數」欄頭與欄體加 `hidden lg:table-cell`，「名稱」欄補 `min-w-[6rem] max-w-[10rem] truncate` + `title={row.name}`；(2) **Mobile Tab Bar 透明 (C)**：`sidebar.tsx` / `stock-selector.tsx` / `ai/chat-input.tsx` 三處 `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value 繞過 `globals.css` 沒寫 Tailwind v4 `@theme` 造成 utility 失效的問題；不補 `@theme`、不動桌機、不動 API。三條 vitest 新案 + 4 條手動驗收 M1（PC regression）/ M2（mobile 4 欄 + truncate）/ M3（Tab Bar 不透明）/ M4（主題切換）|
+| 14-B | ✅ 完成 | 手機端 UI 收尾已完成並通過驗證：(1) **資料管理頁 mobile**：DataTable mobile 改 4 欄（代碼 / 名稱 / 狀態 / 動作），隱藏「區間」「K 棒數」，名稱欄 `min-w-[6rem] max-w-[10rem] truncate` + `title`；(2) **資料頁 toolbar mobile-only 修正**：搜尋框右側保留「新增標的」，下排三顆「重新整理 / 更新 / 重建」，加寬與 `whitespace-nowrap` 避免中文字直排，`lg` 以上維持桌機橫向排列；(3) **Mobile Tab Bar 透明修正**：`sidebar.tsx` / `stock-selector.tsx` / `ai/chat-input.tsx` 三處 `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value；不補 `@theme`、不動 API。Gate：`npx tsc --noEmit` 0 errors、vitest 61 files / 411 tests pass；使用者人工驗證 14-B-M1 ~ M4 完成 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–14-A 全部完成並通過驗證；Phase 14-B 規格已寫入三份主文件，待使用者下「實作 14-B」或同等指令動工。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–14-B 全部完成並通過驗證。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
 2026-05-22 狀態（Phase 14-A 完成）：
 - **P14-A 實作完成**：`run_factorhammer.bat` 後端 uvicorn 改綁 `--host 0.0.0.0`、前端 `pnpm dev -H 0.0.0.0`（規格原本寫 `-- -H 0.0.0.0`，實機跑 pnpm 11 + Next.js 15.3 時 `next dev` 會把 `--` 當 positional 並把 `-H` 誤判為 project directory 直接退出；驗證階段抓到後改為 `-H 0.0.0.0`，規格書 4788 / 設計方針 9889 / 9915 / 9921 四處同步修正並保留反例註解）；`web/next.config.ts` 加 `rewrites()` 把 `/api/:path*` 反代到 `http://127.0.0.1:8000/api/:path*`、另加 `devIndicators.position: "top-right"` 避免手機底部 Tab Bar 被 Next.js dev 浮動鈕遮擋；`web/src/lib/api-client.ts` `BASE_URL` 預設值由 `"http://localhost:8000"` 改為 `""` 走 same-origin proxy，保留 `NEXT_PUBLIC_API_URL` escape hatch；vitest 補兩條（`預設走 same-origin` / `接受 NEXT_PUBLIC_API_URL 覆蓋`）。
@@ -264,10 +264,10 @@ risk:
 - **手機端剩餘觀察**：Next.js 15.3 dev mode 在手機 console 報 hydration mismatch（推測時間 / locale 格式相關，PC 端原本就存在）；屬 dev-only 行為，production build 不會跳 overlay，14-A 不處理，另票追蹤。
 - **規格 / 設計方針 / 測試指南三份主文件**：14-A 段落於前一輪已寫入，本輪只同步修正 `pnpm dev` 指令寫法錯誤。
 
-2026-05-22 狀態（Phase 14-B 規格寫入）：
-- **P14-B 規格已寫入三份主文件**：規格書新增 `#### 14-B：手機端 UI 收尾` 段落（含目標、A4 + C 鎖定路徑、不動的部分 6 項、必須動的四檔、安全模型、驗收條件、不做 5 項、風險 4 項）；開發設計方針新增 `### 14-B：手機端 UI 收尾` 段落（含 DataTable mobile 修法、`bg-[hsl(var(--background))]` arbitrary value 修法、為什麼不補 `@theme`、14-B 測試要求）；測試指南新增 `### 14-B：手機端 UI 收尾測試` 段落（含 vitest 三條新案、Playwright mobile 補測建議、4 條手動驗收 M1 ~ M4、Phase 14-B 完成 Gate）；`### 14 共用注意` 同步擴充涵蓋 14-A / 14-B 共通邊界。
-- **P14-B 鎖定 A4 + C**：經 4 案 / 3 案對照後鎖定。動工只動 `web/src/components/data/DataTable.tsx`、`web/src/components/sidebar.tsx`、`web/src/components/stock-selector.tsx`、`web/src/components/ai/chat-input.tsx` 四檔；`globals.css`、`layout.tsx`、所有後端、桌機 DataTable、既有 vitest / pytest / Playwright 一律不動。
-- **根因摘要**：Tailwind v4（`@tailwindcss/postcss`）需 `@theme` 區塊把 CSS 變數註冊為 design token；`globals.css` 沒寫 `@theme` → `bg-background` utility 編譯後無 CSS rule → Mobile Tab Bar 透明 → 滾動時內容穿透疊字。14-B 不補 `@theme`（影響範圍過大，另票追蹤），改用 arbitrary value `bg-[hsl(var(--background))]` 在 4 處受影響元件上繞過。
+2026-05-22 狀態（Phase 14-B 完成）：
+- **P14-B 實作完成**：`DataTable` mobile 隱藏「區間」「K 棒數」次要欄，名稱欄補 truncate + title；資料頁 toolbar 依人工手機驗證回饋追加 mobile-only 修正，搜尋框右側保留「新增標的」，下一行三顆「重新整理 / 更新 / 重建」，避免按鈕文字因欄寬太小變成直排；`sidebar.tsx` / `stock-selector.tsx` / `ai/chat-input.tsx` 三處 `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value，修正 Tailwind v4 未補 `@theme` 時 Mobile Tab Bar 透明問題。
+- **Gate**：`npx tsc --noEmit` 0 errors；targeted data tests 2 files / 17 tests pass；`pnpm test -- --run` 61 files / 411 tests pass（14-A baseline 407 → +4，含 DataTable 兩條、Sidebar 一條、DataPage toolbar 一條）。pytest 無新增，14-B 純前端 UI/CSS 改動。
+- **人工驗證**：使用者已完成 14-B-M1（PC regression）、M2（mobile data 4 欄 + 名稱 truncate / 小幅左右滑可接受）、M3（Mobile Tab Bar 不透明）、M4（主題切換）驗證。14-B 不補 `@theme`、不動 API / service / 資料層。
 
 2026-05-21 狀態（Phase 13-B 完成）：
 - **P12 狀態**：12-A / 12-B / 12-C / 12-D 已完成；現役啟動入口以 `run_factorhammer.bat` 為準。
