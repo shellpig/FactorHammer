@@ -105,6 +105,21 @@ Stop-Process -Id <PID>,<PID> -Force
 .\.venv\Scripts\python.exe -m pytest tests/test_indicators.py -q
 ```
 
+## DeepSeek Codex CLI Reviewer
+
+When the user says "要 ds4 pro 做 XXX", "要 ds4 flash 做 XXX", or similar wording, run the task through Codex CLI via the local Moon Bridge DeepSeek setup.
+
+Model mapping:
+- `ds4 pro` → `deepseek-v4-pro`
+- `ds4 flash` → `deepseek-v4-flash`
+- If the user says `ds4` without specifying `pro` or `flash`, use `deepseek-v4-pro`.
+
+Default mode: read-only reviewer.
+- Use `CODEX_HOME=C:\_work\AI_Work\Tools\codex-deepseek-home`.
+- No file writes, deletes, staging, commits, or pushes.
+- Do not read `.env`, `data/`, `舊文件/`, or `C:\_work\AI_Work\Tools\`.
+- Treat output as second opinion; review it before reporting.
+
 ## 驗證指令速查
 
 ```powershell
