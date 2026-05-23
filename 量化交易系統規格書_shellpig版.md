@@ -29,7 +29,7 @@
 | **V3.1** | 2026/05/18 | 新增 **Phase 11-E（UI/UX 收尾調整）**。純前端版面調整 8 項：(1) Sidebar 工具顯示名稱改 `FactorHammer`（不動專案 / repo / package name）；(2) 名稱右下方兩行 stack 顯示版號 `v{version}`，version 從 `web/package.json` build-time 注入；(3)「資料源未提供」說明文字字色統一改用「撈不到股東會資料」黃色 token；(4) 事件行事曆股東會無資料文案改為「撈不到股東會資料，需要手動填入（或是ETF沒有股東會）」；(5) 個股分析頁報價列改一排，標籤 muted、數值原色、欄位以兩個全形空格分隔；(6) K 線右側新增「前收」標籤，整組同色、漲紅跌綠、平盤灰；(7) 股東會手動編輯按鈕從面板右上移到「事件行事曆」標題右側 8px 內聯；(8) 散戶多空比 placeholder 整塊移除。不動後端、不動 Python、不動 `name` / repo。 |
 | **V3.2** | 2026/05/20 | **Phase 12 verifier 文件收尾。** 12-A / 12-B / 12-C 已實作；12-B / 12-C 已驗證完成；12-D 同步文件狀態與舊啟動腳本名檢查。12-A install.bat 乾淨環境手動驗證仍待補，因此 Phase 12 不標整體完成。 |
 | **V3.3** | 2026/05/21 | 新增 **Phase 13 Dashboard 現有功能調整** 初版規格。13-A 聚焦個股分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 也必須強制重新呼叫 dashboard payload，先嘗試 `update_daily()` 再分析；隱藏無資料支撐的 `分 K` tab。13-B 聚焦指標說明與數值呈現：壓力 / 支撐補來源標籤或 tooltip，成交量統一以日K股數語意呈現，避免與即時報價來源單位混淆。 |
-| **V3.4** | 2026/05/23 | 新增 **Phase 15 AI Provider 擴充與問答頁接 LLM** 規格，並把延後中的 10-F-2 重編搬遷至 15-B/15-C/15-D。經 codex 規格審核後修正：DeepSeek endpoint URL 對齊官方文件（`https://api.deepseek.com/chat/completions` 與 `/user/balance`，無 `/v1` 前綴）；`sse-starlette` 為 15-B 新增依賴（pyproject.toml 未裝）；DeepSeek `no_quota` 來源只認 402（移除 405 推測）；implementer 不直接動「驗證後已知問題.md」（改為回報、verifier 補檔）；version bump 三處同步（`pyproject.toml` / `web/package.json` / `api/main.py`）。**15-A**：DeepSeek Provider 接入 + AI 設定區重寫。Adapter：`OpenAIAdapter` 抽出 `base_url`，新增 `DeepSeekAdapter`（base URL `https://api.deepseek.com/chat/completions`），`DEFAULT_MODELS` 加 `deepseek-v4-flash`，`_resolve_api_key` 加 `deepseek_api_key`，dashboard 路徑啟用 `response_format={'type':'json_object'}` 並對 DeepSeek 預設 `thinking: {"type":"disabled"}` 穩定 JSON + 降成本。Config：`_SECRET_ENV_KEYS` 加 `DEEPSEEK_API_KEY`；DeepSeek key 寫入走既有 `PUT /api/config/secrets` 通用 dict 路徑（**不**動 `/secrets/validate`，留待 15-A-2 整體重構）。前端：[ai-toggle-section.tsx](web/src/components/settings/ai-toggle-section.tsx) 重寫，移除「永久停用」、加 enable toggle + Provider 下拉（anthropic / openai / gemini / deepseek 4 選 1）+ Model input + `PUT /api/config` whitelist 整合 `ai.enabled` / `ai.provider` / `ai.model`；[secrets-section.tsx](web/src/components/settings/secrets-section.tsx) `PROVIDERS` 陣列加一行 `{ key: "deepseek", label: "DeepSeek API Key" }`（其餘 5 欄欄位、儲存按鈕、status 顯示既有）。**15-A-2**：`/api/config/secrets/validate` 重構為 per-provider results map，**FinMind 必填 + 其他 provider 選填 validate-if-present**（沿用現有 onboarding 安全模型）。Status 列舉：`ok` / `invalid_key` / `no_quota`（DeepSeek 402）/ `unreachable` / `skipped`；`ok` 與 `no_quota` 寫入 `.env`，`invalid_key` / `unreachable` 不寫入；FinMind 空白 / 失敗時整包不寫；新增 `validate_deepseek_token`（打 `GET https://api.deepseek.com/user/balance`，無 `/v1`）/ `validate_anthropic_token` / `validate_openai_token` / `validate_gemini_token`；Token Setup Dialog 同步解析新 response shape；設定頁「驗證並儲存」按鈕後 per-provider inline ✅/⚠️/❌。**15-B**：AI 問答後端 streaming（純對話）— pyproject.toml **新增 `sse-starlette>=2.0` 依賴**；`/api/ai/status` 改動態（依 `ai.enabled` + provider key 狀態）；`/api/ai/chat` 改 async + `EventSourceResponse`、events `token`/`done`/`error`、`ChatRequest.messages` schema 嚴謹為 `role: user\|assistant`；`AIAdvisor.stream_chat()` + 4 adapter `stream_complete()` async generator；chat / dashboard 對 DeepSeek 預設 `thinking: {"type":"disabled"}`。**15-C**：AI 問答前端接 SSE — `use-mock-chat.ts` 移除、新增 `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send / abort / messages / streaming`）、chat-page-client 加取消按鈕、markdown 部分閉合直接交給 `react-markdown` 即時 render、移除 sidebar「後續開放」徽章、訊息歷史不持久化、`pyproject.toml` / `web/package.json` / `api/main.py` 三處 version 同步 `0.7.0`。**15-D**：Chat 啟用 tool use — `stream_chat` 加多輪 tool 迴圈（最多 6 輪）、4 adapter 加 tool_call delta accumulator、SSE 加 `tool_call` / `tool_result` 兩種 event、前端可顯示 tool chip；**`use-ai-chat.ts` 必須以 `toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送入 `/api/ai/chat`，避免污染 `ChatRequest.messages` schema**；**手動驗收只在 DeepSeek 上跑**，其他 3 個 provider 的 streaming + tool calls 由 implementer 完成後回報、verifier 統一更新「驗證後已知問題.md」。15-A-2 為 15-A 後續可並行；15-B 不接前端（curl 驗 SSE）後出 15-C；15-D 屬 chat 功能延伸。 |
+| **V3.4** | 2026/05/23 | 新增 **Phase 15 AI Provider 擴充與問答頁接 LLM** 規格，並把延後中的 10-F-2 重編搬遷至 15-B/15-C/15-D。經 codex 規格審核後修正：DeepSeek endpoint URL 對齊官方文件（`https://api.deepseek.com/chat/completions` 與 `/user/balance`，無 `/v1` 前綴）；`sse-starlette` 為 15-B 新增依賴（pyproject.toml 未裝）；DeepSeek `no_quota` 來源只認 402（移除 405 推測）；implementer 不直接動「驗證後已知問題.md」（改為回報、verifier 補檔）；version bump 三處同步（`pyproject.toml` / `web/package.json` / `api/main.py`）。**15-A-1**：DeepSeek Provider 接入 + AI 設定區重寫。Adapter：`OpenAIAdapter` 抽出 `base_url`，新增 `DeepSeekAdapter`（base URL `https://api.deepseek.com/chat/completions`），`DEFAULT_MODELS` 加 `deepseek-v4-flash`，`_resolve_api_key` 加 `deepseek_api_key`，dashboard 路徑啟用 `response_format={'type':'json_object'}` 並對 DeepSeek 預設 `thinking: {"type":"disabled"}` 穩定 JSON + 降成本。Config：`_SECRET_ENV_KEYS` 加 `DEEPSEEK_API_KEY`；DeepSeek key 寫入走既有 `PUT /api/config/secrets` 通用 dict 路徑（**不**動 `/secrets/validate`，留待 15-A-2 整體重構）。前端：[ai-toggle-section.tsx](web/src/components/settings/ai-toggle-section.tsx) 重寫，移除「永久停用」、加 enable toggle + Provider 下拉（anthropic / openai / gemini / deepseek 4 選 1）+ Model input + `PUT /api/config` whitelist 整合 `ai.enabled` / `ai.provider` / `ai.model`；[secrets-section.tsx](web/src/components/settings/secrets-section.tsx) `PROVIDERS` 陣列加一行 `{ key: "deepseek", label: "DeepSeek API Key" }`（其餘 5 欄欄位、儲存按鈕、status 顯示既有）。**15-A-2**：`/api/config/secrets/validate` 重構為 per-provider results map，**FinMind 必填 + 其他 provider 選填 validate-if-present**（沿用現有 onboarding 安全模型）。Status 列舉：`ok` / `invalid_key` / `no_quota`（DeepSeek 402）/ `unreachable` / `skipped`；`ok` 與 `no_quota` 寫入 `.env`，`invalid_key` / `unreachable` 不寫入；FinMind 空白 / 失敗時整包不寫；新增 `validate_deepseek_token`（打 `GET https://api.deepseek.com/user/balance`，無 `/v1`）/ `validate_anthropic_token` / `validate_openai_token` / `validate_gemini_token`；Token Setup Dialog 同步解析新 response shape；設定頁「驗證並儲存」按鈕後 per-provider inline ✅/⚠️/❌。**15-B**：AI 問答後端 streaming（純對話）— pyproject.toml **新增 `sse-starlette>=2.0` 依賴**；`/api/ai/status` 改動態（依 `ai.enabled` + provider key 狀態）；`/api/ai/chat` 改 async + `EventSourceResponse`、events `token`/`done`/`error`、`ChatRequest.messages` schema 嚴謹為 `role: user\|assistant`；`AIAdvisor.stream_chat()` + 4 adapter `stream_complete()` async generator；chat / dashboard 對 DeepSeek 預設 `thinking: {"type":"disabled"}`。**15-C**：AI 問答前端接 SSE — `use-mock-chat.ts` 移除、新增 `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send / abort / messages / streaming`）、chat-page-client 加取消按鈕、markdown 部分閉合直接交給 `react-markdown` 即時 render、移除 sidebar「後續開放」徽章、訊息歷史不持久化、`pyproject.toml` / `web/package.json` / `api/main.py` 三處 version 同步 `0.7.0`。**15-D**：Chat 啟用 tool use — `stream_chat` 加多輪 tool 迴圈（最多 6 輪）、4 adapter 加 tool_call delta accumulator、SSE 加 `tool_call` / `tool_result` 兩種 event、前端可顯示 tool chip；**`use-ai-chat.ts` 必須以 `toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送入 `/api/ai/chat`，避免污染 `ChatRequest.messages` schema**；**手動驗收只在 DeepSeek 上跑**，其他 3 個 provider 的 streaming + tool calls 由 implementer 完成後回報、verifier 統一更新「驗證後已知問題.md」。15-A-2 為 15-A-1 後續可並行；15-B 不接前端（curl 驗 SSE）後出 15-C；15-D 屬 chat 功能延伸。 |
 | **V2.7** | 2026/05/16 | **10-E 規格審查補丁**（12 項）：(1) `JobManager.finish_cancelled_job()` 新增（含 `cancel_job()` race condition 修正——只設 status、不關 queue）；(2) `GET /api/jobs/{id}/result` 擴充允許 cancelled + partial result；(3) 取消 `api/routers/backtest.py` 冗餘端點，前端直接用 `GET /api/config` 取 preset 清單；(4) `initial_capital` 預設 `1000000`，需新增為 `run_backtest_job()` 參數並注入引擎；(5) DCA 序列化映射補充（equity_curve / trades / metrics null 欄位）；(6) `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表；(7) WFA 特化 `WfaProgress` interface 補充；(8) CSV blob 函式位置指定 `src/services/backtest_service.py`；(9) E2E Playwright 統一在 10-E-4 後撰寫；(10) **交易數量單位統一顯示「股」（shares），不做 1000 股→1 張轉換**（與舊 Streamlit 回測頁一致；「張」僅用於 10-D 儀表板的日成交量與籌碼顯示）；(11) 切換市場時 reset state（清空回測結果）；(12) DCA 批次比較 error message 明確定義為「DCA 不支援批次比較（請至單次回測使用）」。 |
 
 ---
@@ -4908,15 +4908,15 @@ Phase 15 拆 5 個子階段：
 
 | 子階段 | 範圍 | 相依 |
 |:---|:---|:---|
-| 15-A | DeepSeek Provider 接入 + 設定頁下拉 | 無 |
-| 15-A-2 | `secrets/validate` 重構為 per-provider results | 15-A 完成（會新增 deepseek 欄位） |
-| 15-B | AI 問答後端 streaming（純對話、無 tool） | 15-A 完成（4 個 provider 才齊） |
+| 15-A-1 | DeepSeek Provider 接入 + 設定頁下拉 | 無 |
+| 15-A-2 | `secrets/validate` 重構為 per-provider results | 15-A-1 完成（會新增 deepseek 欄位） |
+| 15-B | AI 問答後端 streaming（純對話、無 tool） | 15-A-1 完成（4 個 provider 才齊） |
 | 15-C | AI 問答前端接 SSE（取代 mock） | 15-B 完成 |
 | 15-D | Chat 啟用 tool use（手動驗收只跑 DeepSeek） | 15-C 完成 |
 
-15-A 與 15-A-2 可同階段交付（15-A 先、15-A-2 緊接），15-B / 15-C / 15-D 為串行。15-D 程式碼必須完成 4 個 adapter，但手動驗收只跑 DeepSeek；其他 3 個 provider 列入「驗證後已知問題.md」標註未實機驗證。
+15-A-1 與 15-A-2 可同階段交付（15-A-1 先、15-A-2 緊接），15-B / 15-C / 15-D 為串行。15-D 程式碼必須完成 4 個 adapter，但手動驗收只跑 DeepSeek；其他 3 個 provider 列入「驗證後已知問題.md」標註未實機驗證。
 
-### 15-A：DeepSeek Provider 接入 + AI 設定區重寫
+### 15-A-1：DeepSeek Provider 接入 + AI 設定區重寫
 
 #### 目標
 
@@ -4929,7 +4929,7 @@ Phase 15 拆 5 個子階段：
 | Provider adapter | **複用 `OpenAIAdapter` + 子類覆寫 base URL**。`OpenAIAdapter.__init__` 抽出 `base_url` 參數，預設 `https://api.openai.com/v1/chat/completions`；新增 `DeepSeekAdapter(OpenAIAdapter)`，覆寫 base URL 為 `https://api.deepseek.com/chat/completions`（**對齊官方文件，無 `/v1` 前綴**），~10 行 |
 | Dashboard JSON mode | **加 `response_format={'type':'json_object'}` + 對 DeepSeek 預設 `thinking: {"type":"disabled"}`**。DeepSeek V4 系列預設啟用 thinking mode 會增加延遲與成本；dashboard 要的是穩定 JSON 不需 reasoning，明確關閉 |
 | 預設模型 | **`deepseek-v4-flash`**（便宜、回應快、context 1M / max output 384K） |
-| Secrets schema | `.env` 增加 `DEEPSEEK_API_KEY`；DeepSeek key 寫入路徑沿用既有 `PUT /api/config/secrets`（接受任意 provider dict），**不**在 15-A 改 `SecretsValidateRequest`（屬 15-A-2 範圍） |
+| Secrets schema | `.env` 增加 `DEEPSEEK_API_KEY`；DeepSeek key 寫入路徑沿用既有 `PUT /api/config/secrets`（接受任意 provider dict），**不**在 15-A-1 改 `SecretsValidateRequest`（屬 15-A-2 範圍） |
 | AI 設定區 UI | **`AiToggleSection` 重寫**：移除「永久停用」、enable toggle 可操作、新增 Provider 下拉（anthropic / openai / gemini / deepseek 4 選 1）、新增 Model input（free text，預設依 Provider 對應 `DEFAULT_MODELS`），儲存走既有 `PUT /api/config` whitelist（`ai.enabled` / `ai.provider` / `ai.model` 三鍵） |
 | DeepSeek API key 欄位 | **`SecretsSection.PROVIDERS` 陣列加一行** `{ key: "deepseek", label: "DeepSeek API Key" }`；其餘 5 個欄位（openai / anthropic / gemini / finmind / google）、儲存按鈕、status 顯示既有不動 |
 
@@ -4937,13 +4937,15 @@ Phase 15 拆 5 個子階段：
 
 | # | 位置 | 動作 |
 |:---|:---|:---|
-| 1 | `src/ai/advisor.py` | `OpenAIAdapter.__init__` 加 `base_url: str \| None = None`（預設值在 class 變數 `DEFAULT_BASE_URL = "https://api.openai.com/v1/chat/completions"`）；`complete` 內 `requests.post(self._base_url, ...)`；新增 `DeepSeekAdapter(OpenAIAdapter)` 覆寫 `DEFAULT_BASE_URL = "https://api.deepseek.com/chat/completions"`；`PROVIDER_ADAPTERS` 加 `"deepseek": DeepSeekAdapter`；`DEFAULT_MODELS` 加 `"deepseek": "deepseek-v4-flash"`；`_resolve_api_key` 加 deepseek 分支；`generate_stock_dashboard_analysis` 在呼叫 `provider_adapter.complete` 時，若 provider 為 `openai` / `deepseek` 透傳 `response_format={'type':'json_object'}`；若 provider 為 `deepseek` 額外傳 `thinking={"type":"disabled"}` |
+| 1 | `src/ai/advisor.py` | `OpenAIAdapter.__init__` 加 `base_url: str \| None = None`（預設值在 class 變數 `DEFAULT_BASE_URL = "https://api.openai.com/v1/chat/completions"`）；`complete` 內 `requests.post(self._base_url, ...)`；新增 `DeepSeekAdapter(OpenAIAdapter)` 覆寫 `DEFAULT_BASE_URL = "https://api.deepseek.com/chat/completions"`；`PROVIDER_ADAPTERS` 加 `"deepseek": DeepSeekAdapter`；`DEFAULT_MODELS` 加 `"deepseek": "deepseek-v4-flash"`；`_resolve_api_key` 加 deepseek 分支；`generate_stock_dashboard_analysis` 在呼叫 `provider_adapter.complete` 時，若 provider 為 `openai` / `deepseek` 透傳 `response_format={'type':'json_object'}`；若 provider 為 `deepseek` 額外傳 `thinking={"type":"disabled"}`。**`BaseProviderAdapter.complete()` abstract signature 與 `AnthropicAdapter.complete` / `GeminiAdapter.complete` 都必須加 `response_format: dict \| None = None, thinking: dict \| None = None` 兩個可選 kwarg**（Anthropic / Gemini 接受但忽略，或於 base 加 `**_extra` 吞掉未知 kwarg；目的是讓 `generate_stock_dashboard_analysis` 統一呼叫，不需 if/elif provider 寫 if 不傳） |
 | 2 | `src/core/config.py` | `get_config()` 內 `config["secrets"]` 組裝段加一行 `"deepseek_api_key": os.getenv("DEEPSEEK_API_KEY", "")`。**這是 P0 必改**：缺此行 `_resolve_api_key("deepseek", secrets)` 永遠回空字串，使用者可成功寫入 `.env` 但 AIAdvisor 仍報「Missing API key for provider 'deepseek'.」 |
 | 3 | `src/services/config_service.py` | `_SECRET_ENV_KEYS` 加 `"DEEPSEEK_API_KEY": "deepseek"`；`CONFIG_UPDATE_WHITELIST` 確認包含 `ai`（既有已有，無需改） |
 | 4 | `api/routers/config.py` | **無變動**（DeepSeek key 走既有 `PUT /api/config/secrets` 通用 dict 路徑；`SecretsValidateRequest` 留到 15-A-2 才動） |
-| 5 | `web/src/components/settings/ai-toggle-section.tsx` | **重寫**：移除 disabled switch 與「永久停用」tooltip；新增 enable toggle、Provider 下拉、Model input；透過 `useConfig` / `updateConfig` hook（沿用既有）寫 `PUT /api/config` patch（`{ai: {enabled, provider, model}}`） |
-| 6 | `web/src/components/settings/secrets-section.tsx` | `PROVIDERS` 陣列加一行 `{ key: "deepseek", label: "DeepSeek API Key" }`（位置建議放在 openai 後、anthropic 前，或統一排序） |
-| 7 | `pyproject.toml` / `web/package.json` / `api/main.py` | version → `0.6.0`（**三處同步**） |
+| 5 | `web/src/hooks/use-config.ts` | **新增 `useConfig()` / `updateConfig()`**（既有 hook file 只有 `useSecretsStatus` / `useStrategyPresets` 等，無 config hook）。`useConfig()` 用 SWR GET `/api/config`、key `CONFIG_SWR_KEY = "/api/config"`；`updateConfig(patch)` PUT `/api/config` 後呼叫 `mutate(CONFIG_SWR_KEY)`。回傳型別用既有 `AppConfig` |
+| 6 | `web/src/types/config.ts` | `SecretsStatus` interface 加 `deepseek: boolean`（與 `SecretsSection.PROVIDERS` 對齊；缺此欄位 tsc strict 會擋） |
+| 7 | `web/src/components/settings/ai-toggle-section.tsx` | **重寫**：移除 disabled switch 與「永久停用」tooltip；新增 enable toggle、Provider 下拉、Model input；透過新增的 `useConfig` / `updateConfig` hook 寫 `PUT /api/config` patch（`{ai: {enabled, provider, model}}`）；**必須以 `useEffect` 在 SWR config 載入後同步 local state，並用 dirty flag 避免使用者編輯中被覆寫** |
+| 8 | `web/src/components/settings/secrets-section.tsx` | `PROVIDERS` 陣列加一行 `{ key: "deepseek", label: "DeepSeek API Key" }`（位置建議放在 openai 後、anthropic 前，或統一排序） |
+| 9 | `pyproject.toml` / `web/package.json` / `api/main.py` | version → `0.6.0`（**三處同步**） |
 
 #### 不動的部分
 
@@ -4972,12 +4974,12 @@ Phase 15 拆 5 個子階段：
 - 切回 Anthropic / OpenAI / Gemini 跑同檔 regression 仍正常。
 - pytest `tests/test_advisor.py` 加 ≥4 條 DeepSeek case 全綠；vitest `ai-toggle-section.test.tsx` 改寫後通過。
 
-#### Phase 15-A 不做
+#### Phase 15-A-1 不做
 
 | 不做 | 理由 |
 |:---|:---|
 | DeepSeek API key 驗證（打 `/user/balance` / `/models`） | 屬 15-A-2 重構範圍，需與其他 4 個 provider 一起重構 contract |
-| `SecretsValidateRequest` 加 deepseek 欄位 | 屬 15-A-2；15-A 沿用 `PUT /api/config/secrets` 寫入 |
+| `SecretsValidateRequest` 加 deepseek 欄位 | 屬 15-A-2；15-A-1 沿用 `PUT /api/config/secrets` 寫入 |
 | 改 Token Setup Dialog | 屬 15-A-2（contract 同步） |
 | Streaming（`stream_complete`） | 屬 15-B；dashboard 分析不需 streaming |
 | Tool use 強化 | 屬 15-D |
@@ -4985,21 +4987,24 @@ Phase 15 拆 5 個子階段：
 | 多 region / 多 endpoint 切換 | DeepSeek 文件只有單一 endpoint |
 | Model 下拉預載「常用模型清單」 | Model input 為 free text；模型清單變動快，使用者手動填 |
 
-#### Phase 15-A 風險
+#### Phase 15-A-1 風險
 
 | 風險 | 影響 | 緩解 |
 |:---|:---|:---|
 | `OpenAIAdapter` 抽 `base_url` 破壞既有 OpenAI 測試 | OpenAI provider 跑壞 | 預設值保留 OpenAI URL，既有測試不需改 mock |
 | `response_format` / `thinking` 對 OpenAI mock 測試的影響 | 既有 dashboard 測試斷言可能變 | 兩個都是可選 kwarg，舊 OpenAI mock 不受影響；只有 dashboard 路徑且 provider 條件成立才傳 |
-| DeepSeek JSON mode「機率回空 content」 | 偶發 `AICallError` | dashboard `_parse_dashboard_json` 已有兜底，回 None 後丟錯；不在 15-A 加 retry |
+| DeepSeek JSON mode「機率回空 content」 | 偶發 `AICallError` | dashboard `_parse_dashboard_json` 已有兜底，回 None 後丟錯；不在 15-A-1 加 retry |
 | `AiToggleSection` 重寫破壞既有 vitest「AI toggle disabled / tooltip」測試 | 既有 P10-G-2 測試壞 | 一併在本 sub 改寫對應測試（驗 enable / provider / model 可操作） |
-| 使用者打開 AI toggle 但 `/api/ai/chat` 仍 503（15-B 未做） | Dashboard AI 分析可運作，但 chat 仍不能用 | 規格層接受：15-A 範圍只到 dashboard 路徑；chat 端點 503 + sidebar「後續開放」徽章保留到 15-C 才移除 |
+| 使用者打開 AI toggle 但 `/api/ai/chat` 仍 503（15-B 未做） | Dashboard AI 分析可運作，但 chat 仍不能用 | 規格層接受：15-A-1 範圍只到 dashboard 路徑；chat 端點 503 + sidebar「後續開放」徽章保留到 15-C 才移除 |
 
-### 15-A-2：secrets/validate 重構為 per-provider results
+### 15-A-2：secrets/validate 重構為 per-provider results + 移除 Google API Key alias
 
 #### 目標
 
-把 `/api/config/secrets/validate` 從 FinMind-only 的 all-or-nothing contract，重構為 **FinMind 必填 + 其他 provider 選填 validate-if-present** 的 results map，支援部分成功與 per-provider 結果回傳。沿用 P12 onboarding 的 FinMind 強制安全模型，同時讓設定頁可同時驗多個 AI provider key 並逐欄顯示成功/失敗訊息。
+兩件事併同處理：
+
+1. 把 `/api/config/secrets/validate` 從 FinMind-only 的 all-or-nothing contract，重構為 **FinMind 必填 + 其他 provider 選填 validate-if-present** 的 results map，支援部分成功與 per-provider 結果回傳。沿用 P12 onboarding 的 FinMind 強制安全模型，同時讓設定頁可同時驗多個 AI provider key 並逐欄顯示成功/失敗訊息。
+2. **移除既有 `GOOGLE_API_KEY` / `google_api_key` / Google API Key UI 欄位的 alias 漂移**。現況 [src/ai/advisor.py:1074-1078](src/ai/advisor.py:1074) Gemini provider 同時讀 `gemini_api_key` 與 fallback `google_api_key`，[secrets-section.tsx:7-12](web/src/components/settings/secrets-section.tsx:7) UI 同時顯示「Gemini API Key」與「Google API Key」兩欄。一個 provider 兩個 UI 欄位是設計漂移；15-A-2 整理 secrets schema 時順手收掉。**遷移策略**：既有 `.env` 內 `GOOGLE_API_KEY` 保留（不主動刪），但 15-A-2 後系統不讀、不寫、不顯示；使用者要用 Gemini 請在設定頁填 Gemini API Key 寫入 `GEMINI_API_KEY`。
 
 #### 鎖定路徑
 
@@ -5011,7 +5016,7 @@ Phase 15 拆 5 個子階段：
 | 部分成功寫入規則 | `ok` 與 `no_quota` 寫入 `.env`；`invalid_key` 與 `unreachable` 不寫入；`saved: [...]` 列出實際寫入的 provider；前提是 FinMind 通過 |
 | HTTP status code | 一律 200（results 內各別 status 表達結果） |
 | DeepSeek `no_quota` 處理 | **只認 402**（DeepSeek 官方 Error Codes 明示 402 = Insufficient Balance）；移除原規格的 405 推測 |
-| 各 provider 驗證端點 | DeepSeek `GET https://api.deepseek.com/user/balance`（**對齊官方文件、無 `/v1`**）；Anthropic `POST /v1/messages` 1-token ping；OpenAI `GET /v1/models`；Gemini `GET /v1beta/models?key=...`；FinMind 沿用既有 `/v4/login` |
+| 各 provider 驗證端點 | DeepSeek `GET https://api.deepseek.com/user/balance`（**對齊官方文件、無 `/v1`**）；Anthropic `POST /v1/messages` 1-token ping；OpenAI `GET /v1/models`；Gemini `GET /v1beta/models?key=...`；**FinMind 沿用既有 `validate_finmind_token()`**（透過 `https://api.finmindtrade.com/api/v4/data` 查 `dataset="TaiwanStockInfo"` 輕量資料驗證 token；P15-A-2 只把輸出包裝成 `ValidationResult`，不改 endpoint） |
 
 #### Contract 範例
 
@@ -5070,10 +5075,16 @@ POST /api/config/secrets/validate
 | 1 | `src/services/config_service.py` | 新增 `ValidationResult` dataclass（`status: str, message: str`）；新增 `validate_deepseek_token`（打 `https://api.deepseek.com/user/balance`、只認 402 為 no_quota）/ `validate_anthropic_token` / `validate_openai_token` / `validate_gemini_token`；既有 `validate_finmind_token` 包成 `validate_finmind_token_wrapped` 回 `ValidationResult` |
 | 2 | `api/routers/config.py` | `SecretsValidateRequest` 加 `deepseek: str \| None = None`；`post_secrets_validate` 重寫：(a) 先驗 `request.finmind`，若為空 / None / 驗證失敗 → 回 `{results: {finmind: ...}, saved: []}`、HTTP 200、整包不寫入；(b) FinMind 通過後迭代其他 4 個 provider 欄位，有非空才驗證；(c) FinMind 通過時 ok / no_quota 的 provider 與 finmind 一起寫入 `.env` + `os.environ`；(d) 回 `{results, saved}` |
 | 3 | `web/src/components/dashboard/token-setup-dialog.tsx` | parse 新 response shape（讀 `data.results.finmind.status` 與 `message`）；onboarding 場景仍只送 finmind |
-| 4 | `web/src/components/settings/secrets-section.tsx` | 「儲存」按鈕改為「驗證並儲存」走 POST `/api/config/secrets/validate`；收到 results 後 per-provider 顯示 inline 狀態圖示與訊息（綠勾 ok / 黃 warning no_quota / 紅叉 invalid_key 與 unreachable）；toast 同步顯示「N 項已儲存、M 項失敗」摘要；FinMind 失敗時 toast 紅字提示「FinMind 為必填，整包未儲存」 |
-| 5 | `tests/test_services/test_config_svc.py` | 4 個新 validator 各 ~3 case（ok / invalid / unreachable）；DeepSeek 額外 1 case（402 → no_quota）；FinMind wrapper ~3 case；共 ~16 條 |
-| 6 | `tests/test_api/test_config_api.py` | `secrets/validate` 新 contract case ~7 條（FinMind 必填空白回 200 + finmind invalid_key 且 saved=[] / FinMind 失敗時其他 provider 不寫入 / 全 ok / 部分成功 / 全失敗 / DeepSeek no_quota 寫入 / onboarding 只送 finmind regression） |
-| 7 | `web/src/tests/components/dashboard/token-setup-dialog.test.tsx` | 既有 16 case 配合新 response shape 更新；新增 1 條測「token-setup-dialog 仍用 onboarding 流程不送其他 provider」 |
+| 4 | `web/src/components/settings/secrets-section.tsx` | 「儲存」按鈕改為「驗證並儲存」走 POST `/api/config/secrets/validate`；收到 results 後 per-provider 顯示 inline 狀態圖示與訊息（綠勾 ok / 黃 warning no_quota / 紅叉 invalid_key 與 unreachable）；toast 同步顯示「N 項已儲存、M 項失敗」摘要；FinMind 失敗時 toast 紅字提示「FinMind 為必填，整包未儲存」；**`PROVIDERS` 陣列移除 `{ key: "google", label: "Google API Key" }`**（與 Gemini 重複） |
+| 5 | `web/src/types/config.ts` | `SecretsStatus` interface **移除 `google: boolean`**（保留 15-A-1 已加的 `deepseek`） |
+| 6 | `src/services/config_service.py` | `_SECRET_ENV_KEYS` **移除 `"GOOGLE_API_KEY": "google"`**；docstring / example 內 google 字眼一併清掉 |
+| 7 | `src/core/config.py` | `get_config()` 內 `config["secrets"]` 組裝段**移除** `"google_api_key": os.getenv("GOOGLE_API_KEY", "")`；保留 `gemini_api_key` |
+| 8 | `src/ai/advisor.py` | `_resolve_api_key("gemini", secrets)` **移除 fallback 讀 `google_api_key`**，只讀 `secrets["gemini_api_key"]` |
+| 9 | `tests/test_services/test_config_svc.py` | 4 個新 validator 各 ~3 case（ok / invalid / unreachable）；DeepSeek 額外 1 case（402 → no_quota）；FinMind wrapper ~3 case；共 ~16 條；**+ 1 條 regression**：`.env` 只有 `GOOGLE_API_KEY` 時 `get_secrets_status()` 內 gemini=false（不再 fallback） |
+| 10 | `tests/test_api/test_config_api.py` | `secrets/validate` 新 contract case ~7 條（FinMind 必填空白回 200 + finmind invalid_key 且 saved=[] / FinMind 失敗時其他 provider 不寫入 / 全 ok / 部分成功 / 全失敗 / DeepSeek no_quota 寫入 / onboarding 只送 finmind regression） |
+| 11 | `tests/test_advisor.py` | 加 1 條 regression：`AIAdvisor(provider="gemini")` 在 `.env` 只有 `GOOGLE_API_KEY` 沒 `GEMINI_API_KEY` 時 `_provider_error` 應為 "Missing API key for provider 'gemini'."（驗證 fallback 已移除） |
+| 12 | `web/src/tests/components/dashboard/token-setup-dialog.test.tsx` | 既有 16 case 配合新 response shape 更新；新增 1 條測「token-setup-dialog 仍用 onboarding 流程不送其他 provider」 |
+| 13 | `web/src/tests/components/settings/secrets-section.test.tsx` | 加 1 條 regression：render 後**找不到** `label="Google API Key"` 欄位（驗證移除完成） |
 
 #### 不動的部分
 
@@ -5102,7 +5113,7 @@ POST /api/config/secrets/validate
 |:---|:---|:---|
 | 改 contract 撞到 token-setup-dialog 既有測試 | onboarding 流程壞 | 一併在本 sub 改 dialog + 16 個測試 |
 | Anthropic ping 會扣費（雖只 1 token） | 使用者驗證一次扣一次 | 文件警語提示；驗證流程使用者自願觸發 |
-| DeepSeek `/v1/user/balance` 端點規格變動 | 驗證壞 | fallback：401 → invalid_key、其他 4xx → 視為 ok（key 有效但其他問題） |
+| DeepSeek `/user/balance` 端點規格變動 | 驗證壞 | 嚴格 fallback：`200` → `ok`；`401` → `invalid_key`；`402` → `no_quota`（可寫入）；`429` / `5xx` / network timeout → `unreachable`；**其他 `4xx`（如 400 / 422）→ `invalid_key`，不可寫入**（DeepSeek 官方 Error Codes 明示 400/422 是 request/parameter error，不代表 key ok） |
 
 ### 15-B：AI 問答後端 streaming（純對話）
 
@@ -5126,8 +5137,9 @@ POST /api/config/secrets/validate
 | # | 位置 | 動作 |
 |:---|:---|:---|
 | 1 | `src/ai/advisor.py` | 新增 `AIAdvisor.stream_chat(messages) -> AsyncIterator[dict]`（yield `{"event": "token", "text": "..."}` 或 `{"event": "error", "message": "..."}`）；4 adapter 各加 `async def stream_complete(self, *, model, system_prompt, messages) -> AsyncIterator[str]`（yield text chunk）；DeepSeekAdapter `stream_complete` 內 payload 加 `"thinking": {"type": "disabled"}` |
-| 2 | `api/routers/ai.py` | `/api/ai/status` 改為依 `get_config().ai.enabled` 與 `get_secrets_status()` 中對應 provider 是否 configured 動態回傳；`/api/ai/chat` 改 async，回 `EventSourceResponse(generate())`；`generate` 內 `async for chunk in advisor.stream_chat(request.messages)` → yield `{"event": ..., "data": json.dumps(...)}`；錯誤 try/except 包成 `error` event 而非 HTTPException；`ChatRequest.messages` 改用 `list[ChatMessage]`（Pydantic 嚴格 schema） |
-| 3 | `pyproject.toml` | **新增 `sse-starlette>=2.0`**；確認 `httpx`（async streaming 用）已在 |
+| 2 | `api/routers/ai.py` | `/api/ai/status` 改為依 `get_config().ai.enabled` 與 `get_secrets_status()` 中對應 provider 是否 configured 動態回傳；`/api/ai/chat` 改 async，回 `EventSourceResponse(generate())`；`generate` 內 `async for chunk in advisor.stream_chat(request.messages)` → yield `{"event": ..., "data": json.dumps(...)}`；錯誤 try/except 包成 `error` event 而非 HTTPException；`ChatRequest.messages` 改用 `list[ChatMessage]`（Pydantic 嚴格 schema）；advisor 以 FastAPI `Depends(get_advisor)` 注入（見下） |
+| 3 | `api/deps.py` | **新增 `get_advisor()` dependency**：`def get_advisor() -> AIAdvisor: return AIAdvisor()`。既有檔案只有 `get_manager()`；此 dependency 是 15-B/15-D 測試 mock advisor 的注入 seam，與其他 router 一致使用 `Depends(...)` pattern |
+| 4 | `pyproject.toml` | **新增 `sse-starlette>=2.0`**；確認 `httpx`（async streaming 用）已在 |
 
 #### Adapter streaming 實作摘要
 
@@ -5194,7 +5206,7 @@ POST /api/config/secrets/validate
 | # | 位置 | 動作 |
 |:---|:---|:---|
 | 1 | `web/src/hooks/use-mock-chat.ts` | 刪除 |
-| 2 | `web/src/hooks/use-ai-chat.ts` | 新增。`useAIChat()` 回 `{ messages, send, abort, streaming, error }`；`send(text)` 內 `fetch('/api/ai/chat', { method: 'POST', body: JSON.stringify({messages}), signal: ctrl.signal })` → reader.read() 迴圈解 SSE `data:` 行 → 區分 `token` / `done` / `error` event |
+| 2 | `web/src/hooks/use-ai-chat.ts` | 新增。`useAIChat()` 回 `{ messages, send, abort, streaming }`（**無 top-level `error`**；錯誤透過 `event: error` 寫入最後一則 assistant message 的 `error` 欄位以 inline error bubble 顯示）；`send(text)` 內 `fetch('/api/ai/chat', { method: 'POST', body: JSON.stringify({messages}), signal: ctrl.signal })` → reader.read() 迴圈解 SSE `data:` 行 → 區分 `token` / `done` / `error` event；SSE parser 必須 normalize `\r\n` → `\n` 並支援多行 `data:`（MDN spec） |
 | 3 | `web/src/components/ai/chat-page-client.tsx` | 換 hook；加「取消」按鈕（streaming=true 時顯示）；error event 顯示為 inline error bubble |
 | 4 | `web/src/components/sidebar.tsx` | 移除「AI 問答」項目的「後續開放」灰色徽章 |
 | 5 | `web/src/components/ai/disclaimer-gate.tsx` | 不動 |
@@ -5301,12 +5313,14 @@ chat 模式可呼叫 `get_price_data` / `calculate_indicators` / `get_support_re
 ### 15 共用注意
 
 - 10-F-2 的設計內容已搬遷至 15-B / 15-C / 15-D；`開發設計方針.md` 原 10-F-2 區塊保留為「已搬遷至 Phase 15」標記，不留實作細節以避免雙份。
-- **15-A / 15-A-2 / 15-B / 15-C / 15-D 不改 `PROJECT_BRIEF.md`；由 verifier 在每個 sub 完成驗證後補上對應 Phase 15 進度與行範圍索引**（避免新 session 只讀 PROJECT_BRIEF 找不到 P15）。
-- 15-A 與 15-B 不改前端 chat 區塊；15-C 才動。
+- **15-A-1 / 15-A-2 / 15-B / 15-C / 15-D 不改 `PROJECT_BRIEF.md`；由 verifier 在每個 sub 完成驗證後補上對應 Phase 15 進度與行範圍索引**（避免新 session 只讀 PROJECT_BRIEF 找不到 P15）。
+- 15-A-1 與 15-B 不改前端 chat 區塊；15-C 才動。
 - **「驗證後已知問題.md」implementer 不直接動**；由 verifier 在 15-D 完成驗證後寫入「3 provider streaming + tool calls 未實機驗證」條目。
 - DeepSeek endpoint URL 對齊官方文件：base URL `https://api.deepseek.com/chat/completions`、balance 端點 `https://api.deepseek.com/user/balance`，**無 `/v1` 前綴**。
 - DeepSeek 對 dashboard 與 chat 預設傳 `thinking: {"type":"disabled"}`（V4 系列預設啟用會增加延遲與成本，本專案不需 reasoning trace）。
 - Version bump 一律三處同步：`pyproject.toml` / `web/package.json` / `api/main.py`。
+- **【Phase 15 設計約束】四個 AI provider 功能必須等價**：Anthropic / OpenAI / Gemini / DeepSeek 在 FactorHammer 內必須都能跑 (a) dashboard JSON 分析、(b) AI chat streaming、(c) chat tool use、(d) provider key validate-if-present。差異只允許在 adapter payload / SSE 解析 / tool call accumulator 等實作細節，**不得在產品功能面缺項**。15-D 手動驗收只跑 DeepSeek 是「驗證範圍」收斂，不是「功能差異」；其他 3 provider 程式碼仍需完成 4 adapter 對等實作。
+- **【已知設計債】adapter 介面 provider-specific payload 漂移**：目前 `generate_stock_dashboard_analysis` 在上層判斷 `if self.provider in {"openai", "deepseek"}` 決定要不要傳 `response_format` / `thinking` kwargs，把 OpenAI/DeepSeek 專用欄位散落在 dashboard service 層。codex 四審指出此設計違反「provider-specific payload 應由各 adapter 內部消化」原則。Phase 15 採務實做法（上層 kwargs + 非目標 adapter 收 `**kwargs` 忽略），維持 4 provider 功能等價但不重構介面。**未來 ticket**：把 `complete()` 介面改為語意性參數（如 `output_format="json"` / `thinking_mode="disabled"`），由各 adapter 自行轉換為自家 payload；Anthropic / Gemini 各自評估是否走原生 JSON mode 或 prompt 約束 + schema。本債務不卡 Phase 15 收尾。
 
 ---
 
