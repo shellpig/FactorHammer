@@ -3,7 +3,6 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
-import { ApiClientError, apiPost } from "@/lib/api-client";
 
 type ValidateRequestBody = {
   finmind: string;
@@ -42,22 +41,45 @@ export function TokenSetupDialog({
     if (gemini.trim()) body.gemini = gemini.trim();
 
     try {
-      await apiPost<{ updated: boolean }>("/api/config/secrets/validate", body);
-      await onSaved();
-    } catch (error) {
-      if (error instanceof ApiClientError) {
-        if (error.code === "FINMIND_REQUIRED") {
-          setErrorMsg("FinMind Token 為必填");
-        } else if (error.code === "FINMIND_TOKEN_INVALID") {
-          setErrorMsg("Token 無效，請確認從 FinMind 使用者資訊頁複製正確。");
-        } else if (error.code === "FINMIND_UNREACHABLE") {
-          setErrorMsg("無法連線至 FinMind 伺服器，請檢查網路後重試。");
-        } else {
-          setErrorMsg(error.message);
+      // 15-A-2：新 response shape — HTTP 200 + data.results.finmind.status
+      const resp = await fetch("/api/config/secrets/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        // 5xx (ENV_WRITE_FAILED) or unexpected error
+        let msg = "儲存失敗，請稍後重試。";
+        try {
+          const errBody = await resp.json();
+          msg = errBody?.detail?.error?.message ?? msg;
+        } catch {
+          // ignore parse error
         }
-      } else {
-        setErrorMsg("儲存失敗，請稍後重試。");
+        setErrorMsg(msg);
+        return;
       }
+
+      const data = await resp.json();
+      const finmindResult = data?.data?.results?.finmind;
+
+      if (!finmindResult) {
+        // malformed response — guard per spec
+        setErrorMsg("驗證服務回應缺少 FinMind 結果，請稍後再試");
+        return;
+      }
+
+      if (finmindResult.status === "ok" || finmindResult.status === "no_quota") {
+        // Success — finmind validated and written
+        await onSaved();
+      } else {
+        // FinMind validation failed (invalid_key / unreachable)
+        setErrorMsg(finmindResult.message ?? "Token 驗證失敗，請確認後重試。");
+      }
+
+    } catch {
+      setErrorMsg("儲存失敗，請稍後重試。");
     } finally {
       setSaving(false);
     }

@@ -7,8 +7,9 @@ No Streamlit calls are made here.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import requests
 import yaml
@@ -25,12 +26,12 @@ CONFIG_UPDATE_WHITELIST: frozenset[str] = frozenset(
 )
 
 # Secret key names in .env (env var name -> config path label)
+# 15-A-2：移除 GOOGLE_API_KEY（Google API Key 欄位為 legacy，後續不讀不寫不顯示）
 _SECRET_ENV_KEYS: dict[str, str] = {
     "OPENAI_API_KEY": "openai",
     "ANTHROPIC_API_KEY": "anthropic",
     "GEMINI_API_KEY": "gemini",
     "FINMIND_TOKEN": "finmind",
-    "GOOGLE_API_KEY": "google",
     "DEEPSEEK_API_KEY": "deepseek",
 }
 
@@ -43,6 +44,25 @@ class FinMindTokenInvalid(ValueError):
 
 class FinMindUnreachable(ConnectionError):
     """Raised when FinMind validation endpoint is unreachable."""
+
+
+# ---------------------------------------------------------------------------
+# 15-A-2：Per-provider validation types and validators
+# ---------------------------------------------------------------------------
+
+ValidationStatus = Literal["ok", "invalid_key", "no_quota", "unreachable", "skipped"]
+
+
+@dataclass(slots=True)
+class ValidationResult:
+    """Result of a per-provider API key validation."""
+
+    status: ValidationStatus
+    message: str
+
+    def is_savable(self) -> bool:
+        """Return True if the key should be written to .env (ok or no_quota)."""
+        return self.status in {"ok", "no_quota"}
 
 
 # ---------------------------------------------------------------------------
@@ -113,15 +133,18 @@ def update_config(patch: dict[str, Any]) -> None:
 
 
 def update_secrets(keys: dict[str, str]) -> None:
-    """Write-only: persist API keys to .env file.
+    """Write-only: persist API keys to .env file and sync current process env.
 
     Values are written directly; existing unrelated keys are preserved.
     The function never returns key values.
 
+    Also syncs ``os.environ`` so the running process immediately reflects the
+    new values without requiring a restart (15-A-2: single write point).
+
     Args:
         keys: Mapping of provider name to API key value.
               Recognised provider names: ``openai``, ``anthropic``,
-              ``gemini``, ``finmind``, ``google``.
+              ``gemini``, ``finmind``, ``deepseek``.
     """
     # Build reverse mapping: provider label -> env var name
     label_to_env = {v: k for k, v in _SECRET_ENV_KEYS.items()}
@@ -137,6 +160,13 @@ def update_secrets(keys: dict[str, str]) -> None:
         env_updates[env_var] = str(value).strip()
 
     _write_env(get_project_root() / ".env", env_updates)
+
+    # Sync os.environ so the current process sees the new values immediately.
+    # This is the single authoritative write point; callers must not set
+    # os.environ manually after calling update_secrets().
+    for env_var, value in env_updates.items():
+        os.environ[env_var] = value
+
     clear_config_cache()
 
 
@@ -214,10 +244,142 @@ def validate_finmind_token(token: str) -> None:
     raise FinMindTokenInvalid(str(body.get("msg") or "Token rejected by FinMind."))
 
 
+def validate_finmind_token_wrapped(token: str) -> ValidationResult:
+    """Wrap validate_finmind_token() as a ValidationResult for 15-A-2 contract.
+
+    Empty/blank token → skipped (router handles the mandatory-FinMind early return
+    and maps blank to invalid_key in the response; wrapper itself stays neutral).
+    """
+    if not token.strip():
+        return ValidationResult("skipped", "未提供 FinMind token")
+    try:
+        validate_finmind_token(token.strip())
+    except FinMindTokenInvalid:
+        return ValidationResult("invalid_key", "FinMind token 無效")
+    except FinMindUnreachable:
+        return ValidationResult("unreachable", "無法連線至 FinMind 伺服器")
+    return ValidationResult("ok", "FinMind token 驗證成功")
+
+
+def validate_deepseek_token(token: str) -> ValidationResult:
+    """Validate DeepSeek API key via GET /user/balance (no /v1 prefix).
+
+    Status mapping:
+        200 + is_available=True   -> ok
+        200 + is_available=False  -> no_quota
+        200 + JSON parse error    -> unreachable (conservative; don't write)
+        200 + is_available absent -> unreachable (conservative; don't write)
+        401                       -> invalid_key
+        402                       -> no_quota (Insufficient Balance per official docs)
+        other 4xx                 -> invalid_key
+        5xx / network             -> unreachable
+    """
+    if not token.strip():
+        return ValidationResult("skipped", "未提供 DeepSeek key")
+    try:
+        resp = requests.get(
+            "https://api.deepseek.com/user/balance",
+            headers={"Authorization": f"Bearer {token.strip()}"},
+            timeout=10.0,
+        )
+    except requests.RequestException as exc:
+        return ValidationResult("unreachable", f"無法連線至 DeepSeek：{exc}")
+
+    if resp.status_code == 401:
+        return ValidationResult("invalid_key", "DeepSeek 拒絕此 key（401）")
+    if resp.status_code == 402:
+        # DeepSeek 官方 Error Codes 明示 402 = Insufficient Balance；key 有效可寫入
+        return ValidationResult("no_quota", "API key 有效但 DeepSeek 帳號餘額不足")
+    if resp.status_code == 200:
+        try:
+            data = resp.json()
+        except ValueError:
+            return ValidationResult("unreachable", "DeepSeek balance response 無法解析")
+        # balance API 缺 is_available 時保守視為不可判斷，避免誤把壞 key 寫入。
+        is_available = data.get("is_available")
+        if is_available is True:
+            return ValidationResult("ok", "DeepSeek key 驗證成功")
+        if is_available is False:
+            return ValidationResult("no_quota", "API key 有效但 DeepSeek 帳號餘額不足")
+        return ValidationResult("unreachable", "DeepSeek balance response 缺少 is_available")
+    # 400 / 422 / other 4xx → invalid_key（不代表 key ok）
+    return ValidationResult("invalid_key", f"DeepSeek 回 {resp.status_code}（視為無效）")
+
+
+def validate_openai_token(token: str) -> ValidationResult:
+    """Validate OpenAI API key via GET /v1/models."""
+    if not token.strip():
+        return ValidationResult("skipped", "未提供 OpenAI key")
+    try:
+        resp = requests.get(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {token.strip()}"},
+            timeout=10.0,
+        )
+    except requests.RequestException as exc:
+        return ValidationResult("unreachable", f"無法連線至 OpenAI：{exc}")
+
+    if resp.status_code == 200:
+        return ValidationResult("ok", "OpenAI key 驗證成功")
+    if resp.status_code == 401:
+        return ValidationResult("invalid_key", "OpenAI 拒絕此 key（401）")
+    return ValidationResult("invalid_key", f"OpenAI 回 {resp.status_code}（視為無效）")
+
+
+def validate_anthropic_token(token: str) -> ValidationResult:
+    """Validate Anthropic API key via 1-token POST /v1/messages ping."""
+    if not token.strip():
+        return ValidationResult("skipped", "未提供 Anthropic key")
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": token.strip(),
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "."}],
+            },
+            timeout=10.0,
+        )
+    except requests.RequestException as exc:
+        return ValidationResult("unreachable", f"無法連線至 Anthropic：{exc}")
+
+    if resp.status_code == 200:
+        return ValidationResult("ok", "Anthropic key 驗證成功（已扣 1 token）")
+    if resp.status_code == 401:
+        return ValidationResult("invalid_key", "Anthropic 拒絕此 key（401）")
+    return ValidationResult("invalid_key", f"Anthropic 回 {resp.status_code}（視為無效）")
+
+
+def validate_gemini_token(token: str) -> ValidationResult:
+    """Validate Gemini API key via GET /v1beta/models."""
+    if not token.strip():
+        return ValidationResult("skipped", "未提供 Gemini key")
+    try:
+        resp = requests.get(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            params={"key": token.strip()},
+            timeout=10.0,
+        )
+    except requests.RequestException as exc:
+        return ValidationResult("unreachable", f"無法連線至 Gemini：{exc}")
+
+    if resp.status_code == 200:
+        return ValidationResult("ok", "Gemini key 驗證成功")
+    if resp.status_code in {400, 401, 403}:
+        return ValidationResult("invalid_key", "Gemini 拒絕此 key")
+    return ValidationResult("invalid_key", f"Gemini 回 {resp.status_code}（視為無效）")
+
+
 def get_strategy_presets_config() -> list[dict[str, Any]]:
     """Return the current list of strategy presets from config."""
     from src.core.strategy_config import get_strategy_presets
     return get_strategy_presets(get_config())
+
 
 
 def upsert_strategy_preset(preset: dict[str, Any]) -> None:

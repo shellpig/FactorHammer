@@ -68,7 +68,8 @@ def _has_provider_api_key(provider: str, secrets: dict[str, Any]) -> bool:
     if provider == "openai":
         return bool(str(secrets.get("openai_api_key", "")).strip())
     if provider == "gemini":
-        return bool(str(secrets.get("gemini_api_key", "") or secrets.get("google_api_key", "")).strip())
+        # 15-A-2: only read gemini_api_key; GOOGLE_API_KEY fallback removed
+        return bool(str(secrets.get("gemini_api_key", "")).strip())
     return False
 
 

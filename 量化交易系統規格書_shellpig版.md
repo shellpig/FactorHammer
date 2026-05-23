@@ -5014,10 +5014,10 @@ P15-A-2 完成後 supersede P12-C / 10-G-2 的 google status/UI 描述；Google 
 |:---|:---|
 | FinMind 處理 | **必填**。`finmind` 空白或缺少 → response 仍 200 但 `results.finmind` 為對應錯誤、`saved=[]`、不寫入**任何** provider key（保留 P12 onboarding 強制邏輯）。FinMind 驗證失敗（invalid_key / unreachable）同樣不寫入任何 key |
 | 其他 provider 處理 | **選填 validate-if-present**。`deepseek / anthropic / openai / gemini` 沒送或空白 → 不驗證、不寫入、不出現在 `results`；有送 → 驗證並依 status 決定是否寫入 |
-| status 列舉 | `ok` / `invalid_key` / `no_quota`（**僅 DeepSeek 402**，無 405）/ `unreachable` / `skipped`（保留語意但目前不用） |
+| status 列舉 | `ok` / `invalid_key` / `no_quota`（DeepSeek 402 或 balance API `is_available=false`，無 405）/ `unreachable` / `skipped`（保留語意但目前不用） |
 | 部分成功寫入規則 | `ok` 與 `no_quota` 寫入 `.env`；`invalid_key` 與 `unreachable` 不寫入；`saved: [...]` 列出實際寫入的 provider；前提是 FinMind 通過 |
 | HTTP status code | 一律 200（results 內各別 status 表達結果） |
-| DeepSeek `no_quota` 處理 | **只認 402**（DeepSeek 官方 Error Codes 明示 402 = Insufficient Balance）；移除原規格的 405 推測 |
+| DeepSeek `no_quota` 處理 | 認 402（DeepSeek 官方 Error Codes 明示 402 = Insufficient Balance）與 200 response 內 `is_available=false`；若 200 response 缺少 `is_available` 或 JSON 無法解析，視為 `unreachable`（保守不寫入），移除原規格的 405 推測 |
 | 各 provider 驗證端點 | DeepSeek `GET https://api.deepseek.com/user/balance`（**對齊官方文件、無 `/v1`**）；Anthropic `POST /v1/messages` 1-token ping；OpenAI `GET /v1/models`；Gemini `GET /v1beta/models?key=...`；**FinMind 沿用既有 `validate_finmind_token()`**（透過 `https://api.finmindtrade.com/api/v4/data` 查 `dataset="TaiwanStockInfo"` 輕量資料驗證 token；P15-A-2 只把輸出包裝成 `ValidationResult`，不改 endpoint） |
 
 #### Contract 範例
@@ -5074,9 +5074,9 @@ POST /api/config/secrets/validate
 
 | # | 位置 | 動作 |
 |:---|:---|:---|
-| 1 | `src/services/config_service.py` | 新增 `ValidationResult` dataclass（`status: str, message: str`）；新增 `validate_deepseek_token`（打 `https://api.deepseek.com/user/balance`、只認 402 為 no_quota）/ `validate_anthropic_token` / `validate_openai_token` / `validate_gemini_token`；既有 `validate_finmind_token` 包成 `validate_finmind_token_wrapped` 回 `ValidationResult` |
-| 2 | `api/routers/config.py` | `SecretsValidateRequest` 加 `deepseek: str \| None = None`；`post_secrets_validate` 重寫：(a) 先驗 `request.finmind`，若為空 / None / 驗證失敗 → 回 `{results: {finmind: ...}, saved: []}`、HTTP 200、整包不寫入；(b) FinMind 通過後迭代其他 4 個 provider 欄位，有非空才驗證；(c) FinMind 通過時 ok / no_quota 的 provider 與 finmind 一起寫入 `.env` + `os.environ`；(d) 回 `{results, saved}` |
-| 3 | `web/src/components/dashboard/token-setup-dialog.tsx` | parse 新 response shape（讀 `data.results.finmind.status` 與 `message`）；onboarding 場景仍只送 finmind |
+| 1 | `src/services/config_service.py` | 新增 `ValidationResult` dataclass（`status: str, message: str`）；新增 `validate_deepseek_token`（打 `https://api.deepseek.com/user/balance`，402 或 `is_available=false` → no_quota，200 但缺 `is_available` / JSON 解析失敗 → unreachable）/ `validate_anthropic_token` / `validate_openai_token` / `validate_gemini_token`；既有 `validate_finmind_token` 包成 `validate_finmind_token_wrapped` 回 `ValidationResult` |
+| 2 | `api/routers/config.py` | `SecretsValidateRequest` 加 `deepseek: str \| None = None`；`post_secrets_validate` 重寫：(a) 先驗 `request.finmind`，若為空 / None / 驗證失敗 → 回 `{results: {finmind: ...}, saved: []}`、HTTP 200、整包不寫入；(b) FinMind 通過後迭代其他 4 個 provider 欄位，有非空才驗證；(c) FinMind 通過時 ok / no_quota 的 provider 與 finmind 一起呼叫 `update_secrets(to_save)`（from `src.services.config_service`）寫入 `.env` 並同步 `os.environ`，router 不再重複手動賦值；(d) 回 `{results, saved}` |
+| 3 | `web/src/components/dashboard/token-setup-dialog.tsx` | parse 新 response shape（讀 `data.results.finmind.status` 與 `message`）；onboarding 場景仍只送 finmind；保留 `resp.ok` / 非 JSON / 缺欄位 guard，非 200 或 malformed response 顯示錯誤訊息，不可讓強制 modal 白屏 |
 | 4 | `web/src/components/settings/secrets-section.tsx` | 「儲存」按鈕改為「驗證並儲存」走 POST `/api/config/secrets/validate`；收到 results 後 per-provider 顯示 inline 狀態圖示與訊息（綠勾 ok / 黃 warning no_quota / 紅叉 invalid_key 與 unreachable）；toast 同步顯示「N 項已儲存、M 項失敗」摘要；FinMind 失敗時 toast 紅字提示「FinMind 為必填，整包未儲存」；**`PROVIDERS` 陣列移除 `{ key: "google", label: "Google API Key" }`**（與 Gemini 重複） |
 | 5 | `web/src/types/config.ts` | `SecretsStatus` interface **移除 `google: boolean`**（保留 15-A-1 已加的 `deepseek`） |
 | 6 | `src/services/config_service.py` | `_SECRET_ENV_KEYS` **移除 `"GOOGLE_API_KEY": "google"`**；docstring / example 內 google 字眼一併清掉 |
@@ -5115,7 +5115,7 @@ POST /api/config/secrets/validate
 |:---|:---|:---|
 | 改 contract 撞到 token-setup-dialog 既有測試 | onboarding 流程壞 | 一併在本 sub 改 dialog + 16 個測試 |
 | Anthropic ping 會扣費（雖只 1 token） | 使用者驗證一次扣一次 | 文件警語提示；驗證流程使用者自願觸發 |
-| DeepSeek `/user/balance` 端點規格變動 | 驗證壞 | 嚴格 fallback：`200` → `ok`；`401` → `invalid_key`；`402` → `no_quota`（可寫入）；`429` / `5xx` / network timeout → `unreachable`；**其他 `4xx`（如 400 / 422）→ `invalid_key`，不可寫入**（DeepSeek 官方 Error Codes 明示 400/422 是 request/parameter error，不代表 key ok） |
+| DeepSeek `/user/balance` 端點規格變動 | 驗證壞 | 嚴格 fallback：`200 + is_available=true` → `ok`；`200 + is_available=false` / `402` → `no_quota`（可寫入）；`200` 但 JSON 無法解析或缺 `is_available` → `unreachable`（保守不寫入）；`401` → `invalid_key`；`429` / `5xx` / network timeout → `unreachable`；**其他 `4xx`（如 400 / 422）→ `invalid_key`，不可寫入**（DeepSeek 官方 Error Codes 明示 400/422 是 request/parameter error，不代表 key ok） |
 
 ### 15-B：AI 問答後端 streaming（純對話）
 

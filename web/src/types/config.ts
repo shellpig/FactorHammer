@@ -5,7 +5,7 @@ export interface SecretsStatus {
   anthropic: boolean;
   gemini: boolean;
   finmind: boolean;
-  google: boolean;
+  // 15-A-2：移除 google（Google API Key 為 legacy，後續不讀不寫不顯示）
   deepseek: boolean;
 }
 

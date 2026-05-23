@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -12,6 +11,7 @@ from src.services.config_service import (
     CONFIG_UPDATE_WHITELIST,
     FinMindTokenInvalid,
     FinMindUnreachable,
+    ValidationResult,
     delete_strategy_preset_by_name,
     get_secrets_status,
     get_strategy_presets_config,
@@ -20,7 +20,12 @@ from src.services.config_service import (
     update_config,
     update_secrets,
     upsert_strategy_preset,
+    validate_anthropic_token,
+    validate_deepseek_token,
     validate_finmind_token,
+    validate_finmind_token_wrapped,
+    validate_gemini_token,
+    validate_openai_token,
 )
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -44,6 +49,7 @@ class SecretsValidateRequest(BaseModel):
     anthropic: str | None = None
     openai: str | None = None
     gemini: str | None = None
+    deepseek: str | None = None   # 15-A-2 新增
 
 
 # ---------------------------------------------------------------------------
@@ -93,62 +99,76 @@ def get_secrets_status_endpoint() -> dict[str, Any]:
 
 @router.post("/secrets/validate")
 def post_secrets_validate(request: SecretsValidateRequest) -> dict[str, Any]:
-    finmind = (request.finmind or "").strip()
-    if not finmind:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": "FINMIND_REQUIRED", "message": "FinMind token 為必填欄位。"}},
-        )
+    """Validate API keys and write savable ones to .env.
 
-    try:
-        validate_finmind_token(finmind)
-    except FinMindTokenInvalid as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {
-                    "code": "FINMIND_TOKEN_INVALID",
-                    "message": "Token 無效，請確認從 FinMind 使用者資訊頁複製正確。",
-                }
+    15-A-2 contract:
+    - FinMind is required: blank/None or validation failure → 200 with
+      results.finmind error and saved=[]; no other keys are written.
+    - Other providers are optional (validate-if-present): absent/blank → skipped
+      (not in results); present → validated individually.
+    - ok and no_quota → written to .env; invalid_key and unreachable → not written.
+    - HTTP status is always 200; per-provider status in results[provider].status.
+    """
+    # ── (a) FinMind 必填驗證 ──
+    finmind_token = (request.finmind or "").strip()
+
+    # 空白 finmind：直接 early-return（不呼叫 wrapper，避免 "skipped" 語意混入 results）
+    if not finmind_token:
+        return {
+            "data": {
+                "results": {
+                    "finmind": {
+                        "status": "invalid_key",
+                        "message": "FinMind token 為必填",
+                    }
+                },
+                "saved": [],
             },
-        ) from exc
-    except FinMindUnreachable as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": {
-                    "code": "FINMIND_UNREACHABLE",
-                    "message": "無法連線至 FinMind 伺服器，請檢查網路後重試。",
-                }
-            },
-        ) from exc
+            "meta": {},
+        }
 
-    updates: dict[str, str] = {"finmind": finmind}
-    if request.anthropic is not None and request.anthropic.strip():
-        updates["anthropic"] = request.anthropic.strip()
-    if request.openai is not None and request.openai.strip():
-        updates["openai"] = request.openai.strip()
-    if request.gemini is not None and request.gemini.strip():
-        updates["gemini"] = request.gemini.strip()
+    finmind_result: ValidationResult = validate_finmind_token_wrapped(finmind_token)
+    results: dict[str, dict[str, str]] = {
+        "finmind": {"status": finmind_result.status, "message": finmind_result.message},
+    }
 
+    if not finmind_result.is_savable():
+        return {"data": {"results": results, "saved": []}, "meta": {}}
+
+
+    # ── (b) 其他 provider 選填 validate-if-present ──
+    optional_validators: dict[str, Any] = {
+        "deepseek": (request.deepseek, validate_deepseek_token),
+        "openai": (request.openai, validate_openai_token),
+        "anthropic": (request.anthropic, validate_anthropic_token),
+        "gemini": (request.gemini, validate_gemini_token),
+    }
+
+    to_save: dict[str, str] = {"finmind": finmind_token}
+
+    for provider, (token, validator) in optional_validators.items():
+        if token is None or not token.strip():
+            continue  # 沒送 / 空白 → 不驗證、不出現在 results
+        result: ValidationResult = validator(token)
+        results[provider] = {"status": result.status, "message": result.message}
+        if result.is_savable():
+            to_save[provider] = token.strip()
+
+    # ── (c) 寫入 .env + runtime env（update_secrets 是單一寫入點） ──
     try:
-        update_secrets(updates)
+        update_secrets(to_save)
     except OSError as exc:
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": "ENV_WRITE_FAILED", "message": f"寫入設定檔失敗：{exc}"}},
         ) from exc
 
-    label_to_env = {
-        "finmind": "FINMIND_TOKEN",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "gemini": "GEMINI_API_KEY",
-    }
-    for label, value in updates.items():
-        os.environ[label_to_env[label]] = value
+    saved: list[str] = list(to_save.keys())
 
-    return {"data": {"updated": True}, "meta": {}}
+    return {"data": {"results": results, "saved": saved}, "meta": {}}
+
+
+
 
 
 @router.get("/strategies")

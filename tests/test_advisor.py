@@ -704,7 +704,8 @@ def test_real_api_call() -> None:
     elif provider == "openai":
         has_key = bool(str(secrets.get("openai_api_key", "")).strip())
     elif provider == "gemini":
-        has_key = bool(str(secrets.get("gemini_api_key", "") or secrets.get("google_api_key", "")).strip())
+        # 15-A-2: only read gemini_api_key; GOOGLE_API_KEY fallback removed
+        has_key = bool(str(secrets.get("gemini_api_key", "")).strip())
     else:
         pytest.skip(f"Unsupported provider in config: {provider}")
 
@@ -720,3 +721,63 @@ def test_real_api_call() -> None:
     assert isinstance(reply, str)
     assert "免責聲明" in reply
     assert len(reply.strip()) > len(DISCLAIMER.strip())
+
+
+# ---------------------------------------------------------------------------
+# 15-A-2：google_api_key fallback 移除 regression
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_api_key_gemini_no_longer_falls_back_to_google_api_key() -> None:
+    """15-A-2 regression: _resolve_api_key('gemini') 不再讀 google_api_key。"""
+    advisor_instance = AIAdvisor(
+        enabled=False,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+    )
+    # gemini_api_key 空白，只有 google_api_key
+    secrets = {"google_api_key": "goog-fallback-should-not-work", "gemini_api_key": ""}
+    key = advisor_instance._resolve_api_key("gemini", secrets)
+    assert key == "", (
+        "15-A-2: gemini should NOT fallback to google_api_key; got non-empty key"
+    )
+
+
+def test_resolve_api_key_gemini_reads_gemini_api_key() -> None:
+    """gemini_api_key 有值時應正確回傳。"""
+    advisor_instance = AIAdvisor(
+        enabled=False,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+    )
+    secrets = {"gemini_api_key": "AIza-gemini-real", "google_api_key": "goog-legacy"}
+    key = advisor_instance._resolve_api_key("gemini", secrets)
+    assert key == "AIza-gemini-real"
+
+
+def test_gemini_provider_with_only_google_api_key_has_provider_error(monkeypatch, tmp_path) -> None:
+    """Spec 15-A-2 line 5087 regression:
+    advisor(provider=gemini) 在 .env 只有 GOOGLE_API_KEY 沒 GEMINI_API_KEY 時
+    _provider_error 應為 'Missing API key for provider gemini.'
+    """
+    (tmp_path / "config.yaml").write_text(
+        "ai:\n  enabled: true\n  provider: gemini\n  model: gemini-2.0-flash\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    monkeypatch.setattr(_config_module, "get_project_root", lambda: tmp_path)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "goog-should-not-work")
+    _config_module.clear_config_cache()
+    try:
+        adv = AIAdvisor(storage=StubStorage(_make_daily_df()))
+        assert adv._provider_error is not None, (
+            "Expected _provider_error for gemini with only GOOGLE_API_KEY after 15-A-2 fallback removal"
+        )
+        assert "Missing API key" in adv._provider_error
+    finally:
+        _config_module.clear_config_cache()
+
+

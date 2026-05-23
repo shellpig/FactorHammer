@@ -1,4 +1,4 @@
-"""Tests for config_service (Phase 10-A)."""
+"""Tests for config_service (Phase 10-A / 15-A-2)."""
 
 from __future__ import annotations
 
@@ -15,13 +15,19 @@ from src.services.config_service import (
     CONFIG_UPDATE_WHITELIST,
     FinMindTokenInvalid,
     FinMindUnreachable,
+    ValidationResult,
     _write_env,
     delete_strategy_preset_by_name,
     get_secrets_status,
     read_config,
     update_config,
     update_secrets,
+    validate_anthropic_token,
+    validate_deepseek_token,
     validate_finmind_token,
+    validate_finmind_token_wrapped,
+    validate_gemini_token,
+    validate_openai_token,
 )
 
 
@@ -486,3 +492,257 @@ def test_validate_finmind_token_200_missing_status_is_invalid(mock_get: MagicMoc
     mock_get.return_value = _mock_response(status_code=200, json_body={"msg": "ok but no status"})
     with pytest.raises(FinMindTokenInvalid):
         validate_finmind_token("token")
+
+
+# ---------------------------------------------------------------------------
+# 15-A-2：ValidationResult dataclass
+# ---------------------------------------------------------------------------
+
+
+def test_validation_result_is_savable_ok() -> None:
+    assert ValidationResult("ok", "msg").is_savable() is True
+
+
+def test_validation_result_is_savable_no_quota() -> None:
+    assert ValidationResult("no_quota", "msg").is_savable() is True
+
+
+def test_validation_result_not_savable_invalid_key() -> None:
+    assert ValidationResult("invalid_key", "msg").is_savable() is False
+
+
+def test_validation_result_not_savable_unreachable() -> None:
+    assert ValidationResult("unreachable", "msg").is_savable() is False
+
+
+def test_validation_result_not_savable_skipped() -> None:
+    assert ValidationResult("skipped", "msg").is_savable() is False
+
+
+# ---------------------------------------------------------------------------
+# 15-A-2：validate_finmind_token_wrapped
+# ---------------------------------------------------------------------------
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_wrapped_ok(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=200, json_body={"status": 200, "msg": "success"})
+    result = validate_finmind_token_wrapped("valid-token")
+    assert result.status == "ok"
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_wrapped_invalid(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=401)
+    result = validate_finmind_token_wrapped("bad-token")
+    assert result.status == "invalid_key"
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_finmind_token_wrapped_unreachable(mock_get: MagicMock) -> None:
+    mock_get.side_effect = requests.ConnectionError("timeout")
+    result = validate_finmind_token_wrapped("token")
+    assert result.status == "unreachable"
+
+
+def test_validate_finmind_token_wrapped_empty_is_skipped() -> None:
+    """Wrapper 本身回 skipped；router 負責 blank finmind 的 early-return invalid_key。"""
+    result = validate_finmind_token_wrapped("")
+    assert result.status == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# 15-A-2：validate_deepseek_token
+# ---------------------------------------------------------------------------
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_deepseek_token_ok(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=200, json_body={"is_available": True})
+    result = validate_deepseek_token("sk-ds-good")
+    assert result.status == "ok"
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_deepseek_token_no_quota_402(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=402)
+    result = validate_deepseek_token("sk-ds-broke")
+    assert result.status == "no_quota"
+    assert result.is_savable() is True
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_deepseek_token_no_quota_is_available_false(mock_get: MagicMock) -> None:
+    """200 with is_available=False → no_quota (key is valid, just out of balance)."""
+    mock_get.return_value = _mock_response(status_code=200, json_body={"is_available": False})
+    result = validate_deepseek_token("sk-ds-broke")
+    assert result.status == "no_quota"
+    assert result.is_savable() is True
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_deepseek_token_200_missing_is_available_is_unreachable(mock_get: MagicMock) -> None:
+    """200 但 response body 缺少 is_available → unreachable（保守不寫入）."""
+    mock_get.return_value = _mock_response(status_code=200, json_body={"balance": 100})
+    result = validate_deepseek_token("sk-ds")
+    assert result.status == "unreachable"
+    assert result.is_savable() is False
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_deepseek_token_200_json_parse_error_is_unreachable(mock_get: MagicMock) -> None:
+    """200 但 JSON 解析失敗 → unreachable（保守不寫入）."""
+    mock = _mock_response(status_code=200, json_body={})
+    mock.json.side_effect = ValueError("bad json")
+    mock_get.return_value = mock
+    result = validate_deepseek_token("sk-ds")
+    assert result.status == "unreachable"
+    assert result.is_savable() is False
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_deepseek_token_invalid_401(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=401)
+    result = validate_deepseek_token("sk-bad")
+    assert result.status == "invalid_key"
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_deepseek_token_unreachable(mock_get: MagicMock) -> None:
+    mock_get.side_effect = requests.ConnectionError("down")
+    result = validate_deepseek_token("sk-ds")
+    assert result.status == "unreachable"
+
+
+def test_validate_deepseek_token_empty_is_skipped() -> None:
+    result = validate_deepseek_token("")
+    assert result.status == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# 15-A-2：validate_openai_token
+# ---------------------------------------------------------------------------
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_openai_token_ok(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=200)
+    result = validate_openai_token("sk-openai-good")
+    assert result.status == "ok"
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_openai_token_invalid_401(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=401)
+    result = validate_openai_token("sk-bad")
+    assert result.status == "invalid_key"
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_openai_token_unreachable(mock_get: MagicMock) -> None:
+    mock_get.side_effect = requests.Timeout("timeout")
+    result = validate_openai_token("sk-openai")
+    assert result.status == "unreachable"
+
+
+def test_validate_openai_token_empty_is_skipped() -> None:
+    assert validate_openai_token("").status == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# 15-A-2：validate_anthropic_token
+# ---------------------------------------------------------------------------
+
+
+@patch("src.services.config_service.requests.post")
+def test_validate_anthropic_token_ok(mock_post: MagicMock) -> None:
+    mock_post.return_value = _mock_response(status_code=200)
+    result = validate_anthropic_token("sk-ant-good")
+    assert result.status == "ok"
+
+
+@patch("src.services.config_service.requests.post")
+def test_validate_anthropic_token_invalid_401(mock_post: MagicMock) -> None:
+    mock_post.return_value = _mock_response(status_code=401)
+    result = validate_anthropic_token("sk-ant-bad")
+    assert result.status == "invalid_key"
+
+
+@patch("src.services.config_service.requests.post")
+def test_validate_anthropic_token_unreachable(mock_post: MagicMock) -> None:
+    mock_post.side_effect = requests.ConnectionError("down")
+    result = validate_anthropic_token("sk-ant")
+    assert result.status == "unreachable"
+
+
+def test_validate_anthropic_token_empty_is_skipped() -> None:
+    assert validate_anthropic_token("").status == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# 15-A-2：validate_gemini_token
+# ---------------------------------------------------------------------------
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_gemini_token_ok(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=200)
+    result = validate_gemini_token("AIza-good")
+    assert result.status == "ok"
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_gemini_token_invalid_401(mock_get: MagicMock) -> None:
+    mock_get.return_value = _mock_response(status_code=401)
+    result = validate_gemini_token("AIza-bad")
+    assert result.status == "invalid_key"
+
+
+@patch("src.services.config_service.requests.get")
+def test_validate_gemini_token_unreachable(mock_get: MagicMock) -> None:
+    mock_get.side_effect = requests.Timeout("timeout")
+    result = validate_gemini_token("AIza")
+    assert result.status == "unreachable"
+
+
+def test_validate_gemini_token_empty_is_skipped() -> None:
+    assert validate_gemini_token("").status == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# 15-A-2：google_api_key fallback 移除 regression
+# ---------------------------------------------------------------------------
+
+
+@patch("src.core.config.get_project_root")
+def test_get_config_secrets_no_longer_contains_google_api_key(
+    mock_root: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """15-A-2 regression: google_api_key 不再出現在 config[secrets]。"""
+    (tmp_path / "config.yaml").write_text("ui:\n  theme: dark\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    mock_root.return_value = tmp_path
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "goog-should-not-appear")
+    clear_config_cache()
+    config = core_get_config()
+    assert "google_api_key" not in config.get("secrets", {}), (
+        "google_api_key should not be in config[secrets] after 15-A-2"
+    )
+
+    clear_config_cache()
+
+
+@patch("src.services.config_service.get_project_root")
+def test_secrets_status_no_longer_contains_google(
+    mock_root: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """15-A-2 regression: get_secrets_status() 不再回傳 'google' 鍵。"""
+    (tmp_path / ".env").write_text("GOOGLE_API_KEY=goog-key\n", encoding="utf-8")
+    mock_root.return_value = tmp_path
+    status = get_secrets_status()
+    assert "google" not in status, "google should not appear in secrets_status after 15-A-2"
+

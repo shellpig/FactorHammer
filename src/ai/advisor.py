@@ -1105,10 +1105,8 @@ class AIAdvisor:
         if provider == "openai":
             return str(secrets.get("openai_api_key", "")).strip()
         if provider == "gemini":
-            gemini_key = str(secrets.get("gemini_api_key", "")).strip()
-            if gemini_key:
-                return gemini_key
-            return str(secrets.get("google_api_key", "")).strip()
+            # 15-A-2：只讀 gemini_api_key，不再 fallback google_api_key
+            return str(secrets.get("gemini_api_key", "")).strip()
         if provider == "deepseek":
             return str(secrets.get("deepseek_api_key", "")).strip()
         return ""

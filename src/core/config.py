@@ -46,7 +46,7 @@ def get_config() -> dict[str, Any]:
         "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
         "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
         "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
-        "google_api_key": os.getenv("GOOGLE_API_KEY", ""),
+        # 15-A-2：移除 google_api_key（GOOGLE_API_KEY 保留在 .env 但不再讀取）
         "deepseek_api_key": os.getenv("DEEPSEEK_API_KEY", ""),
     }
     
