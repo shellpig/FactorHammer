@@ -178,6 +178,13 @@ const VISIBLE_BARS: Record<ChartInterval, number> = {
   minute: 120,
 };
 
+const RIGHT_LABEL_PADDING_BARS: Record<ChartInterval, number> = {
+  day: 7,
+  week: 2,
+  month: 1,
+  minute: 7,
+};
+
 export function CandlestickChart({
   market,
   interval,
@@ -434,9 +441,10 @@ export function CandlestickChart({
     // Set default visible range per interval
     if (bars.length > 0) {
       const visibleCount = VISIBLE_BARS[interval];
+      const rightPadding = RIGHT_LABEL_PADDING_BARS[interval];
       chartRef.current?.timeScale().setVisibleLogicalRange({
         from: Math.max(0, bars.length - visibleCount),
-        to: bars.length - 1,
+        to: bars.length - 1 + rightPadding,
       });
     }
   }, [bars, market, resistanceLevels, supportLevels, interval]);
