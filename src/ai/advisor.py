@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -170,6 +170,16 @@ class BaseProviderAdapter(ABC):
         """Return provider response with shape: {text: str, tool_calls: list[dict]}."""
 
     @abstractmethod
+    async def stream_complete(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        """Async generator yielding text chunks."""
+
+    @abstractmethod
     def normalize_tool_calls(self, raw_response: Any) -> list[NormalizedToolCall]:
         """Normalize provider-specific tool call payloads."""
 
@@ -218,6 +228,27 @@ class AnthropicAdapter(BaseProviderAdapter):
             "text": self._extract_text(response),
             "tool_calls": [tc.__dict__ for tc in self.normalize_tool_calls(response)],
         }
+
+    async def stream_complete(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        from anthropic import AsyncAnthropic
+        if not hasattr(self, "_async_client"):
+            self._async_client = AsyncAnthropic(api_key=self.api_key)
+
+        anthropic_msgs = self._to_anthropic_messages(messages)
+        async with self._async_client.messages.stream(
+            model=model,
+            max_tokens=1024,
+            system=system_prompt,
+            messages=anthropic_msgs,
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
 
     def normalize_tool_calls(self, raw_response: Any) -> list[NormalizedToolCall]:
         content = getattr(raw_response, "content", None)
@@ -353,6 +384,54 @@ class OpenAIAdapter(BaseProviderAdapter):
             "tool_calls": [tc.__dict__ for tc in self.normalize_tool_calls(body)],
         }
 
+    async def stream_complete(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        import httpx
+        payload = {
+            "model": model,
+            "messages": self._to_openai_messages(messages, system_prompt),
+            "stream": True,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with client.stream(
+                "POST",
+                self._base_url,
+                headers=headers,
+                json=payload,
+            ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise RuntimeError(f"OpenAI API error: {response.status_code} {body[:300].decode('utf-8', errors='ignore')}")
+
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line == "data: [DONE]":
+                        break
+                    if line.startswith("data: "):
+                        data_str = line[len("data: "):]
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = data.get("choices", [])
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content")
+                        if content:
+                            yield content
+
     def normalize_tool_calls(self, raw_response: Any) -> list[NormalizedToolCall]:
         message: dict[str, Any] = {}
         if isinstance(raw_response, dict) and "choices" in raw_response:
@@ -464,6 +543,50 @@ class GeminiAdapter(BaseProviderAdapter):
             "tool_calls": [tc.__dict__ for tc in self.normalize_tool_calls(body)],
         }
 
+    async def stream_complete(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        import httpx
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
+        payload = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": self._to_gemini_contents(messages),
+        }
+        headers = {"Content-Type": "application/json"}
+        params = {"key": self.api_key, "alt": "sse"}
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with client.stream(
+                "POST",
+                endpoint,
+                params=params,
+                headers=headers,
+                json=payload,
+            ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise RuntimeError(f"Gemini API error: {response.status_code} {body[:300].decode('utf-8', errors='ignore')}")
+
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        chunk = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
+                    candidates = chunk.get("candidates", []) or []
+                    if not candidates:
+                        continue
+                    parts = candidates[0].get("content", {}).get("parts", []) or []
+                    for part in parts:
+                        text = part.get("text")
+                        if text:
+                            yield text
+
     def normalize_tool_calls(self, raw_response: Any) -> list[NormalizedToolCall]:
         if not isinstance(raw_response, dict):
             return []
@@ -551,6 +674,55 @@ class DeepSeekAdapter(OpenAIAdapter):
     provider_name = "deepseek"
     DEFAULT_BASE_URL = "https://api.deepseek.com/chat/completions"
 
+    async def stream_complete(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        import httpx
+        payload = {
+            "model": model,
+            "messages": self._to_openai_messages(messages, system_prompt),
+            "stream": True,
+            "thinking": {"type": "disabled"},
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with client.stream(
+                "POST",
+                self._base_url,
+                headers=headers,
+                json=payload,
+            ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise RuntimeError(f"DeepSeek API error: {response.status_code} {body[:300].decode('utf-8', errors='ignore')}")
+
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line == "data: [DONE]":
+                        break
+                    if line.startswith("data: "):
+                        data_str = line[len("data: "):]
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = data.get("choices", [])
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content")
+                        if content:
+                            yield content
+
 
 PROVIDER_ADAPTERS: dict[str, type[BaseProviderAdapter]] = {
     "anthropic": AnthropicAdapter,
@@ -598,6 +770,30 @@ class AIAdvisor:
             else:
                 adapter_cls = PROVIDER_ADAPTERS[self.provider]
                 self.provider_adapter = adapter_cls(api_key=api_key, model=self.model)
+
+    async def stream_chat(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+        """Stream chat responses. Yields event dicts."""
+        if not self.enabled:
+            yield {"event": "error", "message": "AI 功能已關閉（ai.enabled=false）。"}
+            return
+
+        if self._provider_error:
+            yield {"event": "error", "message": self._provider_error}
+            return
+
+        if self.provider_adapter is None:
+            yield {"event": "error", "message": "AI provider adapter is not initialized."}
+            return
+
+        try:
+            async for chunk in self.provider_adapter.stream_complete(
+                model=self.model,
+                system_prompt=SYSTEM_PROMPT,
+                messages=messages,
+            ):
+                yield {"event": "token", "text": chunk}
+        except Exception as exc:
+            yield {"event": "error", "message": f"AI provider request failed: {exc}"}
 
     def ask(self, question: str, max_tool_rounds: int = 6) -> str:
         """Ask the assistant and always append disclaimer to final text."""

@@ -4,13 +4,19 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
+import json
 import math
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
+from api.deps import get_advisor
+from src.ai.advisor import AIAdvisor
+from src.core.config import get_config
+from src.services.config_service import get_secrets_status
 from src.services.dashboard_service import DashboardError, build_dashboard_payload
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -22,27 +28,81 @@ class AnalyzeRequest(BaseModel):
     bars: int = 250
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class ChatRequest(BaseModel):
-    messages: list[dict] = []  # 10-F-1 不驗 schema，10-F-2 再嚴謹化
+    messages: list[ChatMessage]
 
 
-# ── 10-F-1 lock endpoints ─────────────────────────────────────────────────
+# ── 15-B streaming endpoints ───────────────────────────────────────────────
 
 
 @router.get("/status")
 def get_ai_status() -> dict:
+    config = get_config()
+    ai_config = config.get("ai", {}) if isinstance(config, dict) else {}
+    enabled = bool(ai_config.get("enabled", True))
+    provider = str(ai_config.get("provider", "anthropic")).lower()
+
+    if not enabled:
+        return {
+            "available": False,
+            "reason": "ai_disabled",
+            "message": "AI 功能已關閉（ai.enabled=false）。",
+        }
+
+    secrets_status = get_secrets_status()
+    has_key = secrets_status.get(provider, False)
+    if not has_key:
+        return {
+            "available": False,
+            "reason": "missing_key",
+            "message": f"目前 provider 為 {provider}，但 .env 內找不到對應 API key。",
+        }
+
     return {
-        "available": False,
-        "reason": "feature_locked",
-        "message": "AI 功能尚未開放，將於後續版本啟用。",
+        "available": True,
+        "reason": "ok",
+        "message": "OK",
     }
 
 
 @router.post("/chat")
-def post_ai_chat(_: ChatRequest) -> None:
-    raise HTTPException(
-        status_code=503,
-        detail={"error": {"code": "AI_DISABLED", "message": "AI 功能尚未開放。"}},
+async def post_ai_chat(
+    request: ChatRequest,
+    advisor: AIAdvisor = Depends(get_advisor),
+) -> EventSourceResponse:
+    async def event_generator():
+        messages_dict = [m.model_dump() for m in request.messages]
+        try:
+            async for chunk in advisor.stream_chat(messages_dict):
+                event = chunk.get("event", "token")
+                if event == "token":
+                    yield {
+                        "event": "token",
+                        "data": json.dumps({"text": chunk["text"]}),
+                    }
+                elif event == "error":
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"message": chunk["message"]}),
+                    }
+            yield {
+                "event": "done",
+                "data": "{}",
+            }
+        except Exception as exc:
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": str(exc)}),
+            }
+
+    return EventSourceResponse(
+        event_generator(),
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

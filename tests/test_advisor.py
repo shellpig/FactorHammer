@@ -781,3 +781,287 @@ def test_gemini_provider_with_only_google_api_key_has_provider_error(monkeypatch
         _config_module.clear_config_cache()
 
 
+# ---------------------------------------------------------------------------
+# Phase 15-B: stream_chat & stream_complete tests
+# ---------------------------------------------------------------------------
+
+
+def test_stream_chat_disabled() -> None:
+    import asyncio
+    advisor = AIAdvisor(
+        enabled=False,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+    )
+    events = []
+
+    async def run():
+        async for event in advisor.stream_chat([]):
+            events.append(event)
+
+    asyncio.run(run())
+    assert len(events) == 1
+    assert events[0]["event"] == "error"
+    assert "AI 功能已關閉" in events[0]["message"]
+
+
+def test_stream_chat_missing_key() -> None:
+    import asyncio
+    with patch("src.ai.advisor.get_config", return_value={"ai": {"enabled": True, "provider": "openai"}, "secrets": {}}):
+        advisor = AIAdvisor(storage=StubStorage(_make_daily_df()))
+        assert advisor._provider_error is not None
+        events = []
+
+        async def run():
+            async for event in advisor.stream_chat([]):
+                events.append(event)
+
+        asyncio.run(run())
+        assert len(events) == 1
+        assert events[0]["event"] == "error"
+        assert "Missing API key" in events[0]["message"]
+
+
+def test_stream_chat_success() -> None:
+    import asyncio
+    class StubAsyncAdapter(BaseProviderAdapter):
+        provider_name = "stub_async"
+
+        async def complete(self, **kwargs) -> dict[str, Any]:
+            return {}
+
+        async def stream_complete(self, *, model, system_prompt, messages) -> AsyncIterator[str]:
+            yield "Hi"
+            yield " there"
+
+        def normalize_tool_calls(self, raw_response) -> list:
+            return []
+
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+        adapter=StubAsyncAdapter(api_key="x", model="y"),
+    )
+    events = []
+
+    async def run():
+        async for event in advisor.stream_chat([]):
+            events.append(event)
+
+    asyncio.run(run())
+    assert len(events) == 2
+    assert events[0]["event"] == "token"
+    assert events[0]["text"] == "Hi"
+    assert events[1]["event"] == "token"
+    assert events[1]["text"] == " there"
+
+
+def test_stream_chat_exception_handling() -> None:
+    import asyncio
+    class FailedAsyncAdapter(BaseProviderAdapter):
+        provider_name = "failed_async"
+
+        async def complete(self, **kwargs) -> dict[str, Any]:
+            return {}
+
+        async def stream_complete(self, *, model, system_prompt, messages) -> AsyncIterator[str]:
+            raise ValueError("Upstream timeout")
+            yield ""
+
+        def normalize_tool_calls(self, raw_response) -> list:
+            return []
+
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+        adapter=FailedAsyncAdapter(api_key="x", model="y"),
+    )
+    events = []
+
+    async def run():
+        async for event in advisor.stream_chat([]):
+            events.append(event)
+
+    asyncio.run(run())
+    assert len(events) == 1
+    assert events[0]["event"] == "error"
+    assert "Upstream timeout" in events[0]["message"]
+
+
+# New Phase 15-B Tests to hit the gate requirement
+# ---------------------------------------------------------------------------
+
+def test_stream_chat_openai() -> None:
+    import asyncio
+    
+    async def mock_stream_complete(*args, **kwargs):
+        yield "He"
+        yield "llo"
+
+    with patch("src.ai.advisor.OpenAIAdapter.stream_complete", side_effect=mock_stream_complete):
+        advisor = AIAdvisor(
+            enabled=True,
+            provider="openai",
+            model="gpt-4o-mini",
+            storage=StubStorage(_make_daily_df()),
+            adapter=OpenAIAdapter(api_key="sk-test", model="gpt-4o-mini")
+        )
+        events = []
+        
+        async def run():
+            async for event in advisor.stream_chat([]):
+                events.append(event)
+                
+        asyncio.run(run())
+        assert len(events) == 2
+        assert events[0]["event"] == "token"
+        assert events[0]["text"] == "He"
+        assert events[1]["event"] == "token"
+        assert events[1]["text"] == "llo"
+
+
+def test_stream_chat_deepseek() -> None:
+    import asyncio
+    
+    async def mock_stream_complete(*args, **kwargs):
+        yield "Deep"
+        yield "Seek"
+
+    with patch("src.ai.advisor.DeepSeekAdapter.stream_complete", side_effect=mock_stream_complete):
+        advisor = AIAdvisor(
+            enabled=True,
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            storage=StubStorage(_make_daily_df()),
+            adapter=DeepSeekAdapter(api_key="sk-ds-test", model="deepseek-v4-flash")
+        )
+        events = []
+        
+        async def run():
+            async for event in advisor.stream_chat([]):
+                events.append(event)
+                
+        asyncio.run(run())
+        assert len(events) == 2
+        assert events[0]["event"] == "token"
+        assert events[0]["text"] == "Deep"
+        assert events[1]["event"] == "token"
+        assert events[1]["text"] == "Seek"
+
+
+def test_stream_chat_anthropic_mock() -> None:
+    import asyncio
+    
+    async def mock_stream_complete(*args, **kwargs):
+        yield "Claude"
+        yield " streams"
+
+    with patch("src.ai.advisor.AnthropicAdapter.stream_complete", side_effect=mock_stream_complete):
+        advisor = AIAdvisor(
+            enabled=True,
+            provider="anthropic",
+            model="claude-haiku-4-5-20251001",
+            storage=StubStorage(_make_daily_df()),
+            adapter=AnthropicAdapter(api_key="sk-ant-test", model="claude-haiku-4-5-20251001")
+        )
+        events = []
+        
+        async def run():
+            async for event in advisor.stream_chat([]):
+                events.append(event)
+                
+        asyncio.run(run())
+        assert len(events) == 2
+        assert events[0]["event"] == "token"
+        assert events[0]["text"] == "Claude"
+        assert events[1]["event"] == "token"
+        assert events[1]["text"] == " streams"
+
+
+def test_stream_chat_gemini_mock() -> None:
+    import asyncio
+    
+    async def mock_stream_complete(*args, **kwargs):
+        yield "Gemini"
+        yield " stream"
+
+    with patch("src.ai.advisor.GeminiAdapter.stream_complete", side_effect=mock_stream_complete):
+        advisor = AIAdvisor(
+            enabled=True,
+            provider="gemini",
+            model="gemini-2.0-flash",
+            storage=StubStorage(_make_daily_df()),
+            adapter=GeminiAdapter(api_key="g-test", model="gemini-2.0-flash")
+        )
+        events = []
+        
+        async def run():
+            async for event in advisor.stream_chat([]):
+                events.append(event)
+                
+        asyncio.run(run())
+        assert len(events) == 2
+        assert events[0]["event"] == "token"
+        assert events[0]["text"] == "Gemini"
+        assert events[1]["event"] == "token"
+        assert events[1]["text"] == " stream"
+
+
+def test_adapters_stream_complete_parse_sse() -> None:
+    import asyncio
+    
+    class AsyncIteratorWrapper:
+        def __init__(self, items):
+            self.items = items
+            self.idx = 0
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            if self.idx < len(self.items):
+                res = self.items[self.idx]
+                self.idx += 1
+                return res
+            raise StopAsyncIteration
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.aiter_lines = MagicMock(return_value=AsyncIteratorWrapper([
+        "data: {\"choices\": [{\"delta\": {\"content\": \"He\"}}]}",
+        "",
+        "data: {\"choices\": [{\"delta\": {\"content\": \"llo\"}}]}",
+        "data: [DONE]"
+    ]))
+    
+    class MockStreamContext:
+        async def __aenter__(self):
+            return mock_resp
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockClient:
+        def stream(self, *args, **kwargs):
+            return MockStreamContext()
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    with patch("httpx.AsyncClient", return_value=MockClient()):
+        adapter = OpenAIAdapter(api_key="sk-test", model="gpt-4o-mini")
+        
+        async def run():
+            chunks = []
+            async for chunk in adapter.stream_complete(model="gpt-4o-mini", system_prompt="sys", messages=[]):
+                chunks.append(chunk)
+            return chunks
+
+        res = asyncio.run(run())
+        assert res == ["He", "llo"]
+
+
+
