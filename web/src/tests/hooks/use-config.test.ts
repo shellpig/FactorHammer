@@ -5,11 +5,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import { SWRConfig } from "swr";
 
-// Mock api-client module
-const mockApiFetch = vi.fn();
-const mockApiPut = vi.fn();
-const mockApiPost = vi.fn();
-const mockApiDeleteNoContent = vi.fn();
+// Hoist mocks so vi.mock factories can reference them
+const { mockApiFetch, mockApiPut, mockApiPost, mockApiDeleteNoContent, mockSWRMutate } =
+  vi.hoisted(() => ({
+    mockApiFetch: vi.fn(),
+    mockApiPut: vi.fn(),
+    mockApiPost: vi.fn(),
+    mockApiDeleteNoContent: vi.fn(),
+    mockSWRMutate: vi.fn().mockResolvedValue(undefined),
+  }));
+
+// Mock SWR — replace global mutate with spy, keep everything else real
+vi.mock("swr", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("swr")>();
+  return {
+    ...actual,
+    mutate: (...args: unknown[]) => mockSWRMutate(...args),
+  };
+});
 
 vi.mock("@/lib/api-client", () => ({
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),
@@ -28,6 +41,8 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 import {
+  useConfig,
+  updateConfig,
   useSecretsStatus,
   useStrategyPresets,
   updateSecrets,
@@ -44,6 +59,68 @@ function freshWrapper({ children }: { children: React.ReactNode }) {
     children,
   );
 }
+
+describe("useConfig", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("SWR fetches /api/config and returns config data", async () => {
+    const mockConfig = {
+      ai: { enabled: true, provider: "deepseek", model: "deepseek-v4-flash" },
+      ui: { theme: "dark", use_extras: true },
+      risk: {},
+      backtest: {},
+      strategies: [],
+    };
+    mockApiFetch.mockResolvedValueOnce({ data: mockConfig });
+
+    const { result } = renderHook(() => useConfig(), { wrapper: freshWrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(mockApiFetch).toHaveBeenCalledWith("/api/config");
+    expect(result.current.config?.ai.provider).toBe("deepseek");
+  });
+
+  it("returns null config on error", async () => {
+    mockApiFetch.mockRejectedValueOnce(new Error("network error"));
+
+    const { result } = renderHook(() => useConfig(), { wrapper: freshWrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.config).toBeNull();
+  });
+});
+
+describe("updateConfig", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("PUT /api/config with { patch: ... } body shape", async () => {
+    mockApiPut.mockResolvedValueOnce({ data: {}, meta: {} });
+
+    await updateConfig({ ai: { enabled: true, provider: "deepseek", model: "deepseek-v4-flash" } });
+
+    expect(mockApiPut).toHaveBeenCalledWith("/api/config", {
+      patch: { ai: { enabled: true, provider: "deepseek", model: "deepseek-v4-flash" } },
+    });
+  });
+
+  it("成功後觸發 mutate(CONFIG_SWR_KEY)", async () => {
+    mockApiPut.mockResolvedValueOnce({ data: {}, meta: {} });
+
+    await updateConfig({ ai: { enabled: true } });
+
+    expect(mockSWRMutate).toHaveBeenCalledWith("/api/config");
+  });
+
+  it("rejects when apiPut fails", async () => {
+    mockApiPut.mockRejectedValueOnce(new Error("server error"));
+
+    await expect(updateConfig({ ai: { enabled: true } })).rejects.toThrow("server error");
+  });
+});
 
 describe("useSecretsStatus", () => {
   beforeEach(() => {

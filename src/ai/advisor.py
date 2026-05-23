@@ -102,6 +102,7 @@ DEFAULT_MODELS = {
     "anthropic": "claude-haiku-4-5-20251001",
     "openai": "gpt-4o-mini",
     "gemini": "gemini-2.0-flash",
+    "deepseek": "deepseek-v4-flash",
 }
 
 SUPPORTED_FREQS = {"daily", "60min", "30min", "5min"}
@@ -163,6 +164,8 @@ class BaseProviderAdapter(ABC):
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        response_format: dict[str, Any] | None = None,
+        thinking: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return provider response with shape: {text: str, tool_calls: list[dict]}."""
 
@@ -201,6 +204,8 @@ class AnthropicAdapter(BaseProviderAdapter):
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        response_format: dict[str, Any] | None = None,
+        thinking: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         response = self._client.messages.create(
             model=model,
@@ -303,6 +308,11 @@ class OpenAIAdapter(BaseProviderAdapter):
     """OpenAI Chat Completions adapter."""
 
     provider_name = "openai"
+    DEFAULT_BASE_URL = "https://api.openai.com/v1/chat/completions"
+
+    def __init__(self, api_key: str, model: str, timeout_seconds: float = 30.0, base_url: str | None = None):
+        super().__init__(api_key=api_key, model=model, timeout_seconds=timeout_seconds)
+        self._base_url = base_url or self.DEFAULT_BASE_URL
 
     def complete(
         self,
@@ -311,14 +321,20 @@ class OpenAIAdapter(BaseProviderAdapter):
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        response_format: dict[str, Any] | None = None,
+        thinking: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": self._to_openai_messages(messages, system_prompt),
             "tools": self._to_openai_tools(tools),
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
+        if thinking is not None:
+            payload["thinking"] = thinking
         response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
+            self._base_url,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -423,6 +439,8 @@ class GeminiAdapter(BaseProviderAdapter):
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        response_format: dict[str, Any] | None = None,
+        thinking: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         payload = {
@@ -527,10 +545,18 @@ class GeminiAdapter(BaseProviderAdapter):
         return out
 
 
+class DeepSeekAdapter(OpenAIAdapter):
+    """DeepSeek adapter — OpenAI-compatible endpoint at deepseek.com."""
+
+    provider_name = "deepseek"
+    DEFAULT_BASE_URL = "https://api.deepseek.com/chat/completions"
+
+
 PROVIDER_ADAPTERS: dict[str, type[BaseProviderAdapter]] = {
     "anthropic": AnthropicAdapter,
     "openai": OpenAIAdapter,
     "gemini": GeminiAdapter,
+    "deepseek": DeepSeekAdapter,
 }
 
 
@@ -670,12 +696,19 @@ class AIAdvisor:
             f"{_TRADITIONAL_CHINESE_REQUIREMENT}"
         )
 
+        extra_kwargs: dict[str, Any] = {}
+        if self.provider in {"openai", "deepseek"}:
+            extra_kwargs["response_format"] = {"type": "json_object"}
+        if self.provider == "deepseek":
+            extra_kwargs["thinking"] = {"type": "disabled"}
+
         try:
             response = self.provider_adapter.complete(
                 model=self.model,
                 system_prompt=DASHBOARD_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
                 tools=[],
+                **extra_kwargs,
             )
         except Exception as exc:  # noqa: BLE001
             raise AICallError(f"AI provider request failed: {exc}") from exc
@@ -1076,6 +1109,8 @@ class AIAdvisor:
             if gemini_key:
                 return gemini_key
             return str(secrets.get("google_api_key", "")).strip()
+        if provider == "deepseek":
+            return str(secrets.get("deepseek_api_key", "")).strip()
         return ""
 
     @staticmethod

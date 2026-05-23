@@ -11,27 +11,31 @@ vi.mock("@/hooks/use-toast", () => ({
 
 const mockMutate = vi.fn();
 const mockUpdateSecrets = vi.fn();
+const mockUseSecretsStatus = vi.fn();
 
 vi.mock("@/hooks/use-config", () => ({
-  useSecretsStatus: () => ({
-    status: { openai: true, anthropic: false, gemini: false, finmind: false, google: false },
-    isLoading: false,
-    mutate: mockMutate,
-  }),
+  useSecretsStatus: (...args: unknown[]) => mockUseSecretsStatus(...args),
   updateSecrets: (...args: unknown[]) => mockUpdateSecrets(...args),
 }));
 
 import { SecretsSection } from "@/components/settings/secrets-section";
 
+const DEFAULT_STATUS_RETURN = {
+  status: { openai: true, anthropic: false, gemini: false, deepseek: false, finmind: false, google: false },
+  isLoading: false,
+  mutate: mockMutate,
+};
+
 describe("SecretsSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseSecretsStatus.mockReturnValue(DEFAULT_STATUS_RETURN);
   });
 
-  it("renders all 5 provider inputs as password type", () => {
+  it("renders all 6 provider inputs as password type", () => {
     render(<SecretsSection />);
     const inputs = screen.getAllByTestId(/^secret-input-/);
-    expect(inputs).toHaveLength(5);
+    expect(inputs).toHaveLength(6);
     for (const input of inputs) {
       expect(input).toHaveAttribute("type", "password");
     }
@@ -75,5 +79,24 @@ describe("SecretsSection", () => {
     render(<SecretsSection />);
     fireEvent.click(screen.getByTestId("secrets-save-btn"));
     await waitFor(() => expect(mockUpdateSecrets).not.toHaveBeenCalled());
+  });
+
+  it("PROVIDERS 含 deepseek", () => {
+    render(<SecretsSection />);
+    expect(screen.getByTestId("secret-input-deepseek")).toBeInTheDocument();
+    expect(screen.getByText("DeepSeek API Key")).toBeInTheDocument();
+  });
+
+  it("SecretsStatus.deepseek 顯示 ✓", () => {
+    mockUseSecretsStatus.mockReturnValue({
+      status: { openai: false, anthropic: false, gemini: false, deepseek: true, finmind: false, google: false },
+      isLoading: false,
+      mutate: mockMutate,
+    });
+    render(<SecretsSection />);
+
+    // Only deepseek is true → exactly one ✓ in the document
+    const checkmarks = screen.getAllByText("✓");
+    expect(checkmarks).toHaveLength(1);
   });
 });

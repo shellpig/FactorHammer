@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
 import src.ai.advisor as advisor_module
+import src.core.config as _config_module
 from src.ai.advisor import (
     AIAdvisor,
     AnthropicAdapter,
+    BaseProviderAdapter,
     DashboardAnalysis,
+    DeepSeekAdapter,
     DISCLAIMER,
     GeminiAdapter,
     OpenAIAdapter,
@@ -106,6 +111,8 @@ class StubAdapter:
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        response_format: dict[str, Any] | None = None,
+        thinking: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self._responses:
             return self._responses.pop(0)
@@ -462,6 +469,222 @@ def test_dashboard_analysis_ai_disabled() -> None:
             company_info=None,
             recent_prices=_make_daily_df(),
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 15-A-1: DeepSeek adapter tests
+# ---------------------------------------------------------------------------
+
+
+def test_deepseek_adapter_is_selected_when_provider_deepseek(monkeypatch) -> None:
+    monkeypatch.setattr(
+        advisor_module,
+        "get_config",
+        lambda: {
+            "ai": {"enabled": True, "provider": "deepseek", "model": "deepseek-v4-flash"},
+            "secrets": {"deepseek_api_key": "sk-test-key"},
+        },
+    )
+    advisor = AIAdvisor(storage=StubStorage(_make_daily_df()))
+    assert advisor.provider == "deepseek"
+    assert isinstance(advisor.provider_adapter, DeepSeekAdapter)
+
+
+def test_deepseek_default_model_is_flash() -> None:
+    from src.ai.advisor import DEFAULT_MODELS
+    assert DEFAULT_MODELS["deepseek"] == "deepseek-v4-flash"
+
+
+def test_deepseek_resolve_api_key() -> None:
+    advisor = AIAdvisor(
+        enabled=False,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+    )
+    secrets = {"deepseek_api_key": "sk-deepseek-123"}
+    key = advisor._resolve_api_key("deepseek", secrets)
+    assert key == "sk-deepseek-123"
+
+
+def test_deepseek_dashboard_passes_response_format_and_thinking(monkeypatch) -> None:
+    """generate_stock_dashboard_analysis must pass response_format + thinking to adapter for deepseek."""
+    received_kwargs: dict[str, Any] = {}
+
+    class CapturingAdapter:
+        provider_name = "deepseek"
+        model = "deepseek-v4-flash"
+
+        def complete(self, *, model, system_prompt, messages, tools, response_format=None, thinking=None, **kw):
+            received_kwargs["response_format"] = response_format
+            received_kwargs["thinking"] = thinking
+            payload = {
+                "industry_overview": ["A"],
+                "company_overview": ["B"],
+                "volume_price_analysis": "C",
+                "scenarios": [
+                    {"name": "s1", "entry_range": "1", "stop_loss": 1.0, "target": "2"},
+                    {"name": "s2", "entry_range": "2", "stop_loss": 2.0, "target": "3"},
+                    {"name": "s3", "entry_range": "3", "stop_loss": 3.0, "target": "4"},
+                ],
+                "conclusion": "D",
+            }
+            return {"text": json.dumps(payload), "tool_calls": []}
+
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        storage=StubStorage(_make_daily_df()),
+        adapter=CapturingAdapter(),
+    )
+    advisor.generate_stock_dashboard_analysis(
+        symbol="2330",
+        technical_summary=_make_technical_summary(),
+        chip_summary=None,
+        company_info=None,
+        recent_prices=_make_daily_df(),
+    )
+    assert received_kwargs.get("response_format") == {"type": "json_object"}
+    assert received_kwargs.get("thinking") == {"type": "disabled"}
+
+
+def test_deepseek_base_url_differs_from_openai() -> None:
+    assert DeepSeekAdapter.DEFAULT_BASE_URL != OpenAIAdapter.DEFAULT_BASE_URL
+    assert "deepseek.com" in DeepSeekAdapter.DEFAULT_BASE_URL
+    assert "/v1/" not in DeepSeekAdapter.DEFAULT_BASE_URL
+
+
+def test_deepseek_resolve_api_key_missing_field_returns_empty() -> None:
+    advisor = AIAdvisor(
+        enabled=False,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+    )
+    assert advisor._resolve_api_key("deepseek", {}) == ""
+    assert advisor._resolve_api_key("deepseek", {"other_key": "sk-x"}) == ""
+
+
+def test_deepseek_adapter_reads_key_from_env_via_config(monkeypatch, tmp_path) -> None:
+    (tmp_path / "config.yaml").write_text("ui:\n  theme: dark\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    monkeypatch.setattr(_config_module, "get_project_root", lambda: tmp_path)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-x")
+    _config_module.clear_config_cache()
+    try:
+        advisor = AIAdvisor(provider="deepseek", storage=StubStorage(_make_daily_df()))
+        assert advisor._provider_error is None
+        assert advisor.provider_adapter is not None
+        assert advisor.provider_adapter.api_key == "sk-x"
+    finally:
+        _config_module.clear_config_cache()
+
+
+def test_base_adapter_complete_signature_accepts_kwargs() -> None:
+    for cls in [BaseProviderAdapter, AnthropicAdapter, OpenAIAdapter, GeminiAdapter, DeepSeekAdapter]:
+        params = inspect.signature(cls.complete).parameters
+        assert "response_format" in params, f"{cls.__name__}.complete missing response_format"
+        assert "thinking" in params, f"{cls.__name__}.complete missing thinking"
+        assert params["response_format"].default is None, f"{cls.__name__}.complete response_format must default to None"
+        assert params["thinking"].default is None, f"{cls.__name__}.complete thinking must default to None"
+
+
+def test_anthropic_gemini_ignore_dashboard_kwargs() -> None:
+    # Anthropic: response_format / thinking must NOT be forwarded to messages.create
+    anthropic_adapter = AnthropicAdapter.__new__(AnthropicAdapter)
+    anthropic_adapter.api_key = "test"
+    anthropic_adapter.model = "test-model"
+    anthropic_adapter.timeout_seconds = 30.0
+    mock_create = MagicMock(return_value=MagicMock(content=[]))
+    anthropic_adapter._client = MagicMock()
+    anthropic_adapter._client.messages.create = mock_create
+
+    anthropic_adapter.complete(
+        model="test-model",
+        system_prompt="sys",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[],
+        response_format={"type": "json_object"},
+        thinking={"type": "disabled"},
+    )
+
+    call_kwargs = mock_create.call_args.kwargs
+    assert "response_format" not in call_kwargs
+    assert "thinking" not in call_kwargs
+
+    # Gemini: same — payload sent to requests.post must not include those keys
+    gemini_adapter = GeminiAdapter.__new__(GeminiAdapter)
+    gemini_adapter.api_key = "test"
+    gemini_adapter.model = "gemini-2.0-flash"
+    gemini_adapter.timeout_seconds = 30.0
+
+    with patch("src.ai.advisor.requests.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"candidates": []}
+        mock_post.return_value = mock_resp
+
+        gemini_adapter.complete(
+            model="gemini-2.0-flash",
+            system_prompt="sys",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            response_format={"type": "json_object"},
+            thinking={"type": "disabled"},
+        )
+
+        sent_payload = mock_post.call_args.kwargs["json"]
+        assert "response_format" not in sent_payload
+        assert "thinking" not in sent_payload
+
+
+def test_openai_adapter_base_url_backward_compat() -> None:
+    adapter = OpenAIAdapter(api_key="x", model="y")
+
+    with patch("src.ai.advisor.requests.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"choices": [{"message": {"content": "ok", "tool_calls": None}}]}
+        mock_post.return_value = mock_resp
+
+        adapter.complete(
+            model="y",
+            system_prompt="sys",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+        )
+
+        called_url = mock_post.call_args.args[0]
+        assert called_url == "https://api.openai.com/v1/chat/completions"
+
+
+def test_deepseek_adapter_inherits_openai_normalize() -> None:
+    adapter = DeepSeekAdapter(api_key="test", model="deepseek-v4-flash")
+    openai_format = {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-ds-1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_price_data",
+                                "arguments": '{"symbol": "2330"}',
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    result = adapter.normalize_tool_calls(openai_format)
+    assert len(result) == 1
+    assert result[0].name == "get_price_data"
+    assert result[0].arguments == {"symbol": "2330"}
+    assert result[0].id == "call-ds-1"
 
 
 @pytest.mark.integration

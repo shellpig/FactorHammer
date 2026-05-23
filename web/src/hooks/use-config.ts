@@ -1,7 +1,8 @@
 "use client";
 
-import useSWR from "swr";
+import useSWR, { mutate } from "swr";
 import { apiFetch, apiPut, apiPost, apiDeleteNoContent } from "@/lib/api-client";
+import type { AppConfig } from "@/types/config";
 
 export interface StrategyPreset {
   name: string;
@@ -12,6 +13,23 @@ export interface StrategyPreset {
 
 export const SECRETS_SWR_KEY = "/api/config/secrets/status";
 export const STRATEGIES_SWR_KEY = "/api/config/strategies";
+export const CONFIG_SWR_KEY = "/api/config";
+
+export function useConfig() {
+  const { data, error, isLoading, mutate } = useSWR<AppConfig>(
+    CONFIG_SWR_KEY,
+    async (url: string) => {
+      const res = await apiFetch<{ data: AppConfig }>(url);
+      return res.data;
+    },
+  );
+  return { config: data ?? null, isLoading, isError: !!error, mutate };
+}
+
+export async function updateConfig(patch: Record<string, unknown>): Promise<void> {
+  await apiPut(CONFIG_SWR_KEY, { patch });
+  await mutate(CONFIG_SWR_KEY);
+}
 
 export function useSecretsStatus() {
   const { data, error, isLoading, mutate } = useSWR<Record<string, boolean>>(

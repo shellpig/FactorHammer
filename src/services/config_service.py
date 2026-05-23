@@ -31,6 +31,7 @@ _SECRET_ENV_KEYS: dict[str, str] = {
     "GEMINI_API_KEY": "gemini",
     "FINMIND_TOKEN": "finmind",
     "GOOGLE_API_KEY": "google",
+    "DEEPSEEK_API_KEY": "deepseek",
 }
 
 _SECRET_MASK = "***configured***"

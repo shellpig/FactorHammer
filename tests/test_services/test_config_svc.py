@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from src.core.config import clear_config_cache
+from src.core.config import get_config as core_get_config
 from src.services.config_service import (
     CONFIG_UPDATE_WHITELIST,
     FinMindTokenInvalid,
@@ -208,6 +210,44 @@ def test_get_secrets_status_falls_back_to_os_environ_when_key_missing_in_env(
     mock_root.return_value = tmp_path
     monkeypatch.setenv("OPENAI_API_KEY", "from-os-env")
     assert get_secrets_status()["openai"] is True
+
+
+@patch("src.services.config_service.get_project_root")
+def test_secrets_status_includes_deepseek(
+    mock_root: MagicMock,
+    tmp_path: Path,
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("DEEPSEEK_API_KEY=sk-ds-test\n", encoding="utf-8")
+    mock_root.return_value = tmp_path
+
+    status = get_secrets_status()
+    assert "deepseek" in status
+    assert isinstance(status["deepseek"], bool)
+    assert status["deepseek"] is True
+
+
+@patch("src.core.config.get_project_root")
+def test_get_config_secrets_includes_deepseek_api_key(
+    mock_root: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config.yaml").write_text("ui:\n  theme: dark\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    mock_root.return_value = tmp_path
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-x")
+    clear_config_cache()
+    config = core_get_config()
+    assert config["secrets"]["deepseek_api_key"] == "sk-x"
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    clear_config_cache()
+    config = core_get_config()
+    assert config["secrets"]["deepseek_api_key"] == ""
+
+    clear_config_cache()
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 {
   "name": "quanttrader-web",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "private": true,
   "packageManager": "pnpm@11.1.1",
   "scripts": {

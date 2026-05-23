@@ -6,6 +6,7 @@ export interface SecretsStatus {
   gemini: boolean;
   finmind: boolean;
   google: boolean;
+  deepseek: boolean;
 }
 
 export interface AiConfig {

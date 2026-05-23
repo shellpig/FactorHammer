@@ -8,6 +8,7 @@ const PROVIDERS = [
   { key: "openai", label: "OpenAI API Key" },
   { key: "anthropic", label: "Anthropic API Key" },
   { key: "gemini", label: "Gemini API Key" },
+  { key: "deepseek", label: "DeepSeek API Key" },
   { key: "finmind", label: "FinMind Token" },
   { key: "google", label: "Google API Key" },
 ] as const;

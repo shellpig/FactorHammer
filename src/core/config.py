@@ -47,6 +47,7 @@ def get_config() -> dict[str, Any]:
         "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
         "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
         "google_api_key": os.getenv("GOOGLE_API_KEY", ""),
+        "deepseek_api_key": os.getenv("DEEPSEEK_API_KEY", ""),
     }
     
     if "ui" not in config or not isinstance(config["ui"], dict):
