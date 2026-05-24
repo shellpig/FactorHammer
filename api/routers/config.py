@@ -102,8 +102,11 @@ def post_secrets_validate(request: SecretsValidateRequest) -> dict[str, Any]:
     """Validate API keys and write savable ones to .env.
 
     15-A-2 contract:
-    - FinMind is required: blank/None or validation failure → 200 with
-      results.finmind error and saved=[]; no other keys are written.
+    - FinMind is required: blank/None body and .env also lacks FINMIND_TOKEN
+      → 200 with results.finmind error and saved=[]; no other keys written.
+      If body is blank but .env already has FINMIND_TOKEN (already onboarded),
+      finmind is treated as already-configured (not in results, not re-validated,
+      not re-written) and other providers are still validated.
     - Other providers are optional (validate-if-present): absent/blank → skipped
       (not in results); present → validated individually.
     - ok and no_quota → written to .env; invalid_key and unreachable → not written.
@@ -111,29 +114,36 @@ def post_secrets_validate(request: SecretsValidateRequest) -> dict[str, Any]:
     """
     # ── (a) FinMind 必填驗證 ──
     finmind_token = (request.finmind or "").strip()
+    results: dict[str, dict[str, str]] = {}
+    to_save: dict[str, str] = {}
 
-    # 空白 finmind：直接 early-return（不呼叫 wrapper，避免 "skipped" 語意混入 results）
     if not finmind_token:
-        return {
-            "data": {
-                "results": {
-                    "finmind": {
-                        "status": "invalid_key",
-                        "message": "FinMind token 為必填",
-                    }
+        # body 空白：fallback 看 .env 是否已有 FINMIND_TOKEN
+        # 已 onboarded → 視為已設定，不放進 results 也不重寫；未 onboarded → 必填失敗
+        if get_secrets_status().get("finmind", False):
+            pass  # 已設定，跳過 finmind 驗證、繼續驗其他 provider
+        else:
+            return {
+                "data": {
+                    "results": {
+                        "finmind": {
+                            "status": "invalid_key",
+                            "message": "FinMind token 為必填",
+                        }
+                    },
+                    "saved": [],
                 },
-                "saved": [],
-            },
-            "meta": {},
+                "meta": {},
+            }
+    else:
+        finmind_result: ValidationResult = validate_finmind_token_wrapped(finmind_token)
+        results["finmind"] = {
+            "status": finmind_result.status,
+            "message": finmind_result.message,
         }
-
-    finmind_result: ValidationResult = validate_finmind_token_wrapped(finmind_token)
-    results: dict[str, dict[str, str]] = {
-        "finmind": {"status": finmind_result.status, "message": finmind_result.message},
-    }
-
-    if not finmind_result.is_savable():
-        return {"data": {"results": results, "saved": []}, "meta": {}}
+        if not finmind_result.is_savable():
+            return {"data": {"results": results, "saved": []}, "meta": {}}
+        to_save["finmind"] = finmind_token
 
 
     # ── (b) 其他 provider 選填 validate-if-present ──
@@ -144,8 +154,6 @@ def post_secrets_validate(request: SecretsValidateRequest) -> dict[str, Any]:
         "gemini": (request.gemini, validate_gemini_token),
     }
 
-    to_save: dict[str, str] = {"finmind": finmind_token}
-
     for provider, (token, validator) in optional_validators.items():
         if token is None or not token.strip():
             continue  # 沒送 / 空白 → 不驗證、不出現在 results
@@ -155,13 +163,14 @@ def post_secrets_validate(request: SecretsValidateRequest) -> dict[str, Any]:
             to_save[provider] = token.strip()
 
     # ── (c) 寫入 .env + runtime env（update_secrets 是單一寫入點） ──
-    try:
-        update_secrets(to_save)
-    except OSError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": "ENV_WRITE_FAILED", "message": f"寫入設定檔失敗：{exc}"}},
-        ) from exc
+    if to_save:
+        try:
+            update_secrets(to_save)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": "ENV_WRITE_FAILED", "message": f"寫入設定檔失敗：{exc}"}},
+            ) from exc
 
     saved: list[str] = list(to_save.keys())
 

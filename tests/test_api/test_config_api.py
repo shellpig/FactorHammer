@@ -108,15 +108,13 @@ def test_put_secrets_unknown_provider_returns_422(mock_update: MagicMock) -> Non
 # Other providers: validate-if-present; ok/no_quota → saved; invalid/unreachable → not saved
 
 
+@patch("api.routers.config.get_secrets_status", return_value={"finmind": False})
 @patch("api.routers.config.validate_finmind_token_wrapped")
 def test_post_secrets_validate_missing_finmind_returns_200_with_invalid(
     mock_fm: MagicMock,
+    mock_status: MagicMock,
 ) -> None:
-    """Missing finmind → 200, results.finmind.status=invalid_key, saved=[]."""
-    mock_fm.return_value = __import__(
-        "src.services.config_service", fromlist=["ValidationResult"]
-    ).ValidationResult("invalid_key", "FinMind token 為必填")
-
+    """Missing finmind + .env 沒 FINMIND_TOKEN → 200, invalid_key, saved=[]."""
     response = client.post("/api/config/secrets/validate", json={})
     assert response.status_code == 200
     data = response.json()["data"]
@@ -124,18 +122,64 @@ def test_post_secrets_validate_missing_finmind_returns_200_with_invalid(
     assert data["saved"] == []
 
 
+@patch("api.routers.config.get_secrets_status", return_value={"finmind": False})
 @patch("api.routers.config.validate_finmind_token_wrapped")
 def test_post_secrets_validate_blank_finmind_returns_200_with_invalid(
     mock_fm: MagicMock,
+    mock_status: MagicMock,
 ) -> None:
-    mock_fm.return_value = __import__(
-        "src.services.config_service", fromlist=["ValidationResult"]
-    ).ValidationResult("invalid_key", "FinMind token 為必填")
-
     response = client.post("/api/config/secrets/validate", json={"finmind": "   "})
     assert response.status_code == 200
     assert response.json()["data"]["results"]["finmind"]["status"] == "invalid_key"
     assert response.json()["data"]["saved"] == []
+
+
+@patch("api.routers.config.update_secrets")
+@patch("api.routers.config.validate_deepseek_token")
+@patch("api.routers.config.validate_finmind_token_wrapped")
+@patch("api.routers.config.get_secrets_status", return_value={"finmind": True})
+def test_post_secrets_validate_blank_finmind_with_env_set_proceeds(
+    mock_status: MagicMock,
+    mock_fm: MagicMock,
+    mock_ds: MagicMock,
+    mock_update: MagicMock,
+) -> None:
+    """body 空白 finmind + .env 已有 FINMIND_TOKEN → 不擋、其他 provider 照驗。
+
+    驗 15-A-2 settings 頁面增量加 key 流程：使用者只貼 DeepSeek，FinMind 不重打也能通過。
+    """
+    from src.services.config_service import ValidationResult
+    mock_ds.return_value = ValidationResult("ok", "DeepSeek key 驗證成功")
+
+    response = client.post("/api/config/secrets/validate", json={"deepseek": "sk-ds-good"})
+    assert response.status_code == 200
+    data = response.json()["data"]
+    # finmind 不重驗、不出現在 results、不在 saved
+    assert "finmind" not in data["results"]
+    assert "finmind" not in data["saved"]
+    # deepseek 正常被驗 + 寫入
+    assert data["results"]["deepseek"]["status"] == "ok"
+    assert data["saved"] == ["deepseek"]
+    mock_fm.assert_not_called()
+    mock_update.assert_called_once_with({"deepseek": "sk-ds-good"})
+
+
+@patch("api.routers.config.update_secrets")
+@patch("api.routers.config.validate_finmind_token_wrapped")
+@patch("api.routers.config.get_secrets_status", return_value={"finmind": True})
+def test_post_secrets_validate_blank_finmind_with_env_set_no_optional_no_write(
+    mock_status: MagicMock,
+    mock_fm: MagicMock,
+    mock_update: MagicMock,
+) -> None:
+    """body 空白 finmind + .env 已設 + 沒送任何 optional → saved=[], 不呼叫 update_secrets。"""
+    response = client.post("/api/config/secrets/validate", json={})
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["results"] == {}
+    assert data["saved"] == []
+    mock_fm.assert_not_called()
+    mock_update.assert_not_called()
 
 
 @patch("api.routers.config.update_secrets")
