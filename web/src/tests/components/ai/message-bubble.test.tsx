@@ -42,11 +42,11 @@ describe("MessageBubble", () => {
     expect(screen.getByText("RSI_14")).toBeInTheDocument();
   });
 
-  it("shows pulsing cursor when content is empty (streaming placeholder)", () => {
+  it("shows pulsing thinking text when content is empty (streaming placeholder)", () => {
     render(<MessageBubble role="assistant" content="" />);
-    // Streaming cursor: animate-pulse span rendered instead of markdown
-    const bubble = screen.getByTestId("message-bubble-assistant");
-    expect(bubble.querySelector(".animate-pulse")).toBeInTheDocument();
+    const placeholder = screen.getByTestId("chat-thinking-placeholder");
+    expect(placeholder).toHaveTextContent("思考中...");
+    expect(placeholder).toHaveClass("animate-pulse");
   });
 
   it("user bubble aligns right (items-end)", () => {

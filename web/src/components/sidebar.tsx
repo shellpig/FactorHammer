@@ -28,7 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "個股分析", shortLabel: "分析",  href: "/dashboard", icon: BarChart3 },
   { label: "回測研究", shortLabel: "回測",  href: "/backtest",  icon: TrendingUp },
   { label: "資料管理", shortLabel: "資料",  href: "/data",      icon: FolderOpen },
-  { label: "AI 問答",  shortLabel: "AI",    href: "/ai",        icon: Bot,       badge: "後續開放" },
+  { label: "AI 問答",  shortLabel: "AI",    href: "/ai",        icon: Bot },
   { label: "設定",     shortLabel: "設定",  href: "/settings",  icon: Settings },
 ];
 

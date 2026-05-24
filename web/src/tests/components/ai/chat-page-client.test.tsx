@@ -1,28 +1,45 @@
-// Tests for ChatPageClient component (Phase 10-F-1)
-// Uses fake timers to advance the mock streaming setInterval.
-
+// Tests for ChatPageClient component (Phase 15-C)
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ChatPageClient } from "@/components/ai/chat-page-client";
+import { useAIChat } from "@/hooks/use-ai-chat";
 
 // scrollIntoView is not implemented in jsdom
 window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
-// Pre-accept disclaimer so tests start at the chat view
+vi.mock("@/hooks/use-ai-chat", () => ({
+  useAIChat: vi.fn(),
+}));
+
+const mockUseAIChat = useAIChat as any;
+
 beforeEach(() => {
   localStorage.setItem("ai_chat.disclaimer_accepted_v1", "1");
   vi.useFakeTimers();
+
+  // Default mock behavior
+  mockUseAIChat.mockReturnValue({
+    messages: [
+      {
+        role: "assistant",
+        content: "你好。可提問範例：2330 的 RSI 是多少？／回測 KD_Cross 在 2020 年的表現？",
+      },
+    ],
+    streaming: false,
+    send: vi.fn(),
+    abort: vi.fn(),
+  });
 });
 
 afterEach(() => {
   localStorage.clear();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("ChatPageClient", () => {
   it("renders chat page container", () => {
     render(<ChatPageClient />);
-    // After useEffect resolves accepted state
     act(() => { vi.runAllTimers(); });
     expect(screen.getByTestId("chat-page")).toBeInTheDocument();
   });
@@ -33,7 +50,15 @@ describe("ChatPageClient", () => {
     expect(screen.getByText(/可提問範例/)).toBeInTheDocument();
   });
 
-  it("user bubble appears immediately after send", () => {
+  it("calls send with input when send button clicked", () => {
+    const sendMock = vi.fn();
+    mockUseAIChat.mockReturnValue({
+      messages: [{ role: "assistant", content: "你好" }],
+      streaming: false,
+      send: sendMock,
+      abort: vi.fn(),
+    });
+
     render(<ChatPageClient />);
     act(() => { vi.runAllTimers(); });
 
@@ -41,53 +66,37 @@ describe("ChatPageClient", () => {
     fireEvent.change(input, { target: { value: "2330 的 RSI？" } });
     fireEvent.click(screen.getByTestId("chat-send-button"));
 
-    expect(screen.getByText("2330 的 RSI？")).toBeInTheDocument();
+    expect(sendMock).toHaveBeenCalledWith("2330 的 RSI？");
   });
 
-  it("input clears after send", () => {
+  it("empty or whitespace-only input does not trigger send", () => {
+    const sendMock = vi.fn();
+    mockUseAIChat.mockReturnValue({
+      messages: [{ role: "assistant", content: "你好" }],
+      streaming: false,
+      send: sendMock,
+      abort: vi.fn(),
+    });
+
     render(<ChatPageClient />);
     act(() => { vi.runAllTimers(); });
 
-    const input = screen.getByTestId("chat-input-field") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "測試問題" } });
-    fireEvent.click(screen.getByTestId("chat-send-button"));
-
-    expect(input.value).toBe("");
-  });
-
-  it("assistant bubble grows character by character (fake timer)", () => {
-    render(<ChatPageClient />);
-    act(() => { vi.runAllTimers(); });
-
-    const input = screen.getByTestId("chat-input-field");
-    fireEvent.change(input, { target: { value: "hi" } });
-    fireEvent.click(screen.getByTestId("chat-send-button"));
-
-    // Advance 50ms (2 chars at 25ms each)
-    act(() => { vi.advanceTimersByTime(50); });
-    const assistantBubbles = screen.getAllByTestId("message-bubble-assistant");
-    const last = assistantBubbles[assistantBubbles.length - 1];
-    // Content should have started streaming (non-empty)
-    expect(last.textContent).toBeTruthy();
-
-    // Advance all remaining timers to finish stream
-    act(() => { vi.runAllTimers(); });
-    expect(last.textContent).toMatch(/AI 串接尚未開放/);
-  });
-
-  it("empty or whitespace-only input does not send", () => {
-    render(<ChatPageClient />);
-    act(() => { vi.runAllTimers(); });
-
-    const initialBubbleCount = screen.getAllByTestId(/message-bubble/).length;
     const input = screen.getByTestId("chat-input-field");
     fireEvent.change(input, { target: { value: "   " } });
     fireEvent.click(screen.getByTestId("chat-send-button"));
 
-    expect(screen.getAllByTestId(/message-bubble/).length).toBe(initialBubbleCount);
+    expect(sendMock).not.toHaveBeenCalled();
   });
 
   it("Enter key triggers send", () => {
+    const sendMock = vi.fn();
+    mockUseAIChat.mockReturnValue({
+      messages: [{ role: "assistant", content: "你好" }],
+      streaming: false,
+      send: sendMock,
+      abort: vi.fn(),
+    });
+
     render(<ChatPageClient />);
     act(() => { vi.runAllTimers(); });
 
@@ -95,7 +104,49 @@ describe("ChatPageClient", () => {
     fireEvent.change(input, { target: { value: "Enter 送出" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(screen.getByText("Enter 送出")).toBeInTheDocument();
+    expect(sendMock).toHaveBeenCalledWith("Enter 送出");
+  });
+
+  it("shows cancel button and calls abort when streaming", () => {
+    const abortMock = vi.fn();
+    mockUseAIChat.mockReturnValue({
+      messages: [
+        { role: "user", content: "MACD是什麼" },
+        { role: "assistant", content: "正在運算..." },
+      ],
+      streaming: true,
+      send: vi.fn(),
+      abort: abortMock,
+    });
+
+    render(<ChatPageClient />);
+    act(() => { vi.runAllTimers(); });
+
+    const cancelBtn = screen.getByTestId("chat-cancel-button");
+    expect(cancelBtn).toBeInTheDocument();
+    expect(cancelBtn.textContent).toBe("取消");
+
+    fireEvent.click(cancelBtn);
+    expect(abortMock).toHaveBeenCalled();
+  });
+
+  it("renders error inside MessageBubble when error present", () => {
+    mockUseAIChat.mockReturnValue({
+      messages: [
+        { role: "user", content: "測試錯誤" },
+        { role: "assistant", content: "一部分內容", error: "連線中斷" },
+      ],
+      streaming: false,
+      send: vi.fn(),
+      abort: vi.fn(),
+    });
+
+    render(<ChatPageClient />);
+    act(() => { vi.runAllTimers(); });
+
+    const errorBubble = screen.getByTestId("chat-inline-error");
+    expect(errorBubble).toBeInTheDocument();
+    expect(errorBubble.textContent).toContain("連線中斷");
   });
 
   it("shows disclaimer gate when localStorage key absent", () => {

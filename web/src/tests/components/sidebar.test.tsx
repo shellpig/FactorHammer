@@ -36,14 +36,9 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("sidebar-nav-ai")).toBeInTheDocument();
   });
 
-  it("shows 後續開放 badge on AI 問答 item", () => {
+  it("does not show badge on AI 問答 or other nav items", () => {
     render(<Sidebar />);
-    expect(screen.getByTestId("sidebar-badge-ai")).toBeInTheDocument();
-    expect(screen.getByTestId("sidebar-badge-ai").textContent).toBe("後續開放");
-  });
-
-  it("does not show badge on other nav items", () => {
-    render(<Sidebar />);
+    expect(screen.queryByTestId("sidebar-badge-ai")).not.toBeInTheDocument();
     expect(screen.queryByTestId("sidebar-badge-dashboard")).not.toBeInTheDocument();
     expect(screen.queryByTestId("sidebar-badge-settings")).not.toBeInTheDocument();
   });

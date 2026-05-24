@@ -7,9 +7,10 @@ import { cn } from "@/lib/utils";
 interface MessageBubbleProps {
   role: "user" | "assistant";
   content: string;
+  error?: string;
 }
 
-export function MessageBubble({ role, content }: MessageBubbleProps) {
+export function MessageBubble({ role, content, error }: MessageBubbleProps) {
   const isUser = role === "user";
 
   return (
@@ -57,8 +58,19 @@ export function MessageBubble({ role, content }: MessageBubbleProps) {
           >
             {content}
           </ReactMarkdown>
-        ) : (
-          <span className="inline-block h-4 w-2 animate-pulse rounded-sm bg-muted-foreground/50" />
+        ) : error ? null : (
+          <span
+            className="inline-block animate-pulse text-muted-foreground"
+            data-testid="chat-thinking-placeholder"
+          >
+            思考中...
+          </span>
+        )}
+
+        {error && (
+          <div className="mt-1 text-xs text-red-500 dark:text-red-400 font-medium" data-testid="chat-inline-error">
+            ⚠️ 錯誤：{error}
+          </div>
         )}
       </div>
     </div>
