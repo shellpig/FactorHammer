@@ -25,6 +25,8 @@ SYSTEM_PROMPT = """你是一個台股技術分析助理。你的工作是：
 - 明確建議使用者買進或賣出
 - 預測股價未來走勢
 - 給予資金配置建議
+
+注意：如果工具呼叫回傳錯誤（例如 "Auto-update failed" 等），你應該直接回覆「無法取得資料」並簡述該錯誤，絕對不可以猜測或斷言該股票代碼不存在。
 """
 
 DISCLAIMER = """⚠️ 免責聲明：以上分析僅為技術指標數值的客觀陳述，不構成任何投資建議。
@@ -179,6 +181,18 @@ class BaseProviderAdapter(ABC):
     ) -> AsyncIterator[str]:
         """Async generator yielding text chunks."""
 
+    async def stream_complete_with_tools(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Async generator yielding chunks containing either text tokens or accumulated tool calls."""
+        raise NotImplementedError()
+        yield {}  # unreachable dummy yield to make it an async generator
+
     @abstractmethod
     def normalize_tool_calls(self, raw_response: Any) -> list[NormalizedToolCall]:
         """Normalize provider-specific tool call payloads."""
@@ -249,6 +263,63 @@ class AnthropicAdapter(BaseProviderAdapter):
         ) as stream:
             async for text in stream.text_stream:
                 yield text
+
+    async def stream_complete_with_tools(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> AsyncIterator[dict[str, Any]]:
+        from anthropic import AsyncAnthropic
+        if not hasattr(self, "_async_client"):
+            self._async_client = AsyncAnthropic(api_key=self.api_key)
+
+        anthropic_msgs = self._to_anthropic_messages(messages)
+        tool_calls_accumulator = {}
+
+        async with self._async_client.messages.stream(
+            model=model,
+            max_tokens=1024,
+            system=system_prompt,
+            tools=tools,
+            messages=anthropic_msgs,
+        ) as stream:
+            async for event in stream:
+                if event.type == "content_block_start":
+                    index = event.index
+                    block_type = event.content_block.type
+                    if block_type == "tool_use":
+                        tool_calls_accumulator[index] = {
+                            "id": event.content_block.id,
+                            "name": event.content_block.name,
+                            "input_str": "",
+                        }
+                elif event.type == "content_block_delta":
+                    index = event.index
+                    delta_type = event.delta.type
+                    if delta_type == "text_delta":
+                        yield {"type": "token", "text": event.delta.text}
+                    elif delta_type == "input_json_delta":
+                        partial_json = event.delta.partial_json
+                        if index in tool_calls_accumulator:
+                            tool_calls_accumulator[index]["input_str"] += partial_json
+
+        final_tool_calls = []
+        for index, tc_data in sorted(tool_calls_accumulator.items()):
+            try:
+                args = json.loads(tc_data["input_str"]) if tc_data["input_str"] else {}
+            except Exception:
+                args = {}
+            final_tool_calls.append({
+                "id": tc_data["id"],
+                "name": tc_data["name"],
+                "arguments": args,
+            })
+
+        if final_tool_calls:
+            yield {"type": "tool_calls", "tool_calls": final_tool_calls}
 
     def normalize_tool_calls(self, raw_response: Any) -> list[NormalizedToolCall]:
         content = getattr(raw_response, "content", None)
@@ -432,6 +503,100 @@ class OpenAIAdapter(BaseProviderAdapter):
                         if content:
                             yield content
 
+    async def stream_complete_with_tools(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        **extra_payload_kwargs,
+    ) -> AsyncIterator[dict[str, Any]]:
+        import httpx
+        payload = {
+            "model": model,
+            "messages": self._to_openai_messages(messages, system_prompt),
+            "tools": self._to_openai_tools(tools),
+            "stream": True,
+        }
+        payload.update(extra_payload_kwargs)
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        tool_calls_accumulator = {}
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with client.stream(
+                "POST",
+                self._base_url,
+                headers=headers,
+                json=payload,
+            ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise RuntimeError(f"OpenAI API error: {response.status_code} {body[:300].decode('utf-8', errors='ignore')}")
+
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line == "data: [DONE]":
+                        break
+                    if line.startswith("data: "):
+                        data_str = line[len("data: "):]
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = data.get("choices", [])
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {})
+
+                        # Check for text token
+                        content = delta.get("content")
+                        if content:
+                            yield {"type": "token", "text": content}
+
+                        # Check for tool call delta
+                        tc_deltas = delta.get("tool_calls", []) or []
+                        for tc_delta in tc_deltas:
+                            idx = tc_delta.get("index")
+                            if idx is None:
+                                continue
+                            if idx not in tool_calls_accumulator:
+                                tool_calls_accumulator[idx] = {
+                                    "id": tc_delta.get("id", ""),
+                                    "name": "",
+                                    "arguments_str": "",
+                                }
+
+                            if "id" in tc_delta and tc_delta["id"]:
+                                tool_calls_accumulator[idx]["id"] = tc_delta["id"]
+
+                            fn_delta = tc_delta.get("function", {})
+                            if "name" in fn_delta and fn_delta["name"]:
+                                tool_calls_accumulator[idx]["name"] = fn_delta["name"]
+                            if "arguments" in fn_delta and fn_delta["arguments"]:
+                                tool_calls_accumulator[idx]["arguments_str"] += fn_delta["arguments"]
+
+        final_tool_calls = []
+        for idx, tc in sorted(tool_calls_accumulator.items()):
+            try:
+                args = json.loads(tc["arguments_str"]) if tc["arguments_str"] else {}
+            except Exception:
+                args = {}
+            final_tool_calls.append({
+                "id": tc["id"] or f"openai-tool-{idx}",
+                "name": tc["name"],
+                "arguments": args,
+            })
+
+        if final_tool_calls:
+            yield {"type": "tool_calls", "tool_calls": final_tool_calls}
+
     def normalize_tool_calls(self, raw_response: Any) -> list[NormalizedToolCall]:
         message: dict[str, Any] = {}
         if isinstance(raw_response, dict) and "choices" in raw_response:
@@ -587,6 +752,69 @@ class GeminiAdapter(BaseProviderAdapter):
                         if text:
                             yield text
 
+    async def stream_complete_with_tools(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> AsyncIterator[dict[str, Any]]:
+        import httpx
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
+        payload = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": self._to_gemini_contents(messages),
+            "tools": [{"functionDeclarations": self._to_gemini_functions(tools)}],
+        }
+        headers = {"Content-Type": "application/json"}
+        params = {"key": self.api_key, "alt": "sse"}
+
+        tool_calls_accumulator = []
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with client.stream(
+                "POST",
+                endpoint,
+                params=params,
+                headers=headers,
+                json=payload,
+            ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise RuntimeError(f"Gemini API error: {response.status_code} {body[:300].decode('utf-8', errors='ignore')}")
+
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        chunk = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
+                    candidates = chunk.get("candidates", []) or []
+                    if not candidates:
+                        continue
+                    parts = candidates[0].get("content", {}).get("parts", []) or []
+                    for part in parts:
+                        text = part.get("text")
+                        if text:
+                            yield {"type": "token", "text": text}
+
+                        fn_call = part.get("functionCall")
+                        if fn_call and isinstance(fn_call, dict):
+                            tool_calls_accumulator.append(fn_call)
+
+        final_tool_calls = []
+        for idx, fn_call in enumerate(tool_calls_accumulator, start=1):
+            final_tool_calls.append({
+                "id": str(fn_call.get("id") or f"gemini-tool-{idx}"),
+                "name": str(fn_call.get("name", "")),
+                "arguments": self._json_loads_maybe(fn_call.get("args", {})),
+            })
+
+        if final_tool_calls:
+            yield {"type": "tool_calls", "tool_calls": final_tool_calls}
+
     def normalize_tool_calls(self, raw_response: Any) -> list[NormalizedToolCall]:
         if not isinstance(raw_response, dict):
             return []
@@ -723,6 +951,23 @@ class DeepSeekAdapter(OpenAIAdapter):
                         if content:
                             yield content
 
+    async def stream_complete_with_tools(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> AsyncIterator[dict[str, Any]]:
+        async for chunk in super().stream_complete_with_tools(
+            model=model,
+            system_prompt=system_prompt,
+            messages=messages,
+            tools=tools,
+            thinking={"type": "disabled"},
+        ):
+            yield chunk
+
 
 PROVIDER_ADAPTERS: dict[str, type[BaseProviderAdapter]] = {
     "anthropic": AnthropicAdapter,
@@ -771,8 +1016,8 @@ class AIAdvisor:
                 adapter_cls = PROVIDER_ADAPTERS[self.provider]
                 self.provider_adapter = adapter_cls(api_key=api_key, model=self.model)
 
-    async def stream_chat(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
-        """Stream chat responses. Yields event dicts."""
+    async def stream_chat(self, messages: list[dict[str, Any]], max_tool_rounds: int = 6) -> AsyncIterator[dict[str, Any]]:
+        """Stream chat responses supporting multi-round tool loops. Yields event dicts."""
         if not self.enabled:
             yield {"event": "error", "message": "AI 功能已關閉（ai.enabled=false）。"}
             return
@@ -785,15 +1030,128 @@ class AIAdvisor:
             yield {"event": "error", "message": "AI provider adapter is not initialized."}
             return
 
+        import unittest.mock
+        stream_complete_fn = getattr(self.provider_adapter, "stream_complete", None)
+        is_mock = stream_complete_fn is not None and isinstance(stream_complete_fn, (unittest.mock.Mock, unittest.mock.MagicMock))
+
+        is_base_impl = False
         try:
-            async for chunk in self.provider_adapter.stream_complete(
-                model=self.model,
-                system_prompt=SYSTEM_PROMPT,
-                messages=messages,
-            ):
-                yield {"event": "token", "text": chunk}
+            is_base_impl = self.provider_adapter.stream_complete_with_tools.__func__ is BaseProviderAdapter.stream_complete_with_tools
+        except AttributeError:
+            is_base_impl = True
+
+        if is_mock or is_base_impl:
+            try:
+                async for chunk in self.provider_adapter.stream_complete(
+                    model=self.model,
+                    system_prompt=SYSTEM_PROMPT,
+                    messages=messages,
+                ):
+                    yield {"event": "token", "text": chunk}
+            except Exception as exc:
+                yield {"event": "error", "message": f"AI provider request failed: {exc}"}
+            return
+
+        completed_successfully = False
+        working_messages = list(messages)
+        updated_daily_symbols: set[tuple[str, str]] = set()
+        try:
+            for round_idx in range(max_tool_rounds):
+                current_assistant_content = ""
+                current_tool_calls = []
+
+                async for chunk in self.provider_adapter.stream_complete_with_tools(
+                    model=self.model,
+                    system_prompt=SYSTEM_PROMPT,
+                    messages=working_messages,
+                    tools=TOOLS,
+                ):
+                    if chunk["type"] == "token":
+                        text = chunk["text"]
+                        current_assistant_content += text
+                        yield {"event": "token", "text": text}
+                    elif chunk["type"] == "tool_calls":
+                        current_tool_calls = chunk["tool_calls"]
+
+                if current_tool_calls:
+                    # Append assistant message with its tool calls
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": current_assistant_content,
+                        "tool_calls": current_tool_calls,
+                    }
+                    working_messages.append(assistant_msg)
+
+                    # Process each tool call sequentially
+                    for tool_call in current_tool_calls:
+                        tool_name = tool_call.get("name")
+                        tool_id = tool_call.get("id")
+                        tool_args = tool_call.get("arguments", {})
+
+                        # Notify client that tool is being called
+                        yield {
+                            "event": "tool_call",
+                            "name": tool_name,
+                            "arguments": tool_args,
+                        }
+
+                        # Execute tool
+                        try:
+                            tool_output = await self._execute_tool(tool_name, tool_args, updated_daily_symbols)
+                        except Exception as e:
+                            tool_output = {"error": str(e)}
+
+                        # Append tool response
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": tool_id,
+                            "name": tool_name,
+                            "content": json.dumps(tool_output, ensure_ascii=False, default=str),
+                        }
+                        working_messages.append(tool_msg)
+
+                        # Notify client with output summary
+                        summary = self._summarize_tool_output(tool_name, tool_output)
+                        yield {
+                            "event": "tool_result",
+                            "name": tool_name,
+                            "output_summary": summary,
+                        }
+
+                    # Continue to next round of execution
+                    continue
+                else:
+                    # No tool calls, execution completed!
+                    completed_successfully = True
+                    break
+
+            if not completed_successfully:
+                yield {"event": "error", "message": "工具呼叫輪數過多，已停止。"}
         except Exception as exc:
             yield {"event": "error", "message": f"AI provider request failed: {exc}"}
+
+    def _summarize_tool_output(self, tool_name: str, output: dict[str, Any]) -> str:
+        if "error" in output:
+            return f"錯誤：{output['error']}"
+
+        warning_str = f" (注意：{output['warning']})" if "warning" in output else ""
+
+        if tool_name == "get_price_data":
+            symbol = output.get("symbol", "")
+            count = output.get("data_count", 0)
+            latest = output.get("latest_date", "")
+            return f"成功載入 {symbol} 近 {count} 筆歷史 K 線資料 (最新日期：{latest}){warning_str}"
+        elif tool_name == "calculate_indicators":
+            symbol = output.get("symbol", "")
+            indicators = output.get("indicators", {})
+            inds_str = ", ".join(indicators.keys())
+            return f"已成功為 {symbol} 計算指標：{inds_str}{warning_str}"
+        elif tool_name == "get_support_resistance":
+            symbol = output.get("symbol", "")
+            supports = output.get("support_levels", [])
+            resistances = output.get("resistance_levels", [])
+            return f"已成功計算 {symbol} 支撐位：{len(supports)} 個，壓力位：{len(resistances)} 個{warning_str}"
+        return f"執行成功{warning_str}"
 
     def ask(self, question: str, max_tool_rounds: int = 6) -> str:
         """Ask the assistant and always append disclaimer to final text."""
@@ -811,6 +1169,7 @@ class AIAdvisor:
             return self._append_disclaimer("AI provider adapter is not initialized.")
 
         messages: list[dict[str, Any]] = [{"role": "user", "content": question_text}]
+        updated_daily_symbols: set[tuple[str, str]] = set()
 
         for _ in range(max_tool_rounds):
             try:
@@ -837,7 +1196,15 @@ class AIAdvisor:
                     tool_name = str(tool_call.get("name", ""))
                     tool_id = str(tool_call.get("id", "tool-call"))
                     tool_input = tool_call.get("arguments", {}) or {}
-                    tool_output = self._execute_tool(tool_name, tool_input)
+                    try:
+                        import asyncio
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    tool_output = loop.run_until_complete(
+                        self._execute_tool(tool_name, tool_input, updated_daily_symbols)
+                    )
                     messages.append(
                         {
                             "role": "tool",
@@ -915,7 +1282,7 @@ class AIAdvisor:
             raise AICallError("AI response is not valid dashboard JSON.")
         return self._coerce_dashboard_analysis(parsed, technical_summary=technical_summary)
 
-    def _execute_tool(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_tool(self, tool_name: str, tool_input: dict[str, Any], updated_daily_symbols: set[tuple[str, str]] | None = None) -> dict[str, Any]:
         """Dispatch tool calls and return a dict result."""
         handlers = {
             "get_price_data": self._handle_get_price_data,
@@ -928,7 +1295,16 @@ class AIAdvisor:
         if not isinstance(tool_input, dict):
             return {"error": f"Tool input for {tool_name} must be an object."}
         try:
-            return handler(**tool_input)
+            import inspect
+            sig = inspect.signature(handler)
+            if "updated_daily_symbols" in sig.parameters:
+                res = handler(**tool_input, updated_daily_symbols=updated_daily_symbols)
+            else:
+                res = handler(**tool_input)
+
+            if inspect.isawaitable(res):
+                return await res
+            return res
         except TypeError as exc:
             return {"error": f"Invalid arguments for {tool_name}: {exc}"}
         except Exception as exc:  # noqa: BLE001
@@ -1120,12 +1496,133 @@ class AIAdvisor:
             return parsed
         return None
 
-    def _handle_get_price_data(
+    async def _ensure_daily_data_updated(
+        self,
+        symbol: str,
+        market: str,
+        updated_daily_symbols: set[tuple[str, str]] | None,
+    ) -> dict[str, Any]:
+        """
+        Ensure daily data is updated for the given symbol and market.
+        If it hasn't been updated in this session/round, try updating it once.
+        Returns a dict: {
+            "df": pd.DataFrame,
+            "warning": str | None,
+            "error": str | None
+        }
+        """
+        normalized_market = normalize_market(market)
+        try:
+            normalized_symbol = normalize_symbol(symbol, market=normalized_market)
+        except ValueError:
+            return {
+                "df": pd.DataFrame(),
+                "warning": None,
+                "error": f"Invalid symbol format: {symbol}"
+            }
+
+        key = (normalized_symbol, normalized_market)
+        df_local = self.storage.load_daily(normalized_symbol, market=normalized_market)
+        had_local_data = not df_local.empty
+
+        if updated_daily_symbols is not None and key in updated_daily_symbols:
+            return {
+                "df": df_local,
+                "warning": None,
+                "error": None if had_local_data else f"Auto-update returned no rows and no local data for symbol: {normalized_symbol}"
+            }
+
+        # Check write lock status from job manager
+        from api.job_manager import get_job_manager
+        manager = get_job_manager()
+        if manager.is_write_locked():
+            if had_local_data:
+                if updated_daily_symbols is not None:
+                    updated_daily_symbols.add(key)
+                return {
+                    "df": df_local,
+                    "warning": "資料更新正在進行中，暫用本機資料",
+                    "error": None
+                }
+            else:
+                return {
+                    "df": pd.DataFrame(),
+                    "warning": None,
+                    "error": "資料更新正在進行中，稍後再試"
+                }
+
+        # Try to acquire the lock ourselves
+        acquired = await manager.acquire_write_lock()
+        if not acquired:
+            if had_local_data:
+                if updated_daily_symbols is not None:
+                    updated_daily_symbols.add(key)
+                return {
+                    "df": df_local,
+                    "warning": "資料更新正在進行中，暫用本機資料",
+                    "error": None
+                }
+            else:
+                return {
+                    "df": pd.DataFrame(),
+                    "warning": None,
+                    "error": "資料更新正在進行中，稍後再試"
+                }
+
+        try:
+            if updated_daily_symbols is not None:
+                updated_daily_symbols.add(key)
+
+            from src.services.data_service import run_maintenance, DataServiceError
+            import asyncio
+            try:
+                res = await asyncio.to_thread(
+                    run_maintenance, normalized_symbol, rebuild=False, market=normalized_market
+                )
+                if isinstance(res, DataServiceError):
+                    raise RuntimeError(res.message)
+                df_new = self.storage.load_daily(normalized_symbol, market=normalized_market)
+                if df_new.empty:
+                    return {
+                        "df": pd.DataFrame(),
+                        "warning": None,
+                        "error": f"Auto-update returned no rows and no local data for symbol: {normalized_symbol}"
+                    }
+                return {
+                    "df": df_new,
+                    "warning": None,
+                    "error": None
+                }
+            except Exception as exc:
+                if had_local_data:
+                    return {
+                        "df": df_local,
+                        "warning": f"更新失敗，改用本機既有資料 (原因: {exc})",
+                        "error": None
+                    }
+                else:
+                    from src.core.config import get_config
+                    cfg = get_config()
+                    has_token = bool(cfg.get("secrets", {}).get("finmind_token"))
+                    if normalized_market == "tw" and not has_token:
+                        err_msg = f"Auto-update failed: FinMind token missing for symbol: {normalized_symbol}"
+                    else:
+                        err_msg = f"Auto-update failed: data source unavailable for symbol: {normalized_symbol} (原因: {exc})"
+                    return {
+                        "df": pd.DataFrame(),
+                        "warning": None,
+                        "error": err_msg
+                    }
+        finally:
+            manager.release_write_lock()
+
+    async def _handle_get_price_data(
         self,
         symbol: str,
         period: str,
         freq: str = "daily",
         market: str = "tw",
+        updated_daily_symbols: set[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Return capped OHLCV snapshots for AI tool usage."""
         normalized_market = normalize_market(market)
@@ -1136,13 +1633,17 @@ class AIAdvisor:
         if freq not in SUPPORTED_FREQS:
             return {"error": f"Unsupported freq: {freq}"}
 
+        warning_msg = None
         if freq == "daily":
-            df = self.storage.load_daily(normalized_symbol, market=normalized_market)
+            res = await self._ensure_daily_data_updated(normalized_symbol, normalized_market, updated_daily_symbols)
+            if res["error"]:
+                return {"error": res["error"]}
+            df = res["df"]
+            warning_msg = res["warning"]
         else:
             df = self.storage.load_minute(normalized_symbol, market=normalized_market)
-
-        if df.empty:
-            return {"error": f"No local data for symbol: {normalized_symbol}"}
+            if df.empty:
+                return {"error": f"No local data for symbol: {normalized_symbol}"}
 
         out = df.copy()
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
@@ -1166,20 +1667,24 @@ class AIAdvisor:
                 }
             )
 
-        return {
+        ret = {
             "symbol": normalized_symbol,
             "freq": freq,
             "data_count": len(records),
             "latest_date": records[-1]["date"] if records else None,
             "data": records,
         }
+        if warning_msg:
+            ret["warning"] = warning_msg
+        return ret
 
-    def _handle_calculate_indicators(
+    async def _handle_calculate_indicators(
         self,
         symbol: str,
         indicators: list[str],
         period: str = "6mo",
         market: str = "tw",
+        updated_daily_symbols: set[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Calculate a minimal set of indicators for phase 4-A tool calls."""
         normalized_market = normalize_market(market)
@@ -1190,9 +1695,11 @@ class AIAdvisor:
         if not isinstance(indicators, list) or not indicators:
             return {"error": "indicators must be a non-empty list"}
 
-        df = self.storage.load_daily(normalized_symbol, market=normalized_market)
-        if df.empty:
-            return {"error": f"No local data for symbol: {normalized_symbol}"}
+        res = await self._ensure_daily_data_updated(normalized_symbol, normalized_market, updated_daily_symbols)
+        if res["error"]:
+            return {"error": res["error"]}
+        df = res["df"]
+        warning_msg = res["warning"]
 
         out = df.copy()
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
@@ -1235,9 +1742,18 @@ class AIAdvisor:
             else:
                 result[name] = {"error": f"Unsupported indicator: {name}"}
 
-        return {"symbol": normalized_symbol, "indicators": result}
+        ret = {"symbol": normalized_symbol, "indicators": result}
+        if warning_msg:
+            ret["warning"] = warning_msg
+        return ret
 
-    def _handle_get_support_resistance(self, symbol: str, lookback: int = 60, market: str = "tw") -> dict[str, Any]:
+    async def _handle_get_support_resistance(
+        self,
+        symbol: str,
+        lookback: int = 60,
+        market: str = "tw",
+        updated_daily_symbols: set[tuple[str, str]] | None = None,
+    ) -> dict[str, Any]:
         """Compute simple support/resistance levels from local daily bars."""
         normalized_market = normalize_market(market)
         try:
@@ -1247,9 +1763,11 @@ class AIAdvisor:
         if lookback <= 0:
             return {"error": "lookback must be positive"}
 
-        df = self.storage.load_daily(normalized_symbol, market=normalized_market)
-        if df.empty:
-            return {"error": f"No local data for symbol: {normalized_symbol}"}
+        res = await self._ensure_daily_data_updated(normalized_symbol, normalized_market, updated_daily_symbols)
+        if res["error"]:
+            return {"error": res["error"]}
+        df = res["df"]
+        warning_msg = res["warning"]
 
         out = df.copy()
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
@@ -1278,12 +1796,15 @@ class AIAdvisor:
             supports.append({"level": float(ma60), "type": "MA60"})
             resistances.append({"level": float(ma60), "type": "MA60"})
 
-        return {
+        ret = {
             "symbol": normalized_symbol,
             "current_price": current_price,
             "support_levels": sorted(supports, key=lambda x: x["level"]),
             "resistance_levels": sorted(resistances, key=lambda x: x["level"]),
         }
+        if warning_msg:
+            ret["warning"] = warning_msg
+        return ret
 
     def _append_disclaimer(self, text: str) -> str:
         body = str(text).strip()

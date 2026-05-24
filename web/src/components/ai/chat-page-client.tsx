@@ -42,6 +42,7 @@ export function ChatPageClient() {
             role={msg.role}
             content={msg.content}
             error={msg.error}
+            toolCalls={msg.toolCalls}
           />
         ))}
         <div ref={bottomRef} />

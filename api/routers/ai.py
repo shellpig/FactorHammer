@@ -85,6 +85,22 @@ async def post_ai_chat(
                         "event": "token",
                         "data": json.dumps({"text": chunk["text"]}),
                     }
+                elif event == "tool_call":
+                    yield {
+                        "event": "tool_call",
+                        "data": json.dumps({
+                            "name": chunk["name"],
+                            "arguments": chunk["arguments"],
+                        }),
+                    }
+                elif event == "tool_result":
+                    yield {
+                        "event": "tool_result",
+                        "data": json.dumps({
+                            "name": chunk["name"],
+                            "output_summary": chunk["output_summary"],
+                        }),
+                    }
                 elif event == "error":
                     yield {
                         "event": "error",

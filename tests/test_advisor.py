@@ -120,6 +120,7 @@ class StubAdapter:
 
 
 def test_tool_dispatch() -> None:
+    import asyncio
     advisor = AIAdvisor(
         provider="anthropic",
         model="stub",
@@ -127,13 +128,17 @@ def test_tool_dispatch() -> None:
         adapter=StubAdapter([{"text": "ok", "tool_calls": []}]),
     )
 
-    result = advisor._execute_tool("get_price_data", {"symbol": "2330", "period": "3mo"})
-    assert isinstance(result, dict)
-    assert result["symbol"] == "2330"
-    assert result["data_count"] > 0
+    async def run():
+        result = await advisor._execute_tool("get_price_data", {"symbol": "2330", "period": "3mo"})
+        assert isinstance(result, dict)
+        assert result["symbol"] == "2330"
+        assert result["data_count"] > 0
+
+    asyncio.run(run())
 
 
 def test_unknown_tool_returns_error() -> None:
+    import asyncio
     advisor = AIAdvisor(
         provider="anthropic",
         model="stub",
@@ -141,8 +146,11 @@ def test_unknown_tool_returns_error() -> None:
         adapter=StubAdapter([{"text": "ok", "tool_calls": []}]),
     )
 
-    result = advisor._execute_tool("nonexistent", {})
-    assert result["error"].startswith("Unknown tool:")
+    async def run():
+        result = await advisor._execute_tool("nonexistent", {})
+        assert result["error"].startswith("Unknown tool:")
+
+    asyncio.run(run())
 
 
 def test_disclaimer_always_appended() -> None:
@@ -169,6 +177,7 @@ def test_disclaimer_always_appended() -> None:
 
 
 def test_invalid_symbol_returns_error() -> None:
+    import asyncio
     advisor = AIAdvisor(
         provider="anthropic",
         model="stub",
@@ -176,8 +185,11 @@ def test_invalid_symbol_returns_error() -> None:
         adapter=StubAdapter([{"text": "ok", "tool_calls": []}]),
     )
 
-    result = advisor._handle_get_price_data(symbol="9999", period="3mo")
-    assert "error" in result
+    async def run():
+        result = await advisor._handle_get_price_data(symbol="9999", period="3mo")
+        assert "error" in result
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize(
@@ -384,15 +396,19 @@ def test_dashboard_analysis_rejects_invalid_us_symbol() -> None:
 
 
 def test_handle_get_price_data_accepts_us_symbol_with_market_context() -> None:
+    import asyncio
     advisor = AIAdvisor(
         provider="anthropic",
         model="stub",
         storage=StubStorage(_make_daily_df(symbol="AAPL")),
         adapter=StubAdapter([{"text": "ok", "tool_calls": []}]),
     )
-    result = advisor._handle_get_price_data(symbol="aapl", period="3mo", market="us")
-    assert result["symbol"] == "AAPL"
-    assert result["data_count"] > 0
+    async def run():
+        result = await advisor._handle_get_price_data(symbol="aapl", period="3mo", market="us")
+        assert result["symbol"] == "AAPL"
+        assert result["data_count"] > 0
+
+    asyncio.run(run())
 
 
 def test_dashboard_analysis_scenarios_count() -> None:
@@ -898,7 +914,7 @@ def test_stream_chat_exception_handling() -> None:
 
 def test_stream_chat_openai() -> None:
     import asyncio
-    
+
     async def mock_stream_complete(*args, **kwargs):
         yield "He"
         yield "llo"
@@ -912,11 +928,11 @@ def test_stream_chat_openai() -> None:
             adapter=OpenAIAdapter(api_key="sk-test", model="gpt-4o-mini")
         )
         events = []
-        
+
         async def run():
             async for event in advisor.stream_chat([]):
                 events.append(event)
-                
+
         asyncio.run(run())
         assert len(events) == 2
         assert events[0]["event"] == "token"
@@ -927,7 +943,7 @@ def test_stream_chat_openai() -> None:
 
 def test_stream_chat_deepseek() -> None:
     import asyncio
-    
+
     async def mock_stream_complete(*args, **kwargs):
         yield "Deep"
         yield "Seek"
@@ -941,11 +957,11 @@ def test_stream_chat_deepseek() -> None:
             adapter=DeepSeekAdapter(api_key="sk-ds-test", model="deepseek-v4-flash")
         )
         events = []
-        
+
         async def run():
             async for event in advisor.stream_chat([]):
                 events.append(event)
-                
+
         asyncio.run(run())
         assert len(events) == 2
         assert events[0]["event"] == "token"
@@ -956,7 +972,7 @@ def test_stream_chat_deepseek() -> None:
 
 def test_stream_chat_anthropic_mock() -> None:
     import asyncio
-    
+
     async def mock_stream_complete(*args, **kwargs):
         yield "Claude"
         yield " streams"
@@ -970,11 +986,11 @@ def test_stream_chat_anthropic_mock() -> None:
             adapter=AnthropicAdapter(api_key="sk-ant-test", model="claude-haiku-4-5-20251001")
         )
         events = []
-        
+
         async def run():
             async for event in advisor.stream_chat([]):
                 events.append(event)
-                
+
         asyncio.run(run())
         assert len(events) == 2
         assert events[0]["event"] == "token"
@@ -985,7 +1001,7 @@ def test_stream_chat_anthropic_mock() -> None:
 
 def test_stream_chat_gemini_mock() -> None:
     import asyncio
-    
+
     async def mock_stream_complete(*args, **kwargs):
         yield "Gemini"
         yield " stream"
@@ -999,11 +1015,11 @@ def test_stream_chat_gemini_mock() -> None:
             adapter=GeminiAdapter(api_key="g-test", model="gemini-2.0-flash")
         )
         events = []
-        
+
         async def run():
             async for event in advisor.stream_chat([]):
                 events.append(event)
-                
+
         asyncio.run(run())
         assert len(events) == 2
         assert events[0]["event"] == "token"
@@ -1014,7 +1030,7 @@ def test_stream_chat_gemini_mock() -> None:
 
 def test_adapters_stream_complete_parse_sse() -> None:
     import asyncio
-    
+
     class AsyncIteratorWrapper:
         def __init__(self, items):
             self.items = items
@@ -1036,7 +1052,7 @@ def test_adapters_stream_complete_parse_sse() -> None:
         "data: {\"choices\": [{\"delta\": {\"content\": \"llo\"}}]}",
         "data: [DONE]"
     ]))
-    
+
     class MockStreamContext:
         async def __aenter__(self):
             return mock_resp
@@ -1053,7 +1069,7 @@ def test_adapters_stream_complete_parse_sse() -> None:
 
     with patch("httpx.AsyncClient", return_value=MockClient()):
         adapter = OpenAIAdapter(api_key="sk-test", model="gpt-4o-mini")
-        
+
         async def run():
             chunks = []
             async for chunk in adapter.stream_complete(model="gpt-4o-mini", system_prompt="sys", messages=[]):
@@ -1062,6 +1078,401 @@ def test_adapters_stream_complete_parse_sse() -> None:
 
         res = asyncio.run(run())
         assert res == ["He", "llo"]
+
+
+def test_stream_chat_with_tools_loop() -> None:
+    import asyncio
+
+    class StubAdapterWithTools:
+        provider_name = "stub"
+        def __init__(self):
+            self.model = "stub-model"
+            self.calls_count = 0
+
+        async def stream_complete_with_tools(self, *, model, system_prompt, messages, tools):
+            self.calls_count += 1
+            if self.calls_count == 1:
+                yield {"type": "token", "text": "Let me look up the RSI."}
+                yield {"type": "tool_calls", "tool_calls": [{"id": "call-1", "name": "calculate_indicators", "arguments": {"symbol": "2330", "indicators": ["RSI_14"]}}]}
+            elif self.calls_count == 2:
+                yield {"type": "token", "text": "RSI is 68.5. That is close to overbought."}
+
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+        adapter=StubAdapterWithTools(),
+    )
+
+    events = []
+    async def run():
+        async for event in advisor.stream_chat([{"role": "user", "content": "What is 2330 RSI?"}]):
+            events.append(event)
+
+    asyncio.run(run())
+
+    assert any(ev["event"] == "token" and ev["text"] == "Let me look up the RSI." for ev in events)
+    assert any(ev["event"] == "tool_call" and ev["name"] == "calculate_indicators" for ev in events)
+    assert any(ev["event"] == "tool_result" and ev["name"] == "calculate_indicators" and "RSI" in ev["output_summary"] for ev in events)
+    assert any(ev["event"] == "token" and "RSI is 68.5" in ev["text"] for ev in events)
+
+
+def test_stream_chat_max_rounds_exceeded() -> None:
+    import asyncio
+
+    class LoopAdapter:
+        provider_name = "stub"
+        def __init__(self):
+            self.model = "stub-model"
+
+        async def stream_complete_with_tools(self, *, model, system_prompt, messages, tools):
+            # Always yields tool calls to force a loop
+            yield {"type": "token", "text": "Continuous call"}
+            yield {
+                "type": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "loop-call",
+                        "name": "calculate_indicators",
+                        "arguments": {"symbol": "2330", "indicators": ["RSI_14"]},
+                    }
+                ],
+            }
+
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+        adapter=LoopAdapter(),
+    )
+
+    events = []
+    async def run():
+        async for event in advisor.stream_chat([{"role": "user", "content": "Loop question"}], max_tool_rounds=6):
+            events.append(event)
+
+    asyncio.run(run())
+
+    # Count the number of tool call events to ensure it stopped after exactly 6 rounds
+    tool_calls = [ev for ev in events if ev["event"] == "tool_call"]
+    assert len(tool_calls) == 6
+
+    # Verify the error event was yielded at the very end
+    error_events = [ev for ev in events if ev["event"] == "error"]
+    assert len(error_events) == 1
+    assert error_events[0]["message"] == "工具呼叫輪數過多，已停止。"
+
+
+def test_openai_deepseek_delta_accumulator() -> None:
+    import asyncio
+
+    class AsyncIteratorWrapper:
+        def __init__(self, items):
+            self.items = items
+            self.idx = 0
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            if self.idx < len(self.items):
+                res = self.items[self.idx]
+                self.idx += 1
+                return res
+            raise StopAsyncIteration
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.aiter_lines = MagicMock(return_value=AsyncIteratorWrapper([
+        "data: {\"choices\": [{\"delta\": {\"content\": \"Checking indicators\"}}]}",
+        "data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"call_abc\", \"function\": {\"name\": \"calculate_indicators\", \"arguments\": \"{\\\"sym\"}}]}}]}",
+        "data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"function\": {\"arguments\": \"bol\\\": \\\"2330\\\"}\"}}]}}]}",
+        "data: [DONE]"
+    ]))
+
+    class MockStreamContext:
+        async def __aenter__(self):
+            return mock_resp
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockClient:
+        def stream(self, *args, **kwargs):
+            return MockStreamContext()
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    with patch("httpx.AsyncClient", return_value=MockClient()):
+        adapter = OpenAIAdapter(api_key="sk-test", model="gpt-4o-mini")
+
+        async def run():
+            chunks = []
+            async for chunk in adapter.stream_complete_with_tools(
+                model="gpt-4o-mini",
+                system_prompt="sys",
+                messages=[],
+                tools=[]
+            ):
+                chunks.append(chunk)
+            return chunks
+
+        res = asyncio.run(run())
+        # The accumulator should merge the arguments string "{"sym" + "bol\": \"2330\"}" into {"symbol": "2330"}
+        assert len(res) == 2
+        assert res[0] == {"type": "token", "text": "Checking indicators"}
+        assert res[1] == {
+            "type": "tool_calls",
+            "tool_calls": [
+                {
+                    "id": "call_abc",
+                    "name": "calculate_indicators",
+                    "arguments": {"symbol": "2330"}
+                }
+            ]
+        }
+
+
+def test_anthropic_delta_accumulator() -> None:
+    import asyncio
+
+    @dataclass
+    class ContentBlock:
+        type: str
+        id: str | None = None
+        name: str | None = None
+
+    @dataclass
+    class ContentBlockStartEvent:
+        type: str = "content_block_start"
+        index: int = 0
+        content_block: ContentBlock = None
+
+    @dataclass
+    class Delta:
+        type: str
+        text: str | None = None
+        partial_json: str | None = None
+
+    @dataclass
+    class ContentBlockDeltaEvent:
+        type: str = "content_block_delta"
+        index: int = 0
+        delta: Delta = None
+
+    # Define mock stream
+    class MockStream:
+        def __init__(self, events):
+            self.events = events
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            if self.events:
+                return self.events.pop(0)
+            raise StopAsyncIteration
+
+    mock_events = [
+        ContentBlockStartEvent(index=0, content_block=ContentBlock(type="tool_use", id="call-anth", name="get_price_data")),
+        ContentBlockDeltaEvent(index=0, delta=Delta(type="input_json_delta", partial_json="{\r\n  \"sym")),
+        ContentBlockDeltaEvent(index=0, delta=Delta(type="input_json_delta", partial_json="bol\": \"2330\"\r\n}")),
+    ]
+
+    mock_client = MagicMock()
+    mock_client.messages.stream.return_value = MockStream(mock_events)
+
+    adapter = AnthropicAdapter(api_key="sk-test", model="claude-3")
+    adapter._async_client = mock_client
+
+    async def run():
+        chunks = []
+        async for chunk in adapter.stream_complete_with_tools(
+            model="claude-3",
+            system_prompt="sys",
+            messages=[],
+            tools=[]
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    res = asyncio.run(run())
+    assert len(res) == 1
+    assert res[0] == {
+        "type": "tool_calls",
+        "tool_calls": [
+            {
+                "id": "call-anth",
+                "name": "get_price_data",
+                "arguments": {"symbol": "2330"}
+            }
+        ]
+    }
+
+
+def test_gemini_accumulator() -> None:
+    import asyncio
+
+    class AsyncIteratorWrapper:
+        def __init__(self, items):
+            self.items = items
+            self.idx = 0
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            if self.idx < len(self.items):
+                res = self.items[self.idx]
+                self.idx += 1
+                return res
+            raise StopAsyncIteration
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.aiter_lines = MagicMock(return_value=AsyncIteratorWrapper([
+        "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Checking Gemini...\"}]}}]}",
+        "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_price_data\", \"args\": {\"symbol\": \"2330\"}}}]}}]}",
+    ]))
+
+    class MockStreamContext:
+        async def __aenter__(self):
+            return mock_resp
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockClient:
+        def stream(self, *args, **kwargs):
+            return MockStreamContext()
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    with patch("httpx.AsyncClient", return_value=MockClient()):
+        adapter = GeminiAdapter(api_key="gem-test", model="gemini-1.5")
+
+        async def run():
+            chunks = []
+            async for chunk in adapter.stream_complete_with_tools(
+                model="gemini-1.5",
+                system_prompt="sys",
+                messages=[],
+                tools=[]
+            ):
+                chunks.append(chunk)
+            return chunks
+
+        res = asyncio.run(run())
+        assert len(res) == 2
+        assert res[0] == {"type": "token", "text": "Checking Gemini..."}
+        assert res[1] == {
+            "type": "tool_calls",
+            "tool_calls": [
+                {
+                    "id": "gemini-tool-1",
+                    "name": "get_price_data",
+                    "arguments": {"symbol": "2330"}
+                }
+            ]
+        }
+
+
+def test_ensure_daily_data_updated() -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    acquire_mock = AsyncMock(return_value=True)
+    release_mock = MagicMock()
+
+    # 1. Mock lock busy scenario
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df("2330")),
+        adapter=StubAdapter([]),
+    )
+
+    async def run_lock_busy():
+        with patch("api.job_manager.JobManager.is_write_locked", return_value=True):
+            # Case A: Had local data -> use local data and return a warning
+            res = await advisor._ensure_daily_data_updated("2330", "tw", None)
+            assert res["warning"] == "資料更新正在進行中，暫用本機資料"
+            assert not res["df"].empty
+            assert res["error"] is None
+
+            # Case B: No local data -> return a busy error
+            advisor_no_data = AIAdvisor(
+                enabled=True,
+                provider="anthropic",
+                model="stub",
+                storage=StubStorage(pd.DataFrame()),
+                adapter=StubAdapter([]),
+            )
+            res_no_data = await advisor_no_data._ensure_daily_data_updated("2330", "tw", None)
+            assert res_no_data["error"] == "資料更新正在進行中，稍後再試"
+            assert res_no_data["df"].empty
+
+    asyncio.run(run_lock_busy())
+
+    # 2. Mock update fails scenario
+    advisor_fail = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df("2330")),
+        adapter=StubAdapter([]),
+    )
+
+    async def run_update_fails():
+        with patch("api.job_manager.JobManager.acquire_write_lock", acquire_mock), \
+             patch("api.job_manager.JobManager.release_write_lock", release_mock), \
+             patch("src.services.data_service.run_maintenance", side_effect=RuntimeError("Source down")):
+            # Case A: Had local data -> use local data and return a warning
+            res = await advisor_fail._ensure_daily_data_updated("2330", "tw", None)
+            assert "更新失敗，改用本機既有資料" in res["warning"]
+            assert not res["df"].empty
+            assert res["error"] is None
+
+            # Case B: No local data -> return a structured error
+            advisor_fail_no_data = AIAdvisor(
+                enabled=True,
+                provider="anthropic",
+                model="stub",
+                storage=StubStorage(pd.DataFrame()),
+                adapter=StubAdapter([]),
+            )
+            # B1: FinMind token missing
+            with patch("src.core.config.get_config", return_value={"secrets": {"finmind_token": ""}}):
+                res_no_token = await advisor_fail_no_data._ensure_daily_data_updated("2330", "tw", None)
+                assert "FinMind token missing" in res_no_token["error"]
+
+            # B2: Data source unavailable
+            with patch("src.core.config.get_config", return_value={"secrets": {"finmind_token": "token-xyz"}}):
+                res_no_source = await advisor_fail_no_data._ensure_daily_data_updated("2330", "tw", None)
+                assert "data source unavailable" in res_no_source["error"]
+
+    asyncio.run(run_update_fails())
+
+    # 3. Mock already updated scenario
+    advisor_updated = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df("2330")),
+        adapter=StubAdapter([]),
+    )
+
+    async def run_already_updated():
+        updated_set = {("2330", "tw")}
+        res_updated = await advisor_updated._ensure_daily_data_updated("2330", "tw", updated_set)
+        assert res_updated["warning"] is None
+        assert res_updated["error"] is None
+        assert not res_updated["df"].empty
+
+    asyncio.run(run_already_updated())
 
 
 

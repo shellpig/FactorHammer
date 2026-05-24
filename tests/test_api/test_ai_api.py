@@ -190,3 +190,46 @@ def test_ai_analyze_returns_503_when_ai_disabled() -> None:
     assert response.status_code == 503
     body = response.json()
     assert body["detail"]["error"]["code"] == "AI_DISABLED"
+
+
+def test_ai_chat_streaming_with_tools() -> None:
+    class DummyAdvisorWithTools:
+        async def stream_chat(self, messages: list[dict]) -> AsyncIterator[dict]:
+            yield {"event": "tool_call", "name": "calculate_indicators", "arguments": {"symbol": "2330", "indicators": ["RSI_14"]}}
+            yield {"event": "tool_result", "name": "calculate_indicators", "output_summary": "RSI=68.5"}
+            yield {"event": "token", "text": "AI text response"}
+
+    app.dependency_overrides[get_advisor] = lambda: DummyAdvisorWithTools()
+    try:
+        response = client.post(
+            "/api/ai/chat",
+            json={"messages": [{"role": "user", "content": "RSI?"}]},
+        )
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+
+        events = []
+        for line in response.iter_lines():
+            line_str = line.decode("utf-8").strip() if isinstance(line, bytes) else str(line).strip()
+            if line_str.startswith("event:"):
+                event_type = line_str[len("event:"):].strip()
+                events.append({"event": event_type})
+            elif line_str.startswith("data:"):
+                data_val = json.loads(line_str[len("data:"):].strip())
+                events[-1]["data"] = data_val
+
+        assert len(events) == 4
+        assert events[0]["event"] == "tool_call"
+        assert events[0]["data"]["name"] == "calculate_indicators"
+        assert events[0]["data"]["arguments"]["symbol"] == "2330"
+
+        assert events[1]["event"] == "tool_result"
+        assert events[1]["data"]["name"] == "calculate_indicators"
+        assert events[1]["data"]["output_summary"] == "RSI=68.5"
+
+        assert events[2]["event"] == "token"
+        assert events[2]["data"]["text"] == "AI text response"
+
+        assert events[3]["event"] == "done"
+    finally:
+        app.dependency_overrides.clear()

@@ -1,6 +1,6 @@
 // Tests for MessageBubble component (Phase 10-F-1)
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { MessageBubble } from "@/components/ai/message-bubble";
 
@@ -59,5 +59,35 @@ describe("MessageBubble", () => {
     render(<MessageBubble role="assistant" content="hi" />);
     const bubble = screen.getByTestId("message-bubble-assistant");
     expect(bubble.className).toMatch(/items-start/);
+  });
+
+  it("renders tool chips when toolCalls are present", () => {
+    const toolCalls = [
+      {
+        name: "calculate_indicators",
+        arguments: { symbol: "2330" },
+        result: { output_summary: "RSI=68.5" }
+      }
+    ];
+    render(<MessageBubble role="assistant" content="Let me check." toolCalls={toolCalls} />);
+    expect(screen.getByTestId("tool-chips-container")).toBeInTheDocument();
+    expect(screen.getByText("已更新並分析 2330 日線資料")).toBeInTheDocument();
+    expect(screen.getByTestId("tool-chip-summary")).toHaveTextContent("回傳：RSI=68.5");
+  });
+
+  it("can toggle ToolCallChip open to show details", () => {
+    const toolCalls = [
+      {
+        name: "calculate_indicators",
+        arguments: { symbol: "2330" },
+        result: { output_summary: "RSI=68.5" }
+      }
+    ];
+    render(<MessageBubble role="assistant" content="Let me check." toolCalls={toolCalls} />);
+    const toggle = screen.getByTestId("tool-chip-toggle");
+    expect(screen.queryByTestId("tool-chip-details")).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("tool-chip-details")).toBeInTheDocument();
+    expect(screen.getByText(/"symbol": "2330"/)).toBeInTheDocument();
   });
 });

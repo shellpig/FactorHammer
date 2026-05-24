@@ -1,10 +1,19 @@
 import { useState, useRef } from "react";
 
+export interface ToolCall {
+  name: string;
+  arguments: any;
+  result?: {
+    output_summary: string;
+  };
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
   error?: string;
   isGreeting?: boolean;
+  toolCalls?: ToolCall[];
 }
 
 const GREETING_CONTENT =
@@ -146,6 +155,57 @@ export function useAIChat() {
               await nextFrame();
             } catch (e) {
               console.error("Failed to parse token event", e);
+            }
+          } else if (eventType === "tool_call") {
+            try {
+              const parsed = JSON.parse(eventData);
+              setMessages((prev) => {
+                const next = [...prev];
+                const lastIdx = next.length - 1;
+                if (lastIdx >= 0 && next[lastIdx].role === "assistant") {
+                  const existing = next[lastIdx].toolCalls || [];
+                  next[lastIdx] = {
+                    ...next[lastIdx],
+                    toolCalls: [
+                      ...existing,
+                      { name: parsed.name, arguments: parsed.arguments },
+                    ],
+                  };
+                }
+                return next;
+              });
+              await nextFrame();
+            } catch (e) {
+              console.error("Failed to parse tool_call event", e);
+            }
+          } else if (eventType === "tool_result") {
+            try {
+              const parsed = JSON.parse(eventData);
+              setMessages((prev) => {
+                const next = [...prev];
+                const lastIdx = next.length - 1;
+                if (lastIdx >= 0 && next[lastIdx].role === "assistant") {
+                  const existing = next[lastIdx].toolCalls || [];
+                  const updated = [...existing];
+                  for (let j = updated.length - 1; j >= 0; j--) {
+                    if (updated[j].name === parsed.name && !updated[j].result) {
+                      updated[j] = {
+                        ...updated[j],
+                        result: { output_summary: parsed.output_summary },
+                      };
+                      break;
+                    }
+                  }
+                  next[lastIdx] = {
+                    ...next[lastIdx],
+                    toolCalls: updated,
+                  };
+                }
+                return next;
+              });
+              await nextFrame();
+            } catch (e) {
+              console.error("Failed to parse tool_result event", e);
             }
           } else if (eventType === "error") {
             try {

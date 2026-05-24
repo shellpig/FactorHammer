@@ -64,6 +64,15 @@ describe("toApiMessages and useAIChat 14-Test Suite", () => {
     ]);
   });
 
+  // 3b. toApiMessages - filters out tool entries (e.g., tool calls and results)
+  it("3b. toApiMessages - filters out tool entries", () => {
+    const toolCallMsg = { role: "tool" as any, content: "tool output" };
+    const validMsg: Message = { role: "user", content: "user query" };
+    expect(toApiMessages([toolCallMsg, validMsg])).toEqual([
+      { role: "user", content: "user query" },
+    ]);
+  });
+
   // 4. toApiMessages - maps valid user and assistant messages properly
   it("4. toApiMessages - maps valid user and assistant messages properly", () => {
     const messages: Message[] = [
@@ -280,5 +289,34 @@ describe("toApiMessages and useAIChat 14-Test Suite", () => {
     expect(rafSpy).toHaveBeenCalledTimes(2);
 
     rafSpy.mockRestore();
+  });
+
+  // 15. useAIChat - streams tool_call and tool_result correctly
+  it("15. useAIChat - streams tool_call and tool_result correctly", async () => {
+    fetchSpy.mockResolvedValue(
+      mockSseResponse([
+        "event: tool_call\ndata: {\"name\": \"calculate_indicators\", \"arguments\": {\"symbol\": \"2330\"}}\n\n",
+        "event: tool_result\ndata: {\"name\": \"calculate_indicators\", \"output_summary\": \"RSI=68.5\"}\n\n",
+        "event: token\ndata: {\"text\": \"done text\"}\n\n",
+        "event: done\ndata: {}\n\n",
+      ])
+    );
+
+    const { result } = renderHook(() => useAIChat());
+
+    act(() => {
+      result.current.send("indicator test");
+    });
+
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+
+    const assistantMsg = result.current.messages[2];
+    expect(assistantMsg.content).toBe("done text");
+    expect(assistantMsg.toolCalls).toBeDefined();
+    expect(assistantMsg.toolCalls!.length).toBe(1);
+    expect(assistantMsg.toolCalls![0].name).toBe("calculate_indicators");
+    expect(assistantMsg.toolCalls![0].arguments).toEqual({ symbol: "2330" });
+    expect(assistantMsg.toolCalls![0].result).toBeDefined();
+    expect(assistantMsg.toolCalls![0].result!.output_summary).toBe("RSI=68.5");
   });
 });
