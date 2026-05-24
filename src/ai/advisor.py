@@ -26,8 +26,13 @@ SYSTEM_PROMPT = """你是一個台股技術分析助理。你的工作是：
 - 預測股價未來走勢
 - 給予資金配置建議
 
-當使用者詢問某檔或多檔股票在指定期間投入金額後的含股利、含息、總報酬、投報率或年化報酬時，必須優先呼叫 calculate_total_return。不得使用 get_price_data 的最近 K 線資料自行推算長區間報酬。
+當使用者詢問某檔或多檔股票在指定期間投入金額後的含股利、含息、總報酬、投報率或年化報酬等投資試算問題時，不論是含息或是純股價，都必須優先且唯一呼叫 calculate_total_return。不得使用 get_price_data 的最近 K 線資料自行推算長區間報酬。
 calculate_total_return 回傳的日期對齊、價格、股利、期末總值、總報酬與年化報酬是唯一可信數字來源。回答時需說明實際買進日、實際期末日、買進價基準、期末價固定用收盤價、股利模式、是否含稅費與 warnings。
+
+當使用者要求「包含股利，若沒有股利資料則只計算股價」或類似的股利 fallback 行為時，你呼叫 calculate_total_return 時必須傳入 dividend_policy="include_if_available"。
+若使用者明確要求「一定要含息，無股利不計算」，則傳入 dividend_policy="required"。
+若使用者明確要求「只計算純股價報酬」，則傳入 dividend_policy="price_only"。
+回答時應在表格或內容中清楚標示每檔標的是以「含現金股利（含息）」或「純股價」模式計算。
 
 注意：如果工具呼叫回傳錯誤（例如 "Auto-update failed" 等），你應該直接回覆「無法取得資料」並簡述該錯誤，絕對不可以猜測或斷言該股票代碼不存在。
 """
@@ -104,7 +109,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "calculate_total_return",
         "description": (
-            "計算台股一檔或多檔股票 / ETF 在指定期間、指定投入金額下的含息總報酬。"
+            "計算台股一檔或多檔股票 / ETF 在指定期間、指定投入金額下的總報酬與年化報酬。"
             "適用於使用者詢問投入金額、含股利、含息、總報酬、投報率、年化報酬等問題。"
             "初版僅支援 market='tw'、現金股利持有、不含稅費、不支援股利再投入。"
             "price basis 僅影響買進價，期末價固定用收盤價。"
@@ -143,6 +148,16 @@ TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "enum": ["cash"],
                     "description": "股利處理方式；15-E 初版僅支援 cash（現金持有）",
+                },
+                "dividend_policy": {
+                    "type": "string",
+                    "enum": ["required", "include_if_available", "price_only"],
+                    "description": (
+                        "股利處理策略：\n"
+                        "required (預設): 必須含股利，無 dividends 則回報 error；\n"
+                        "include_if_available: 有 dividends 則含息，無 dividends 則自動 fallback 為純股價報酬並在 warnings 標示；\n"
+                        "price_only: 強制只算純股價報酬，不更新或載入 dividends。"
+                    ),
                 },
             },
             "required": ["symbols", "start_date", "end_date", "initial_amount"],
@@ -2093,6 +2108,12 @@ class AIAdvisor:
         warnings = list(initial_warnings)
         if dividends_update_warning:
             warnings.append(dividends_update_warning)
+        if dividends_source == "missing_price_only":
+            if not any("無股利資料，已改用純股價報酬" in w for w in warnings):
+                warnings.append("無股利資料，已改用純股價報酬")
+        elif dividends_source == "price_only":
+            if not any("已設定只計算純股價報酬" in w for w in warnings):
+                warnings.append("已設定只計算純股價報酬")
 
         daily_dates = pd.to_datetime(daily["date"])
         if daily_dates.dt.tz is None:
@@ -2194,7 +2215,7 @@ class AIAdvisor:
             "total_return_pct": round(total_return_pct, 2),
             "annualized_return_pct": round(annualized, 2) if annualized is not None else None,
             "dividends": dividends_list,
-            "warnings": warnings,
+            "warnings": list(dict.fromkeys(warnings).keys()),
         }
 
     async def _handle_calculate_total_return(
@@ -2206,6 +2227,7 @@ class AIAdvisor:
         market: str = "tw",
         buy_price_basis: str = "open",
         dividend_mode: str = "cash",
+        dividend_policy: str = "required",
         updated_daily_symbols: set[tuple[str, str]] | None = None,
         updated_dividend_symbols: set[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
@@ -2221,6 +2243,8 @@ class AIAdvisor:
             return {"results": [], "errors": [{"symbol": None, "error": "buy_price_basis 僅支援 open / close"}]}
         if dividend_mode != "cash":
             return {"results": [], "errors": [{"symbol": None, "error": "P15-E 初版僅支援現金股利持有，不支援股利再投入"}]}
+        if dividend_policy not in {"required", "include_if_available", "price_only"}:
+            return {"results": [], "errors": [{"symbol": None, "error": "dividend_policy 僅支援 required / include_if_available / price_only"}]}
 
         results = []
         errors = []
@@ -2242,28 +2266,44 @@ class AIAdvisor:
             daily_df = daily_res["df"]
             daily_warning = daily_res["warning"]
 
-            div_res = await self._ensure_dividends_updated(
-                normalized_symbol, normalized_market, updated_dividend_symbols
-            )
-
-            dividends_updated = div_res["error"] is None
-            dividends_update_warning = div_res["warning"]
-            dividends_source = "refreshed" if dividends_updated else "local_fallback"
-
-            if div_res["error"]:
-                local_divs = self.storage.load_dividends(normalized_symbol, market=normalized_market)
-                if local_divs.empty:
-                    errors.append({"symbol": normalized_symbol, "error": f"無股利資料，無法計算含息報酬 (原因: {div_res['error']})"})
-                    continue
-                else:
-                    dividends_update_warning = f"股利更新失敗，改用本機既有資料 (原因: {div_res['error']})"
-                    dividends_source = "local_fallback"
-                    dividends_df = local_divs
+            if dividend_policy == "price_only":
+                dividends_df = None
+                dividends_updated = False
+                dividends_update_warning = None
+                dividends_source = "price_only"
             else:
-                dividends_df = self.storage.load_dividends(normalized_symbol, market=normalized_market)
-                if dividends_df.empty:
-                    errors.append({"symbol": normalized_symbol, "error": "無股利資料，無法計算含息報酬"})
-                    continue
+                div_res = await self._ensure_dividends_updated(
+                    normalized_symbol, normalized_market, updated_dividend_symbols
+                )
+
+                dividends_updated = div_res["error"] is None
+                dividends_update_warning = div_res["warning"]
+                dividends_source = "refreshed" if dividends_updated else "local_fallback"
+
+                if div_res["error"]:
+                    local_divs = self.storage.load_dividends(normalized_symbol, market=normalized_market)
+                    if local_divs.empty:
+                        if dividend_policy == "include_if_available":
+                            dividends_df = None
+                            dividends_source = "missing_price_only"
+                            dividends_update_warning = f"無股利資料，已改用純股價報酬 (原因: {div_res['error']})"
+                        else:
+                            errors.append({"symbol": normalized_symbol, "error": f"無股利資料，無法計算含息報酬 (原因: {div_res['error']})"})
+                            continue
+                    else:
+                        dividends_update_warning = f"股利更新失敗，改用本機既有資料 (原因: {div_res['error']})"
+                        dividends_source = "local_fallback"
+                        dividends_df = local_divs
+                else:
+                    dividends_df = self.storage.load_dividends(normalized_symbol, market=normalized_market)
+                    if dividends_df.empty:
+                        if dividend_policy == "include_if_available":
+                            dividends_df = None
+                            dividends_source = "missing_price_only"
+                            dividends_update_warning = "無股利資料，已改用純股價報酬"
+                        else:
+                            errors.append({"symbol": normalized_symbol, "error": "無股利資料，無法計算含息報酬"})
+                            continue
 
             align_res = self._align_trade_dates(daily_df, start_date, end_date)
             if align_res.get("error"):

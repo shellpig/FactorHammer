@@ -1,6 +1,6 @@
 [project]
 name = "quanttrader"
-version = "0.5.5"
+version = "0.5.5.1"
 description = "Personal quantitative trading research toolkit for Taiwan stocks"
 requires-python = ">=3.12,<3.14"
 dependencies = [

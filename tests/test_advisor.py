@@ -2329,4 +2329,124 @@ def test_calculate_total_return_dividends_empty_after_successful_refresh_errors(
     asyncio.run(run())
 
 
+def test_calculate_total_return_price_only() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, pd.DataFrame()),  # empty dividends
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="tw",
+            dividend_policy="price_only",
+        )
+        assert not res["errors"]
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert ret["symbol"] == "2330"
+        assert ret["cash_dividend_per_share"] == 0.0
+        assert ret["dividend_cash"] == 0.0
+        assert ret["dividends_source"] == "price_only"
+        assert any("已設定只計算純股價報酬" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_include_if_available_with_dividends() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=200)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-03-31",
+            initial_amount=100000.0,
+            market="tw",
+            dividend_policy="include_if_available",
+        )
+        assert not res["errors"]
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert ret["cash_dividend_per_share"] > 0
+        assert ret["dividends_source"] == "refreshed"
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_include_if_available_missing_dividends() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, pd.DataFrame()),  # empty dividends
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="tw",
+            dividend_policy="include_if_available",
+        )
+        assert not res["errors"]
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert ret["cash_dividend_per_share"] == 0.0
+        assert ret["dividend_cash"] == 0.0
+        assert ret["dividends_source"] == "missing_price_only"
+        assert any("無股利資料，已改用純股價報酬" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_required_missing_dividends_errors() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, pd.DataFrame()),  # empty dividends
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="tw",
+            dividend_policy="required",
+        )
+        assert len(res["errors"]) == 1
+        assert "無股利資料，無法計算含息報酬" in res["errors"][0]["error"]
+
+    asyncio.run(run())
+
+
+
 

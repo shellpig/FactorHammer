@@ -96,6 +96,8 @@ export function ToolCallChip({ name, arguments: args, result }: ToolCall) {
     ? (Array.isArray(args.symbols) ? args.symbols.join(", ") : String(args.symbols))
     : symbol;
 
+  const isPriceOnly = args?.dividend_policy === "price_only";
+
   // Compute status text dynamically based on current state and result
   let statusText = "";
   if (!isDone) {
@@ -106,7 +108,7 @@ export function ToolCallChip({ name, arguments: args, result }: ToolCall) {
     } else if (name === "get_support_resistance") {
       statusText = `正在更新與載入 ${symbols} 日線資料並計算支撐壓力...`;
     } else if (name === "calculate_total_return") {
-      statusText = `正在分析 ${symbols} 的含息總報酬率...`;
+      statusText = `正在分析 ${symbols} 的${isPriceOnly ? "純股價" : "含息"}總報酬率...`;
     } else {
       statusText = `正在呼叫 ${name}...`;
     }
@@ -121,7 +123,7 @@ export function ToolCallChip({ name, arguments: args, result }: ToolCall) {
     } else if (summary.includes("資料更新正在進行中，稍後再試")) {
       statusText = `❌ 資料更新正在進行中，請稍後再試`;
     } else if (name === "calculate_total_return") {
-      statusText = `已完成 ${symbols} 的含息總報酬率計算`;
+      statusText = `已完成 ${symbols} 的${isPriceOnly ? "純股價" : "含息"}總報酬率計算`;
     } else {
       statusText = `已更新並分析 ${symbols} 日線資料`;
     }
