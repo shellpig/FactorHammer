@@ -28,8 +28,8 @@
 | 回測引擎 | 向量化（`generate_signals`）與事件驅動（`on_bar`）雙引擎並行，含手續費 / 滑價 / 稅費模型 |
 | 策略庫 | MA Cross、RSI、KD、MACD、Bollinger Band、Bias、Donchian Breakout、DCA |
 | 進階研究 | 批次回測（batch）、參數掃描（sweep）、走樣外驗證（walk-forward） |
-| AI 分析 | Provider-neutral（OpenAI / Anthropic / Gemini），可在 UI 設定；不設定則停用 |
-| 前端 | Next.js dashboard，含 K 線、報價列、回測結果、AI 問答、設定頁 |
+| AI 分析 | Provider-neutral（Anthropic / OpenAI / Gemini / DeepSeek），支援 Dashboard 分析與 AI 問答；不設定則停用 |
+| 前端 | Next.js dashboard，含 K 線、報價列、回測結果、串流 AI 問答、設定頁 |
 
 ---
 
@@ -38,9 +38,9 @@
 - **語言 / 套件管理**：Python 3.12+（uv 管理）、Node.js 22（portable，自動安裝）
 - **資料層**：DuckDB + Parquet（零伺服器、本機落地）
 - **資料處理**：pandas、pandas-ta
-- **後端**：FastAPI、uvicorn、httpx；SSE 走 `StreamingResponse`
+- **後端**：FastAPI、uvicorn、httpx、sse-starlette；SSE 走 `EventSourceResponse`
 - **前端**：Next.js 15、React 19、TypeScript 5、Tailwind v4、SWR、Lightweight Charts、Radix UI、shadcn/ui pattern
-- **AI**：OpenAI / Anthropic / Gemini（provider-neutral）
+- **AI**：Anthropic / OpenAI / Gemini / DeepSeek（provider-neutral）
 - **測試**：pytest、Vitest、Playwright
 
 ---
@@ -65,6 +65,18 @@
 首次進入會跳出設定頁面，可在 UI 設定 AI Provider 與 API Key（不設定則 AI 功能停用，其它功能正常）。
 
 關閉時把兩個視窗 Ctrl+C 或直接關掉。
+
+---
+
+## AI 功能
+
+AI 功能為可選；未設定 API Key 時，資料管理、分析與回測仍可正常使用。
+
+- **Provider**：支援 Anthropic、OpenAI、Gemini、DeepSeek，可在設定頁切換 provider 與 model。
+- **API Key 管理**：設定頁可分別儲存與驗證 FinMind / Anthropic / OpenAI / Gemini / DeepSeek key。
+- **Dashboard AI 分析**：個股分析頁可使用目前選定 provider 產生分析摘要。
+- **AI 問答**：AI 頁支援 SSE 串流回覆、停止串流，以及 Markdown 顯示。
+- **Tool use**：AI 問答可呼叫本機資料工具，依問題讀取日線、技術指標、支撐壓力與 K 線型態；缺日線資料時會透過既有資料管線自動補抓 / 更新一次。
 
 ---
 
