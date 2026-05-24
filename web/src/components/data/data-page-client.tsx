@@ -23,7 +23,8 @@ type DataJobIntent =
   | { type: "update_all" }
   | { type: "rebuild_all" }
   | { type: "add_symbol"; symbol: string }
-  | { type: "update_symbol"; symbol: string };
+  | { type: "update_symbol"; symbol: string }
+  | { type: "rebuild_symbol"; symbol: string };
 
 export function DataPageClient() {
   const toast = useToast();
@@ -37,13 +38,14 @@ export function DataPageClient() {
   // Dialog toggles
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showRebuildDialog, setShowRebuildDialog] = useState(false);
+  const [rebuildTargetSymbol, setRebuildTargetSymbol] = useState<string | null>(null);
   const [jobIntent, setJobIntent] = useState<DataJobIntent | null>(null);
   const notifyKeyRef = useRef<string | null>(null);
 
   const { rows, isLoading, error: listError, mutate } = useDataList(market);
 
   // Job hook — refresh list on completion
-  const { status: jobStatus, current, total, currentSymbol, succeeded, failed, warnings = [],
+  const { status: jobStatus, current, total, currentSymbol, succeeded, failed, warnings = [], errors = [],
     errorMsg: jobError, startJob, resetJob } = useDataJob(mutate);
 
   const isJobRunning = jobStatus === "running";
@@ -87,7 +89,7 @@ export function DataPageClient() {
     setDeleteRow(null);
   }
 
-  // ── UPDATE (single symbol) ────────────────────────────────────────────────
+  // ── UPDATE 日K (single symbol) ────────────────────────────────────────────
 
   const handleUpdateSymbol = useCallback(
     async (row: SymbolRow) => {
@@ -97,26 +99,45 @@ export function DataPageClient() {
     [startJob],
   );
 
-  // ── BATCH UPDATE (全部更新) ────────────────────────────────────────────────
+  // ── REBUILD (single symbol) — opens confirm dialog ────────────────────────
+
+  const handleRebuildSymbol = useCallback((row: SymbolRow) => {
+    setRebuildTargetSymbol(row.symbol);
+    setShowRebuildDialog(true);
+  }, []);
+
+  // ── BATCH UPDATE (全部更新日K) ────────────────────────────────────────────
 
   async function handleUpdateAll() {
     setJobIntent({ type: "update_all" });
     await startJob("data_update", { market, all: true });
   }
 
-  // ── REBUILD (全部重建) ─────────────────────────────────────────────────────
+  // ── REBUILD (全部 / 單檔) — confirm handler ──────────────────────────────
 
   async function handleRebuildConfirm() {
+    const target = rebuildTargetSymbol;
     setShowRebuildDialog(false);
-    setJobIntent({ type: "rebuild_all" });
-    await startJob("data_rebuild", { market, all: true });
+    setRebuildTargetSymbol(null);
+    if (target) {
+      setJobIntent({ type: "rebuild_symbol", symbol: target });
+      await startJob("data_rebuild", { market, symbols: [target] });
+    } else {
+      setJobIntent({ type: "rebuild_all" });
+      await startJob("data_rebuild", { market, all: true });
+    }
   }
 
-  // ── ADD SYMBOL (+ 新增標的) ────────────────────────────────────────────────
+  function handleRebuildDialogClose() {
+    setShowRebuildDialog(false);
+    setRebuildTargetSymbol(null);
+  }
+
+  // ── ADD SYMBOL (+ 新增標的) — uses rebuild path so new symbols also load P11 ──
 
   async function handleAddSubmit(symbol: string) {
     setJobIntent({ type: "add_symbol", symbol });
-    await startJob("data_update", { market, symbols: [symbol] });
+    await startJob("data_rebuild", { market, symbols: [symbol] });
   }
 
   // ── Job complete/error toast ──────────────────────────────────────────────
@@ -124,7 +145,8 @@ export function DataPageClient() {
   useEffect(() => {
     if (jobStatus === "complete") {
       const failedSymbols = failed.map((item) => item.symbol);
-      const completeKey = `complete:${jobIntent?.type ?? "none"}:${succeeded.join(",")}:${failedSymbols.join(",")}`;
+      const errorSymbols = errors.map((item) => item.symbol);
+      const completeKey = `complete:${jobIntent?.type ?? "none"}:${succeeded.join(",")}:${failedSymbols.join(",")}:${errorSymbols.join(",")}`;
       if (notifyKeyRef.current === completeKey) {
         return;
       }
@@ -135,14 +157,19 @@ export function DataPageClient() {
         failed.find((item) => matchSymbol(item.symbol, target))?.error;
       const getWarningsForSymbol = (target: string) =>
         warnings.filter((item) => matchSymbol(item.symbol, target)).map((item) => item.message);
+      const getErrorsForSymbol = (target: string) =>
+        errors.filter((item) => matchSymbol(item.symbol, target)).map((item) => item.message);
 
       if (jobIntent?.type === "add_symbol") {
         const symbol = jobIntent.symbol.toUpperCase();
         const ok = succeeded.some((item) => matchSymbol(item, symbol));
         if (ok) {
+          const symErrors = getErrorsForSymbol(symbol);
           const symWarnings = getWarningsForSymbol(symbol);
-          if (symWarnings.length > 0) {
-            toast.warning(`已新增標的 ${symbol}，但基本面/籌碼更新有警示：${symWarnings.join("；")}`, { duration: 6000 });
+          if (symErrors.length > 0) {
+            toast.error(`已新增 ${symbol}（日K 已建立），但股利/P11 更新失敗：${symErrors.join("；")}`, { duration: 8000 });
+          } else if (symWarnings.length > 0) {
+            toast.warning(`已新增 ${symbol}（日K 已建立），但股利/P11 有警示：${symWarnings.join("；")}`, { duration: 6000 });
           } else {
             toast.success(`已新增標的：${symbol}`);
           }
@@ -154,34 +181,52 @@ export function DataPageClient() {
         const symbol = jobIntent.symbol.toUpperCase();
         const ok = succeeded.some((item) => matchSymbol(item, symbol));
         if (ok) {
+          // 更新只動日K；P11 不會跑，所以理論上沒 warning/error
+          toast.success(`已更新日K：${symbol}`);
+        } else {
+          const reason = getFailedReason(symbol);
+          toast.error(reason ? `日K 更新失敗：${symbol}（${reason}）` : `日K 更新失敗：${symbol}`);
+        }
+      } else if (jobIntent?.type === "rebuild_symbol") {
+        const symbol = jobIntent.symbol.toUpperCase();
+        const ok = succeeded.some((item) => matchSymbol(item, symbol));
+        if (ok) {
+          const symErrors = getErrorsForSymbol(symbol);
           const symWarnings = getWarningsForSymbol(symbol);
-          if (symWarnings.length > 0) {
-            toast.warning(`已更新 ${symbol}，但基本面/籌碼更新有警示：${symWarnings.join("；")}`, { duration: 6000 });
+          if (symErrors.length > 0) {
+            toast.error(`日線已重建：${symbol}，但股利/P11 更新失敗：${symErrors.join("；")}`, { duration: 8000 });
+          } else if (symWarnings.length > 0) {
+            toast.warning(`日線已重建：${symbol}，股利/P11 有警示：${symWarnings.join("；")}`, { duration: 6000 });
           } else {
-            toast.success(`已更新：${symbol}`);
+            toast.success(`已重建：${symbol}`);
           }
         } else {
           const reason = getFailedReason(symbol);
-          toast.error(reason ? `更新失敗：${symbol}（${reason}）` : `更新失敗：${symbol}`);
+          toast.error(reason ? `重建失敗：${symbol}（${reason}）` : `重建失敗：${symbol}`);
         }
       } else {
-        const actionLabel = jobIntent?.type === "rebuild_all" ? "重建" : "更新";
-        if (failed.length === 0) {
-          if (warnings.length > 0) {
+        // Batch: update_all (日K only) / rebuild_all (日K + P11)
+        const isRebuild = jobIntent?.type === "rebuild_all";
+        const actionLabel = isRebuild ? "重建" : "更新日K";
+
+        if (succeeded.length > 0) {
+          if (isRebuild && errors.length > 0) {
+            const errorSummary = errors.map((e) => `${e.symbol}: ${e.message}`).join("； ");
+            toast.error(
+              `日線${isRebuild ? "已重建" : "已更新"}：${succeeded.length} 個成功；但 ${errors.length} 筆股利/P11 更新失敗。詳細：${errorSummary}`,
+              { duration: 9000 },
+            );
+          } else if (isRebuild && warnings.length > 0) {
             const warningSummary = warnings.map((w) => `${w.symbol}: ${w.message}`).join("； ");
-            toast.warning(`${actionLabel}完成（含警示）：${succeeded.length} 個成功。詳細：${warningSummary}`, { duration: 7000 });
+            toast.warning(
+              `日線已重建：${succeeded.length} 個成功；股利/P11 部分為空或未變更：${warningSummary}`,
+              { duration: 7000 },
+            );
           } else {
             toast.success(`${actionLabel}完成：${succeeded.length} 個成功`);
           }
-        } else {
-          if (succeeded.length > 0) {
-            if (warnings.length > 0) {
-              const warningSummary = warnings.map((w) => `${w.symbol}: ${w.message}`).join("； ");
-              toast.warning(`${actionLabel}完成（含警示）：${succeeded.length} 個成功。詳細：${warningSummary}`, { duration: 7000 });
-            } else {
-              toast.success(`${actionLabel}完成：${succeeded.length} 個成功`);
-            }
-          }
+        }
+        if (failed.length > 0) {
           toast.error(
             `${actionLabel}失敗：${failed.length} 檔（${failedSymbols.join("、")}）`,
           );
@@ -203,7 +248,7 @@ export function DataPageClient() {
       setJobIntent(null);
       resetJob();
     }
-  }, [failed, jobError, jobIntent, jobStatus, resetJob, succeeded, toast]);
+  }, [failed, jobError, jobIntent, jobStatus, resetJob, succeeded, toast, warnings, errors]);
 
   // ── Main render ───────────────────────────────────────────────────────────
 
@@ -265,10 +310,13 @@ export function DataPageClient() {
             className="inline-flex h-10 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-slate-700/80 bg-slate-900/40 px-2.5 text-[13px] text-slate-200 hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-40 lg:h-9 lg:px-3 lg:text-sm"
           >
             <RefreshCw className="h-3.5 w-3.5" />
-            更新
+            更新日K
           </button>
           <button
-            onClick={() => setShowRebuildDialog(true)}
+            onClick={() => {
+              setRebuildTargetSymbol(null);
+              setShowRebuildDialog(true);
+            }}
             disabled={isJobRunning || rows.length === 0}
             className="inline-flex h-10 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-slate-700/80 bg-slate-900/40 px-2.5 text-[13px] text-slate-200 hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-40 lg:h-9 lg:px-3 lg:text-sm"
           >
@@ -276,6 +324,14 @@ export function DataPageClient() {
             重建
           </button>
         </div>
+      </div>
+
+      {/* ── Rebuild quota notice ── */}
+      <div className="flex items-start gap-2.5 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[12.5px] text-amber-300/90">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+        <span>
+          請留意：「重建」會清除本機快取後完整重抓日 K 與 P11（PER / 月營收 / EPS / 股利），消耗較大量 FinMind / yfinance 額度；「更新日K」只增量更新日 K。
+        </span>
       </div>
 
       {/* ── US market callout ── */}
@@ -315,6 +371,7 @@ export function DataPageClient() {
           rows={filtered}
           onDelete={setDeleteRow}
           onUpdate={handleUpdateSymbol}
+          onRebuild={handleRebuildSymbol}
           isJobRunning={isJobRunning}
         />
       )}
@@ -349,7 +406,8 @@ export function DataPageClient() {
         open={showRebuildDialog}
         market={market}
         symbolCount={rows.length}
-        onClose={() => setShowRebuildDialog(false)}
+        targetSymbol={rebuildTargetSymbol ?? undefined}
+        onClose={handleRebuildDialogClose}
         onConfirm={handleRebuildConfirm}
         isRebuilding={isJobRunning}
       />

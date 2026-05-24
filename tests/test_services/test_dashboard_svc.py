@@ -860,3 +860,56 @@ def test_shareholder_override_upsert_and_delete_delegates_to_storage() -> None:
     mock_storage.delete_shareholder_meeting_override.assert_called_once_with(symbol="2330")
     assert upsert_result["source"] == "manual"
     assert delete_result["deleted"] is True
+
+
+# ---------------------------------------------------------------------------
+# _sync_symbol_daily_data — first-time symbol triggers full rebuild (incl. P11)
+# ---------------------------------------------------------------------------
+
+
+@patch("src.services.dashboard_service._build_fetchers_from_config")
+@patch("src.services.dashboard_service.DuckDBMeta")
+@patch("src.services.dashboard_service.DataMaintenance")
+def test_sync_symbol_daily_data_first_time_calls_rebuild_symbol(
+    mock_maint_cls: MagicMock,
+    mock_meta_cls: MagicMock,
+    mock_build_fetchers: MagicMock,
+) -> None:
+    """First-time access (no local daily) should run rebuild_symbol so P11 is also pulled."""
+    from src.services.dashboard_service import _sync_symbol_daily_data
+
+    mock_storage = MagicMock()
+    mock_storage.load_daily.return_value = pd.DataFrame()  # ← empty = first time
+    mock_fetcher = MagicMock()
+    mock_build_fetchers.return_value = [("finmind", mock_fetcher)]
+    mock_maint = MagicMock()
+    mock_maint_cls.return_value = mock_maint
+
+    _sync_symbol_daily_data("2330", mock_storage, market="tw")
+
+    mock_maint.rebuild_symbol.assert_called_once_with("2330", market="tw")
+    mock_maint.update_daily.assert_not_called()
+
+
+@patch("src.services.dashboard_service._build_fetchers_from_config")
+@patch("src.services.dashboard_service.DuckDBMeta")
+@patch("src.services.dashboard_service.DataMaintenance")
+def test_sync_symbol_daily_data_existing_local_calls_update_daily(
+    mock_maint_cls: MagicMock,
+    mock_meta_cls: MagicMock,
+    mock_build_fetchers: MagicMock,
+) -> None:
+    """Symbol that already has local daily should keep the cheap update path."""
+    from src.services.dashboard_service import _sync_symbol_daily_data
+
+    mock_storage = MagicMock()
+    mock_storage.load_daily.return_value = _make_daily_df(n=10)  # ← non-empty
+    mock_fetcher = MagicMock()
+    mock_build_fetchers.return_value = [("finmind", mock_fetcher)]
+    mock_maint = MagicMock()
+    mock_maint_cls.return_value = mock_maint
+
+    _sync_symbol_daily_data("2330", mock_storage, market="tw")
+
+    mock_maint.update_daily.assert_called_once_with("2330", market="tw")
+    mock_maint.rebuild_symbol.assert_not_called()

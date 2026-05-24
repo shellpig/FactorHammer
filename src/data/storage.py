@@ -1124,17 +1124,31 @@ class ParquetStorage:
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"Failed to write override csv: {path}") from exc
 
-    def clear_p11_parquets(self, symbol: str, market: str = "tw") -> None:
-        """Delete P11-specific parquets (per, monthly_revenue, dividends, eps) so that
-        a subsequent rebuild writes fresh data instead of merging with stale data."""
+    def clear_p11_parquets(
+        self,
+        symbol: str,
+        market: str = "tw",
+        freqs: list[str] | None = None,
+    ) -> None:
+        """Delete P11-specific parquets so a subsequent save writes fresh data
+        instead of merging with stale data.
+
+        ``freqs`` selects which datasets to clear; default = all four
+        (per, monthly_revenue, dividends, eps).
+        """
         normalized_market = self._validate_market(market)
         normalized_symbol = self._validate_symbol(symbol, normalized_market)
-        for path_fn in (
-            self._per_path,
-            self._monthly_revenue_path,
-            self._dividends_path,
-            self._eps_path,
-        ):
+        path_map = {
+            "per": self._per_path,
+            "monthly_revenue": self._monthly_revenue_path,
+            "dividends": self._dividends_path,
+            "eps": self._eps_path,
+        }
+        targets = freqs if freqs is not None else list(path_map.keys())
+        for freq in targets:
+            path_fn = path_map.get(freq)
+            if path_fn is None:
+                continue
             p = path_fn(normalized_symbol, normalized_market)
             if p.exists():
                 p.unlink()

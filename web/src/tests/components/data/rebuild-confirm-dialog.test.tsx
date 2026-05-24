@@ -116,4 +116,33 @@ describe("RebuildConfirmDialog", () => {
     expect(screen.getByTestId("rebuild-dialog-cancel")).toBeDisabled();
     expect(screen.getByTestId("rebuild-dialog-close")).toBeDisabled();
   });
+
+  it("shows quota notice (額度) in description", () => {
+    render(
+      <RebuildConfirmDialog
+        open={true}
+        market="tw"
+        symbolCount={5}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/請留意：重建會消耗較大量額度/)).toBeInTheDocument();
+  });
+
+  it("renders single-symbol wording when targetSymbol is provided", () => {
+    render(
+      <RebuildConfirmDialog
+        open={true}
+        market="tw"
+        symbolCount={5}
+        targetSymbol="2330"
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/確認重建 台股 2330/)).toBeInTheDocument();
+    // batch wording is replaced
+    expect(screen.queryByText(/確認重建全部/)).not.toBeInTheDocument();
+  });
 });

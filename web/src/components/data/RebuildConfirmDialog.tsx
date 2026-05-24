@@ -10,6 +10,8 @@ interface RebuildConfirmDialogProps {
   open: boolean;
   market: Market;
   symbolCount: number;
+  /** When set, dialog shows single-symbol wording instead of batch wording. */
+  targetSymbol?: string;
   onClose: () => void;
   onConfirm: () => void;
   isRebuilding?: boolean;
@@ -19,11 +21,13 @@ export function RebuildConfirmDialog({
   open,
   market,
   symbolCount,
+  targetSymbol,
   onClose,
   onConfirm,
   isRebuilding = false,
 }: RebuildConfirmDialogProps) {
   const marketLabel = market === "us" ? "美股" : "台股";
+  const isSingle = Boolean(targetSymbol);
 
   return (
     <Dialog.Root open={open} onOpenChange={(o) => !o && onClose()}>
@@ -40,15 +44,27 @@ export function RebuildConfirmDialog({
               </div>
               <div>
                 <Dialog.Title className="text-base font-semibold text-slate-100">
-                  確認重建全部 {marketLabel} 本機資料
+                  {isSingle
+                    ? `確認重建 ${marketLabel} ${targetSymbol}`
+                    : `確認重建全部 ${marketLabel} 本機資料`}
                 </Dialog.Title>
                 <Dialog.Description className="mt-1.5 text-[13px] leading-relaxed text-slate-300">
-                  此動作將清除 <span className="text-slate-100 font-medium">{symbolCount}</span>{" "}
-                  個 {marketLabel} 標的的本機快取，再從資料來源重新下載。
-                  過程可能耗時數分鐘；重建期間其他資料操作將被鎖定。
+                  {isSingle ? (
+                    <>
+                      此動作將清除 <span className="text-slate-100 font-medium">{targetSymbol}</span>{" "}
+                      的本機日 K 與 P11 快取（PER / 月營收 / EPS / 股利），再從資料來源重新下載。
+                      重建期間其他資料操作將被鎖定。
+                    </>
+                  ) : (
+                    <>
+                      此動作將清除 <span className="text-slate-100 font-medium">{symbolCount}</span>{" "}
+                      個 {marketLabel} 標的的本機快取，再從資料來源重新下載。
+                      過程可能耗時數分鐘；重建期間其他資料操作將被鎖定。
+                    </>
+                  )}
                   <br />
                   <span className="mt-2 block text-amber-400/80">
-                    此操作無法中途取消且影響範圍大，請謹慎確認。
+                    請留意：重建會消耗較大量額度（FinMind / yfinance），且操作無法中途取消，請謹慎確認。
                   </span>
                 </Dialog.Description>
               </div>

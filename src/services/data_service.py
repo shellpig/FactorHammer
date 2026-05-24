@@ -50,6 +50,7 @@ class MaintenanceReport:
     success: bool
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 
@@ -230,6 +231,7 @@ def run_maintenance(
                     rows_added=-1,   # rebuild doesn't return added count
                     success=True,
                     warnings=maintenance.warnings,
+                    errors=maintenance.errors,
                 )
             else:
                 added = maintenance.update_daily(symbol, market=normalized_market)
@@ -241,6 +243,7 @@ def run_maintenance(
                     rows_added=int(added),
                     success=True,
                     warnings=maintenance.warnings,
+                    errors=maintenance.errors,
                 )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{source}: {exc}")

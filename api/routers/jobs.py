@@ -384,6 +384,7 @@ async def _run_data_job(manager: JobManager, job: Job, params: dict[str, Any]) -
     succeeded: list[str] = []
     failed: list[dict[str, str]] = []
     warnings: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
     total = len(symbols)
 
     for i, symbol in enumerate(symbols, 1):
@@ -418,12 +419,19 @@ async def _run_data_job(manager: JobManager, job: Job, params: dict[str, Any]) -
             for w in sym_warnings:
                 warnings.append({"symbol": symbol, "message": w})
 
+            sym_errors = getattr(result, "errors", [])
+            if not isinstance(sym_errors, list):
+                sym_errors = []
+            for e in sym_errors:
+                errors.append({"symbol": symbol, "message": e})
+
             manager.push_event(job.id, "progress", {
                 "current": i,
                 "total": total,
                 "current_symbol": symbol,
                 "status": "done",
                 "warnings": sym_warnings,
+                "errors": sym_errors,
             })
         except Exception as exc:  # noqa: BLE001
             err_str = str(exc)
@@ -448,6 +456,7 @@ async def _run_data_job(manager: JobManager, job: Job, params: dict[str, Any]) -
         "succeeded": succeeded,
         "failed": failed,
         "warnings": warnings,
+        "errors": errors,
         "shareholder_meeting_refreshed": shareholder_refreshed,
     }
     manager.push_event(job.id, "result", final_result)

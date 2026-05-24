@@ -248,7 +248,7 @@ risk:
 | 12-B | ✅ 完成 | Backend Config API 擴充已實作並驗證完成：`POST /api/config/secrets/validate`、FinMind token 驗證改用 FinMind data endpoint、`_write_env` atomic helper（保留註解 / 空行 / 未知 keys、不 sort、寫 `.env.tmp` + `os.replace`）、`get_secrets_status` 空白 fallback bug 修正；既有 `PUT /api/config/secrets` regression 通過 |
 | 12-C | ✅ 完成 | Frontend Token Setup Dialog 已實作並驗證完成：強制 block modal（無 X、ESC / overlay 都 preventDefault、儲存鈕灰至 FinMind 非空）、FinMind 申請連結、AI keys 選填折疊、SWR `mutate(() => true)` 全域 invalidate；不提供清空既有 AI key、不提供「先跳過」 |
 | 12-D | ✅ 完成 | Verifier 文件收尾已完成：同步 12-A/B/C 狀態、檢查舊啟動腳本名殘留、更新現役啟動入口；Phase 12 整體完成 |
-| 13-A | ✅ 完成 | Dashboard 分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 走 SWR `mutate()` 強制重跑 dashboard payload，後端維持 `_sync_symbol_daily_data → DataMaintenance.update_daily()` 路徑；台股 `intraday_df=[]` 隱藏 `分 K` tab，美股 intraday 仍顯示；自動測試 8 case + 手動驗收 1-7 全通過 |
+| 13-A | ✅ 完成 | Dashboard 分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 走 SWR `mutate()` 強制重跑 dashboard payload，後端 `_sync_symbol_daily_data` 走 `DataMaintenance.update_daily()`（**註：本機 daily 完全空時改走 `rebuild_symbol()` 以一次補齊 P11，見 2026-05-24 P-data-mgmt-toast errata**）；台股 `intraday_df=[]` 隱藏 `分 K` tab，美股 intraday 仍顯示；自動測試 8 case + 手動驗收 1-7 全通過 |
 | 13-B | ✅ 完成 | Dashboard 指標說明與數值呈現整理：壓力 / 支撐補來源 label，說明近20日 / 近60日高點過近會合併；台股報價列與 K 線 tooltip 成交量統一以日K股數語意呈現，避免 `quote.volume` 與 `daily_df.volume` 單位混淆；`formatTwDailyVolume()` 補前端測試，使用者已完成人工驗證 |
 | 14-A | ✅ 完成 | LAN / Tailscale 多裝置存取：`run_factorhammer.bat` uvicorn 加 `--host 0.0.0.0`、`pnpm dev` 加 `-H 0.0.0.0`（pnpm 9+ 不需 `--` 分隔符）；`web/next.config.ts` 新增 `rewrites()` 反代 `/api/:path*` → `http://127.0.0.1:8000/api/:path*`、`devIndicators.position: top-right`（避免 Mobile Tab Bar 被遮）；`web/src/lib/api-client.ts` `BASE_URL` 預設值改為空字串；FastAPI CORS 不動；`NEXT_PUBLIC_API_URL` 保留為 escape hatch。Gate：tsc 0 errors、vitest 61 files / 407 tests pass（含 14-A 兩條 escape hatch / same-origin 新案）、pytest `tests/test_api` 120 passed；手動驗收 M1（PC 本機同源）、M2（rewrites 生效）、M3（同 Wi-Fi 手機）、M4（Tailscale）、M6（手機端 Token Setup Dialog onboarding）全通過，M5 自動測試已涵蓋故跳過 |
 | 14-B | ✅ 完成 | 手機端 UI 收尾已完成並通過驗證：(1) **資料管理頁 mobile**：DataTable mobile 改 4 欄（代碼 / 名稱 / 狀態 / 動作），隱藏「區間」「K 棒數」，名稱欄 `min-w-[6rem] max-w-[10rem] truncate` + `title`；(2) **資料頁 toolbar mobile-only 修正**：搜尋框右側保留「新增標的」，下排三顆「重新整理 / 更新 / 重建」，加寬與 `whitespace-nowrap` 避免中文字直排，`lg` 以上維持桌機橫向排列；(3) **Mobile Tab Bar 透明修正**：`sidebar.tsx` / `stock-selector.tsx` / `ai/chat-input.tsx` 三處 `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value；不補 `@theme`、不動 API。Gate：`npx tsc --noEmit` 0 errors、vitest 61 files / 411 tests pass；使用者人工驗證 14-B-M1 ~ M4 完成 |
@@ -264,6 +264,19 @@ risk:
 見 `驗證後已知問題.md`（每次必讀）。
 
 主線：**Phase 1–14-B + 15-A-1 + 15-A-2 + 15-B + 15-C + 15-D + 15-E 全部完成並通過驗證。** 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成；AI 問答支援 SSE streaming、停止串流、tool use、tool chip、日線資料自動補抓 / 更新與含息總報酬試算。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+
+2026-05-24 狀態（資料管理頁 P11 toast / 個股 rebuild 行為改版）：
+- **入口語意重整**：資料管理頁按鈕「更新」→「更新日K」；個股動作欄新增「重建」按鈕（彈單檔確認 Dialog，含「請留意：重建會消耗較大量額度」警語）；「+ 新增標的」改走 `data_rebuild`，新標的一次拿到日K + P11；工具列下方新增黃色說明列。
+- **後端行為改變**：
+  - `DataMaintenance.update_daily()` **不再** 自動觸發 P11 補抓（原本會在 P11 metadata 缺時 best-effort fetch）。更新只動日 K。
+  - `_rebuild_p11_datasets` 改為 per-dataset 處理：fetch 拋例外 → 累積到 `self.errors`；fetch 回空但本機原本有 → 保留舊資料 + `self.warnings`；fetch 回非空 → 清該單一 parquet 再寫，避免 upsert merge 殘留 stale rows。
+  - `dashboard_service._sync_symbol_daily_data`：若本機 `load_daily` 為空（新代碼第一次進個股分析）→ 走 `rebuild_symbol`（日K + P11）；否則維持 `update_daily`。等於把「個股分析新代碼」自動帶 P11，跟「資料管理頁 + 新增標的」行為對齊。
+  - `MaintenanceReport` 新增 `errors: list[str]`；`api/routers/jobs.py` SSE `result` event 新增 `errors: [{symbol, message}]`，與既有 `warnings` 並列。
+- **Toast 分層**：日線成功 + P11 errors → 紅色 `toast.error`；日線成功 + P11 warnings → 黃色 `toast.warning`；純成功 → 綠色；日線失敗 → 紅色。批次與單檔 (個股 / add) 各自有對應文案。
+- **AI advisor 未動**：`_ensure_daily_updated` 仍走 update；`_ensure_dividends_updated` 仍直接呼叫私有 `_rebuild_p11_datasets`。dashboard 與 advisor 的「新代碼進入點」現在故意不一致（dashboard rebuild，advisor update），如要對齊請另開任務。
+- **Gate**：targeted pytest `tests/test_maintenance.py + test_services/test_data_svc.py + test_services/test_dashboard_svc.py + test_api/test_data_jobs_api.py` 87 passed；全套 `pytest -m "not integration"` 650 passed + advisor 78 passed；`npx tsc --noEmit` 0 errors；vitest 資料管理目錄 7 files / 63 tests passed（含 DataTable 新增 3 條 + RebuildConfirmDialog 額度 / 單檔 2 條 + data-page-client 單檔 rebuild success / warning / error 3 條）。
+- **已知 tech debt**：`_rebuild_p11_datasets` 在「new fetch 空 + local 空」（多半是 ETF 真的沒 PER/EPS）走 silent skip，劇本對但無法跟「FinMind 200 回 data=[] 隱形失敗」的劇本區分；未來可考慮用 `stock_info_tw.parquet` 的 industry 預先排除 ETF/REIT。詳見討論記錄。
+- **未動文件**：`量化交易系統規格書`、`開發設計方針`、`測試指南`、`驗證後已知問題` 的對應段落本輪未同步，留給 verifier。
 
 2026-05-24 狀態（Phase 15-E 完成並通過驗證）：
 - **P15-E 實作完成**：AI 問答投資試算工具 `calculate_total_return` 已上線；chat 面對「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題時呼叫 deterministic Python tool，而不是用 `get_price_data` 最近 60 筆 K 線推算。

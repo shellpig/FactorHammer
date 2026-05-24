@@ -6,6 +6,7 @@ import type { SymbolRow } from "@/types/data";
 
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
+const mockToastWarning = vi.fn();
 const mockToastInfo = vi.fn();
 const mockToastDismiss = vi.fn();
 const mockMutate = vi.fn();
@@ -21,6 +22,8 @@ let mockJobState = {
   currentSymbol: "",
   succeeded: [] as string[],
   failed: [] as Array<{ symbol: string; error: string }>,
+  warnings: [] as Array<{ symbol: string; message: string }>,
+  errors: [] as Array<{ symbol: string; message: string }>,
   errorMsg: null as string | null,
 };
 
@@ -28,6 +31,7 @@ vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({
     success: mockToastSuccess,
     error: mockToastError,
+    warning: mockToastWarning,
     info: mockToastInfo,
     dismiss: mockToastDismiss,
   }),
@@ -73,16 +77,21 @@ vi.mock("@/components/data/DataTable", () => ({
     rows,
     onDelete,
     onUpdate,
+    onRebuild,
   }: {
     rows: SymbolRow[];
     onDelete: (row: SymbolRow) => void;
     onUpdate: (row: SymbolRow) => void;
+    onRebuild?: (row: SymbolRow) => void;
   }) => (
     <div data-testid="data-table">
       {rows.map((row) => (
         <div key={row.symbol} data-testid={`row-${row.symbol}`}>
           <button type="button" onClick={() => onUpdate(row)}>
             update-{row.symbol}
+          </button>
+          <button type="button" onClick={() => onRebuild?.(row)}>
+            rebuild-{row.symbol}
           </button>
           <button type="button" onClick={() => onDelete(row)}>
             delete-{row.symbol}
@@ -160,6 +169,8 @@ describe("DataPageClient toast migration", () => {
       currentSymbol: "",
       succeeded: [],
       failed: [],
+      warnings: [],
+      errors: [],
       errorMsg: null,
     };
   });
@@ -172,7 +183,7 @@ describe("DataPageClient toast migration", () => {
     expect(addButton).toHaveClass("whitespace-nowrap");
 
     const refreshButton = screen.getByRole("button", { name: "重新整理" });
-    const updateButton = screen.getByRole("button", { name: "更新" });
+    const updateButton = screen.getByRole("button", { name: "更新日K" });
     const rebuildButton = screen.getByRole("button", { name: "重建" });
     expect(refreshButton.parentElement).toHaveClass("grid", "grid-cols-3", "lg:flex");
     for (const button of [refreshButton, updateButton, rebuildButton]) {
@@ -182,7 +193,7 @@ describe("DataPageClient toast migration", () => {
 
   it("shows toast for update all completion and no inline result banner", async () => {
     const view = render(<DataPageClient />);
-    await userEvent.click(screen.getByRole("button", { name: "更新" }));
+    await userEvent.click(screen.getByRole("button", { name: "更新日K" }));
     expect(mockStartJob).toHaveBeenCalledWith("data_update", { market: "tw", all: true });
 
     mockJobState = {
@@ -194,7 +205,7 @@ describe("DataPageClient toast migration", () => {
     view.rerender(<DataPageClient />);
 
     await waitFor(() => {
-      expect(mockToastSuccess).toHaveBeenCalledWith("更新完成：1 個成功");
+      expect(mockToastSuccess).toHaveBeenCalledWith("更新日K完成：1 個成功");
       expect(mockResetJob).toHaveBeenCalled();
     });
     expect(screen.queryByText("完成：1 個成功")).not.toBeInTheDocument();
@@ -219,10 +230,16 @@ describe("DataPageClient toast migration", () => {
     });
   });
 
-  it("shows add symbol success toast", async () => {
+  it("shows add symbol success toast and uses data_rebuild path", async () => {
     const view = render(<DataPageClient />);
     await userEvent.click(screen.getByRole("button", { name: "新增標的" }));
     await userEvent.click(screen.getByRole("button", { name: "confirm-add" }));
+
+    // 新增走 data_rebuild，這樣新標的會一次拉日K + P11
+    expect(mockStartJob).toHaveBeenCalledWith("data_rebuild", {
+      market: "tw",
+      symbols: ["2330"],
+    });
 
     mockJobState = {
       ...mockJobState,
@@ -254,7 +271,7 @@ describe("DataPageClient toast migration", () => {
     view.rerender(<DataPageClient />);
 
     await waitFor(() => {
-      expect(mockToastSuccess).toHaveBeenCalledWith("已更新：2330");
+      expect(mockToastSuccess).toHaveBeenCalledWith("已更新日K：2330");
     });
   });
 
@@ -271,8 +288,75 @@ describe("DataPageClient toast migration", () => {
     view.rerender(<DataPageClient />);
 
     await waitFor(() => {
-      expect(mockToastError).toHaveBeenCalledWith("更新失敗：2330（來源暫時不可用）");
-      expect(mockToastSuccess).not.toHaveBeenCalledWith("已更新：2330");
+      expect(mockToastError).toHaveBeenCalledWith("日K 更新失敗：2330（來源暫時不可用）");
+      expect(mockToastSuccess).not.toHaveBeenCalledWith("已更新日K：2330");
+    });
+  });
+
+  it("opens rebuild confirm dialog for single symbol and fires data_rebuild on confirm", async () => {
+    const view = render(<DataPageClient />);
+    await userEvent.click(screen.getByRole("button", { name: "rebuild-2330" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-rebuild" }));
+
+    expect(mockStartJob).toHaveBeenCalledWith("data_rebuild", {
+      market: "tw",
+      symbols: ["2330"],
+    });
+
+    mockJobState = {
+      ...mockJobState,
+      status: "complete",
+      succeeded: ["2330"],
+      failed: [],
+    };
+    view.rerender(<DataPageClient />);
+
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith("已重建：2330");
+    });
+  });
+
+  it("shows toast.error for single rebuild when P11 has errors but daily succeeded", async () => {
+    const view = render(<DataPageClient />);
+    await userEvent.click(screen.getByRole("button", { name: "rebuild-2330" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-rebuild" }));
+
+    mockJobState = {
+      ...mockJobState,
+      status: "complete",
+      succeeded: ["2330"],
+      failed: [],
+      errors: [{ symbol: "2330", message: "PER 更新失敗：FinMind quota" }],
+    };
+    view.rerender(<DataPageClient />);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        expect.stringContaining("日線已重建：2330，但股利/P11 更新失敗"),
+        expect.objectContaining({ duration: expect.any(Number) }),
+      );
+    });
+  });
+
+  it("shows toast.warning for single rebuild when P11 fetch returned empty preserving local", async () => {
+    const view = render(<DataPageClient />);
+    await userEvent.click(screen.getByRole("button", { name: "rebuild-2330" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-rebuild" }));
+
+    mockJobState = {
+      ...mockJobState,
+      status: "complete",
+      succeeded: ["2330"],
+      failed: [],
+      warnings: [{ symbol: "2330", message: "股利 新抓回空資料，已保留本機既有 5 筆" }],
+    };
+    view.rerender(<DataPageClient />);
+
+    await waitFor(() => {
+      expect(mockToastWarning).toHaveBeenCalledWith(
+        expect.stringContaining("日線已重建：2330，股利/P11 有警示"),
+        expect.objectContaining({ duration: expect.any(Number) }),
+      );
     });
   });
 

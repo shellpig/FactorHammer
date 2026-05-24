@@ -123,6 +123,7 @@ class DataMaintenance:
         self.cleaner = cleaner
         self._last_us_yfinance_request_ts: float | None = None
         self.warnings: list[str] = []
+        self.errors: list[str] = []
 
 
     def rebuild_symbol(self, symbol: str, market: str = "tw") -> QualityReport:
@@ -249,8 +250,6 @@ class DataMaintenance:
         if new_df.empty:
             self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=existing, market=normalized_market)
             self._update_meta(symbol=symbol, freq="daily", source=self._source_name(), df=existing, market=normalized_market)
-            if normalized_market == "tw" and self._is_p11_missing(symbol=symbol, market=normalized_market):
-                self._rebuild_p11_datasets_best_effort(symbol=symbol, market=normalized_market)
             return 0
 
 
@@ -260,8 +259,6 @@ class DataMaintenance:
         merged = self.storage.load_daily(symbol, market=normalized_market)
         self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=merged, market=normalized_market)
         self._update_meta(symbol=symbol, freq="daily", source=self._source_name(), df=merged, market=normalized_market)
-        if normalized_market == "tw":
-            self._rebuild_p11_datasets_best_effort(symbol=symbol, market=normalized_market)
         return max(0, len(merged) - before_count)
 
     def _rebuild_adjusted_from_raw(self, symbol: str, raw_df: pd.DataFrame, market: str) -> None:
@@ -325,61 +322,97 @@ class DataMaintenance:
             or self.storage.load_dividends(symbol, market=market).empty
         )
 
-    def _rebuild_p11_datasets(self, symbol: str, market: str) -> None:
-        # Clear stale P11 parquets before fetching so rebuild is a clean overwrite,
-        # not an upsert merge that may preserve incorrect historical data.
-        self.storage.clear_p11_parquets(symbol, market=market)
+    _P11_LABELS = {
+        "per": "PER",
+        "monthly_revenue": "月營收",
+        "dividends": "股利",
+        "eps": "EPS",
+    }
 
+    def _rebuild_p11_datasets(self, symbol: str, market: str) -> None:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         source = self._source_name()
 
-        per_df = self._fetch_per(symbol=symbol, start="2015-01-01", end=today)
-        self.storage.save_per(symbol, per_df, market=market)
-        self._update_meta(symbol=symbol, freq="per", source=source, df=self.storage.load_per(symbol, market=market), market=market)
-
-        monthly_df = self._fetch_monthly_revenue(symbol=symbol, start="2015-01-01", end=today)
-        self.storage.save_monthly_revenue(symbol, monthly_df, market=market)
-        self._update_meta(
-            symbol=symbol,
-            freq="monthly_revenue",
-            source=source,
-            df=self.storage.load_monthly_revenue(symbol, market=market),
-            market=market,
-        )
-
-        dividends_df = self._fetch_dividends(symbol=symbol)
-        if not dividends_df.empty:
-            dividend_dates = pd.to_datetime(dividends_df["date"], errors="coerce")
+        # Each entry: (freq, fetcher_callable, saver, loader, post_process)
+        def _filter_dividends(df: pd.DataFrame) -> pd.DataFrame:
+            if df.empty:
+                return df
+            dividend_dates = pd.to_datetime(df["date"], errors="coerce")
             threshold = pd.Timestamp("2015-01-01")
             if getattr(dividend_dates.dt, "tz", None) is not None:
                 threshold = threshold.tz_localize(dividend_dates.dt.tz)
-            dividends_df = dividends_df.loc[dividend_dates >= threshold].reset_index(drop=True)
-        self.storage.save_dividends(symbol, dividends_df, market=market)
-        self._update_meta(
-            symbol=symbol,
-            freq="dividends",
-            source=source,
-            df=self.storage.load_dividends(symbol, market=market),
-            market=market,
-        )
+            return df.loc[dividend_dates >= threshold].reset_index(drop=True)
 
-        eps_df = self._fetch_eps(symbol=symbol, start_date="2015-01-01")
-        self.storage.save_eps(symbol, eps_df, market=market)
-        self._update_meta(
-            symbol=symbol,
-            freq="eps",
-            source=source,
-            df=self.storage.load_eps(symbol, market=market),
-            market=market,
-        )
+        plans = [
+            (
+                "per",
+                lambda: self._fetch_per(symbol=symbol, start="2015-01-01", end=today),
+                self.storage.save_per,
+                self.storage.load_per,
+                None,
+            ),
+            (
+                "monthly_revenue",
+                lambda: self._fetch_monthly_revenue(symbol=symbol, start="2015-01-01", end=today),
+                self.storage.save_monthly_revenue,
+                self.storage.load_monthly_revenue,
+                None,
+            ),
+            (
+                "dividends",
+                lambda: self._fetch_dividends(symbol=symbol),
+                self.storage.save_dividends,
+                self.storage.load_dividends,
+                _filter_dividends,
+            ),
+            (
+                "eps",
+                lambda: self._fetch_eps(symbol=symbol, start_date="2015-01-01"),
+                self.storage.save_eps,
+                self.storage.load_eps,
+                None,
+            ),
+        ]
+
+        for freq, fetch_fn, save_fn, load_fn, post in plans:
+            label = self._P11_LABELS[freq]
+            existing_df = load_fn(symbol, market=market)
+            try:
+                new_df = fetch_fn()
+            except Exception as exc:  # noqa: BLE001
+                self.errors.append(f"{label} 更新失敗：{exc}")
+                continue
+
+            if post is not None:
+                new_df = post(new_df)
+
+            if new_df is None or new_df.empty:
+                if not existing_df.empty:
+                    self.warnings.append(
+                        f"{label} 新抓回空資料，已保留本機既有 {len(existing_df)} 筆"
+                    )
+                continue
+
+            # Non-empty new data → clear that one parquet then write fresh to
+            # avoid upsert-merge preserving stale rows.
+            self.storage.clear_p11_parquets(symbol, market=market, freqs=[freq])
+            save_fn(symbol, new_df, market=market)
+            self._update_meta(
+                symbol=symbol,
+                freq=freq,
+                source=source,
+                df=load_fn(symbol, market=market),
+                market=market,
+            )
 
     def _rebuild_p11_datasets_best_effort(self, symbol: str, market: str) -> None:
-        # P11 datasets are additive for dashboard analytics. Failures should not
-        # block the primary daily update/rebuild pipeline.
+        # P11 datasets are additive for dashboard analytics. Per-dataset failures
+        # are recorded in self.errors / self.warnings; only catch unexpected outer
+        # exceptions (e.g. filesystem) so the primary daily pipeline never aborts.
         try:
             self._rebuild_p11_datasets(symbol=symbol, market=market)
         except Exception as exc:  # noqa: BLE001
-            self.warnings.append(f"P11 {symbol} rebuild failed: {exc}")
+            self.errors.append(f"P11 {symbol} rebuild failed: {exc}")
 
 
     def _source_name(self) -> str:

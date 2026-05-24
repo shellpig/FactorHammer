@@ -4,7 +4,7 @@
 // 10-C-1: list + DELETE
 // 10-C-2: per-row 更新 button wired to data_update job
 
-import { RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw, Trash2, Hammer } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import type { SymbolRow } from "@/types/data";
 
@@ -12,6 +12,7 @@ interface DataTableProps {
   rows: SymbolRow[];
   onDelete: (row: SymbolRow) => void;
   onUpdate?: (row: SymbolRow) => void;
+  onRebuild?: (row: SymbolRow) => void;
   isJobRunning?: boolean;
 }
 
@@ -19,9 +20,9 @@ interface DataTableProps {
 // mobile: code | name+variant | status | actions
 // desktop: code | name+variant | range | bars | status | actions
 const GRID =
-  "grid-cols-[92px_minmax(6rem,1fr)_92px_126px] lg:grid-cols-[100px_minmax(0,1fr)_220px_80px_100px_180px]";
+  "grid-cols-[92px_minmax(6rem,1fr)_92px_180px] lg:grid-cols-[100px_minmax(0,1fr)_220px_80px_100px_240px]";
 
-export function DataTable({ rows, onDelete, onUpdate, isJobRunning = false }: DataTableProps) {
+export function DataTable({ rows, onDelete, onUpdate, onRebuild, isJobRunning = false }: DataTableProps) {
   if (rows.length === 0) {
     return (
       <div className="rounded-xl border border-slate-800/80 bg-slate-900/60 px-4 py-12 text-center text-sm text-slate-500">
@@ -90,7 +91,7 @@ export function DataTable({ rows, onDelete, onUpdate, isJobRunning = false }: Da
 
             {/* 動作 */}
             <div className="flex items-center justify-end gap-1.5">
-              {/* 更新 */}
+              {/* 更新日K */}
               <button
                 onClick={() => onUpdate?.(row)}
                 disabled={isJobRunning || !onUpdate}
@@ -98,7 +99,18 @@ export function DataTable({ rows, onDelete, onUpdate, isJobRunning = false }: Da
                 className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-xs border border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <RefreshCw className="h-3 w-3" />
-                更新
+                更新日K
+              </button>
+
+              {/* 重建 */}
+              <button
+                onClick={() => onRebuild?.(row)}
+                disabled={isJobRunning || !onRebuild}
+                data-testid={`rebuild-btn-${row.symbol}`}
+                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-xs border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Hammer className="h-3 w-3" />
+                重建
               </button>
 
               {/* 刪除 */}

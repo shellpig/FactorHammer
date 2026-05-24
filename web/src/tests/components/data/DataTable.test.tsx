@@ -1,7 +1,7 @@
 // Tests for DataTable component (Phase 10-C-bug)
 // Covers: name display, symbol fallback, empty state
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { DataTable } from "@/components/data/DataTable";
 import type { SymbolRow } from "@/types/data";
@@ -86,5 +86,31 @@ describe("DataTable", () => {
     expect(nameCell).toHaveClass("truncate");
     expect(nameCell).toHaveClass("min-w-[6rem]");
     expect(nameCell).toHaveClass("max-w-[10rem]");
+  });
+
+  it("renders 更新日K button per row and calls onUpdate", () => {
+    const rows = [makeRow({ symbol: "2330" })];
+    const onUpdate = vi.fn();
+    render(<DataTable rows={rows} onDelete={vi.fn()} onUpdate={onUpdate} />);
+    const btn = screen.getByTestId("update-btn-2330");
+    expect(btn).toHaveTextContent("更新日K");
+    fireEvent.click(btn);
+    expect(onUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("renders per-row 重建 button and calls onRebuild", () => {
+    const rows = [makeRow({ symbol: "2330" })];
+    const onRebuild = vi.fn();
+    render(<DataTable rows={rows} onDelete={vi.fn()} onRebuild={onRebuild} />);
+    const btn = screen.getByTestId("rebuild-btn-2330");
+    expect(btn).toHaveTextContent("重建");
+    fireEvent.click(btn);
+    expect(onRebuild).toHaveBeenCalledOnce();
+  });
+
+  it("disables per-row 重建 button when no onRebuild provided", () => {
+    const rows = [makeRow({ symbol: "2330" })];
+    render(<DataTable rows={rows} onDelete={vi.fn()} />);
+    expect(screen.getByTestId("rebuild-btn-2330")).toBeDisabled();
   });
 });

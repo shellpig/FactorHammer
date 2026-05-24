@@ -342,7 +342,8 @@ def test_update_daily_returns_added_rows(tmp_path) -> None:
     assert pd.to_datetime(merged["date"]).max().date() >= datetime(2024, 1, 4).date()
 
 
-def test_update_daily_tw_does_not_fail_when_p11_rebuild_errors(tmp_path) -> None:
+def test_update_daily_tw_does_not_touch_p11(tmp_path) -> None:
+    """update_daily 只更新日 K，不應觸發 P11 抓取（即使 P11 fetch 會炸也不該被呼叫）。"""
     existing = _make_daily("2330", "2024-01-01", 2)
     incremental = _make_daily("2330", "2024-01-03", 2)
     fetcher = StubFetcherP11Failure(full_daily=existing, incremental_daily=incremental, dividends=pd.DataFrame())
@@ -357,6 +358,14 @@ def test_update_daily_tw_does_not_fail_when_p11_rebuild_errors(tmp_path) -> None
 
     assert added == 2
     assert len(merged) == 4
+    # P11 should not be touched on update — fetcher.per_calls must stay empty
+    assert fetcher.per_calls == []
+    assert fetcher.monthly_calls == []
+    assert fetcher.eps_calls == []
+    assert maintenance.warnings == []
+    assert maintenance.errors == []
+    # P11 parquets should remain empty since update never fetches them
+    assert storage.load_per("2330").empty
 
 
 def test_update_daily_rebuilds_adjusted_when_no_new_rows(tmp_path) -> None:
@@ -386,7 +395,8 @@ def test_update_daily_rebuilds_adjusted_when_no_new_rows(tmp_path) -> None:
     assert adjusted_first == pytest.approx(95.0)
 
 
-def test_update_daily_tw_backfills_p11_when_missing_and_no_new_rows(tmp_path) -> None:
+def test_update_daily_tw_does_not_backfill_p11_when_missing_and_no_new_rows(tmp_path) -> None:
+    """更新只動日 K — 即使 P11 為空，也不可以自動補抓 P11。"""
     existing = _make_daily("2330", "2024-06-24", 2)
     fetcher = StubFetcher(
         full_daily=existing,
@@ -399,15 +409,17 @@ def test_update_daily_tw_backfills_p11_when_missing_and_no_new_rows(tmp_path) ->
     maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
 
     storage.save_daily("2330", existing)
-    assert meta.get_meta("2330", "per") is None  # P11-B not built yet
+    assert meta.get_meta("2330", "per") is None
 
     added = maintenance.update_daily("2330", market="tw")
 
     assert added == 0
-    assert not storage.load_per("2330").empty
-    assert not storage.load_monthly_revenue("2330").empty
-    assert not storage.load_eps("2330").empty
-    assert meta.get_meta("2330", "per") is not None
+    # P11 must stay untouched — explicit rebuild is required to populate it.
+    assert storage.load_per("2330").empty
+    assert storage.load_monthly_revenue("2330").empty
+    assert storage.load_eps("2330").empty
+    assert meta.get_meta("2330", "per") is None
+    assert fetcher.per_calls == []
 
 
 def test_maintenance_passes_market_to_storage(tmp_path) -> None:
@@ -700,7 +712,8 @@ def test_rmtree_with_retry_removes_readonly_directory(tmp_path: pytest.TempPathF
     assert not target.exists()
 
 
-def test_update_daily_tw_removes_stale_meta_when_parquet_is_empty(tmp_path) -> None:
+def test_rebuild_symbol_tw_replaces_stale_meta_when_parquet_is_empty(tmp_path) -> None:
+    """重建 (而非更新) 才是 P11 補抓的入口。stale meta + 空 parquet 重建後要被新資料覆蓋。"""
     existing = _make_daily("2330", "2024-06-24", 2)
     fetcher = StubFetcher(
         full_daily=existing,
@@ -712,7 +725,7 @@ def test_update_daily_tw_removes_stale_meta_when_parquet_is_empty(tmp_path) -> N
     cleaner = DataCleaner()
     maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
 
-    # 1. Seed metadata for per in DuckDB (representing a stale meta where meta exists but parquet is empty/missing)
+    # Seed stale metadata for per where parquet is actually empty
     meta.upsert_meta(
         symbol="2330",
         freq="per",
@@ -723,18 +736,74 @@ def test_update_daily_tw_removes_stale_meta_when_parquet_is_empty(tmp_path) -> N
         market="tw",
     )
     assert meta.get_meta("2330", "per", market="tw") is not None
-    assert storage.load_per("2330").empty  # Parquet is actually empty!
+    assert storage.load_per("2330").empty
 
-    # 2. Run update_daily. It should detect that P11 is missing (since parquet is empty, despite get_meta not being None)
     storage.save_daily("2330", existing)
-    added = maintenance.update_daily("2330", market="tw")
+    maintenance.rebuild_symbol("2330", market="tw")
 
-    # 3. Verify that P11 datasets were rebuilt
-    assert added == 0
     assert not storage.load_per("2330").empty
     assert meta.get_meta("2330", "per", market="tw") is not None
-    # row_count should match the stub fetcher length (1)
     assert meta.get_meta("2330", "per", market="tw")["row_count"] == 1
+
+
+def test_rebuild_p11_preserves_old_dividends_when_fetch_returns_empty(tmp_path) -> None:
+    """當 P11 新 fetch 回空但本機原本有 dividends，必須保留舊資料並 warning。"""
+    existing = _make_daily("2330", "2024-06-24", 2)
+    fetcher = StubFetcher(
+        full_daily=existing,
+        incremental_daily=pd.DataFrame(columns=STANDARD_COLUMNS),
+        dividends=pd.DataFrame(),  # ← P11 dividends fetch returns empty
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    # Seed old dividends locally
+    old_dividends = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2023-06-15", "2024-06-15"]),
+            "cash_dividend": [4.0, 5.0],
+            "stock_dividend": [0.0, 0.0],
+            "symbol": ["2330", "2330"],
+        }
+    )
+    storage.save_dividends("2330", old_dividends)
+    assert len(storage.load_dividends("2330")) == 2
+
+    storage.save_daily("2330", existing)
+    maintenance.rebuild_symbol("2330", market="tw")
+
+    # Old dividends must remain — not wiped by the empty new fetch
+    preserved = storage.load_dividends("2330")
+    assert len(preserved) == 2
+    # A warning must be recorded so the user/UI sees the issue
+    assert any("股利" in w and "保留本機" in w for w in maintenance.warnings)
+    assert maintenance.errors == []
+
+
+def test_rebuild_p11_records_error_when_fetch_raises(tmp_path) -> None:
+    """P11 fetch 拋例外時要列入 errors（紅色 toast 來源），不能拖垮整個 rebuild。"""
+    existing = _make_daily("2330", "2024-06-24", 2)
+    fetcher = StubFetcherP11Failure(
+        full_daily=existing,
+        incremental_daily=pd.DataFrame(columns=STANDARD_COLUMNS),
+        dividends=pd.DataFrame(),
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    storage.save_daily("2330", existing)
+    maintenance.rebuild_symbol("2330", market="tw")
+
+    # PER fetch raises; should accumulate in errors, but other P11 datasets still attempt
+    assert any("PER" in e and "FinMind quota" in e for e in maintenance.errors)
+    # Monthly revenue / EPS / dividends still ran (per StubFetcher behavior)
+    assert fetcher.monthly_calls != [] or fetcher.eps_calls != []
+
+
 
 
 def test_update_meta_removes_meta_from_db_on_empty_dataframe(tmp_path) -> None:

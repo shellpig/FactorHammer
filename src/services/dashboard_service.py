@@ -869,11 +869,23 @@ def _sync_symbol_daily_data(
     storage: ParquetStorage,
     market: str = "tw",
 ) -> None:
-    """Auto-sync daily data via available fetchers.  Raises RuntimeError on total failure."""
+    """Auto-sync daily data via available fetchers.
+
+    If the symbol has no local daily data yet (i.e. first-time access from the
+    dashboard for a brand-new symbol), run a full ``rebuild_symbol`` so that
+    P11 datasets (PER / monthly_revenue / EPS / dividends) are populated
+    alongside the daily K-line. Otherwise run the lightweight ``update_daily``.
+
+    Raises RuntimeError on total failure across all configured sources.
+    """
     normalized_market = normalize_market(market)
     fetchers = _build_fetchers_from_config(market=normalized_market)
     if not fetchers:
         raise RuntimeError("No available data source. Details: n/a")
+
+    # Decide rebuild vs update based on local daily presence. Checked once before
+    # the fetcher loop so a fallback fetcher still uses the same strategy.
+    is_first_time = storage.load_daily(symbol, market=normalized_market).empty
 
     errors: list[str] = []
     for source, fetcher in fetchers:
@@ -885,7 +897,12 @@ def _sync_symbol_daily_data(
                 meta=meta,
                 cleaner=DataCleaner(),
             )
-            maintenance.update_daily(symbol, market=normalized_market)
+            if is_first_time:
+                # Full rebuild — daily + P11 (P11 failures are best-effort and do
+                # not abort the daily pipeline, see DataMaintenance).
+                maintenance.rebuild_symbol(symbol, market=normalized_market)
+            else:
+                maintenance.update_daily(symbol, market=normalized_market)
             return
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{source}: {exc}")
