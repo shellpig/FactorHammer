@@ -14,6 +14,7 @@ export interface DataJobState {
   currentSymbol: string;
   succeeded: string[];
   failed: Array<{ symbol: string; error: string }>;
+  warnings: Array<{ symbol: string; message: string }>;
   errorMsg: string | null;
 }
 
@@ -24,6 +25,7 @@ const IDLE_STATE: DataJobState = {
   currentSymbol: "",
   succeeded: [],
   failed: [],
+  warnings: [],
   errorMsg: null,
 };
 
@@ -69,12 +71,14 @@ export function useDataJob(onComplete?: () => void) {
           const data = JSON.parse(e.data) as {
             succeeded: string[];
             failed: Array<{ symbol: string; error: string }>;
+            warnings?: Array<{ symbol: string; message: string }>;
           };
           setState((prev) => ({
             ...prev,
             status: "complete",
             succeeded: data.succeeded,
             failed: data.failed,
+            warnings: data.warnings ?? [],
           }));
           es.close();
           esRef.current = null;

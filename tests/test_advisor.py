@@ -1475,4 +1475,858 @@ def test_ensure_daily_data_updated() -> None:
     asyncio.run(run_already_updated())
 
 
+# ---------------------------------------------------------------------------
+# Phase 15-E: AI Q&A investment return tool (calculate_total_return) tests
+# ---------------------------------------------------------------------------
+
+
+class StubStorageWithDividends:
+    def __init__(self, daily_df, dividends_df=None):
+        self.daily = daily_df
+        if dividends_df is None:
+            # Provide a dummy row outside the calculation range to ensure had_local_data is True
+            # while not affecting calculation results.
+            self.dividends = pd.DataFrame({
+                "date": [pd.to_datetime("2000-01-01")],
+                "cash_dividend": [0.0],
+                "stock_dividend": [0.0],
+                "symbol": ["2330"]
+            })
+        else:
+            self.dividends = dividends_df
+
+    def load_daily(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        if self.daily.empty:
+            return self.daily.copy()
+        return self.daily[self.daily["symbol"] == symbol].copy()
+
+    def load_minute(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        return pd.DataFrame()
+
+    def load_dividends(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        if self.dividends.empty:
+            return self.dividends.copy()
+        df = self.dividends.copy()
+        if len(df) == 1 and df.iloc[0]["date"] == pd.to_datetime("2000-01-01"):
+            df["symbol"] = symbol
+            return df
+        return df[df["symbol"] == symbol].copy()
+
+    def save_dividends(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> None:
+        pass
+
+
+def _make_dividends_df(symbol: str = "2330") -> pd.DataFrame:
+    return pd.DataFrame({
+        "date": pd.to_datetime(["2025-03-21", "2025-06-20"]),
+        "cash_dividend": [1.40, 1.10],
+        "stock_dividend": [0.0, 0.0],
+        "symbol": [symbol, symbol]
+    })
+
+
+def test_calculate_total_return_single_symbol() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=200)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-03-31",
+            initial_amount=100000.0,
+            market="tw",
+            buy_price_basis="open",
+            dividend_mode="cash",
+        )
+        assert not res["errors"]
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert ret["symbol"] == "2330"
+        assert ret["buy_price"] == 101.0
+        assert ret["end_price"] == 189.5
+        assert ret["shares"] == round(100000.0 / 101.0, 6)
+        assert ret["cash_dividend_per_share"] == 1.40
+        assert len(ret["dividends"]) == 1
+        assert ret["dividends"][0]["date"] == "2025-03-21"
+        assert ret["total_return_pct"] > 0
+        assert ret["holding_days"] > 0
+        assert ret["annualized_return_pct"] is not None
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_multi_symbol_order() -> None:
+    import asyncio
+    daily_df = pd.concat([_make_daily_df("2330", periods=100), _make_daily_df("0050", periods=100)])
+    dividends_df = pd.concat([_make_dividends_df("2330"), _make_dividends_df("0050")])
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["0050", "2330"],
+            start_date="2025-01-02",
+            end_date="2025-02-15",
+            initial_amount=100000.0,
+            market="tw",
+            buy_price_basis="open",
+            dividend_mode="cash",
+        )
+        assert not res["errors"]
+        assert len(res["results"]) == 2
+        assert res["results"][0]["symbol"] == "0050"
+        assert res["results"][1]["symbol"] == "2330"
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_start_non_trading_day_aligns_next() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    daily_df = daily_df[daily_df["date"].dt.dayofweek < 5].copy()
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-04",
+            end_date="2025-01-20",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert ret["buy_date"] == "2025-01-06"
+        assert any("起始日" in w and "非交易日" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_end_non_trading_day_aligns_previous() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    daily_df = daily_df[daily_df["date"].dt.dayofweek < 5].copy()
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-19",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert ret["end_trade_date"] == "2025-01-17"
+        assert any("非交易日" in w and "結束日" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_start_before_first_data_within_30_days_warns() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2024-12-15",
+            end_date="2025-01-15",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert ret["buy_date"] == "2025-01-01"
+        assert any("早於本機最早資料日" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_start_before_first_data_over_30_days_errors() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2024-11-01",
+            end_date="2025-01-15",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        assert len(res["errors"]) == 1
+        assert "早於本機最早資料超過 30 天" in res["errors"][0]["error"]
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_end_after_latest_data_warns() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=10)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-02-01",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert ret["end_trade_date"] == "2025-01-10"
+        assert any("晚於本機最新資料日" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_same_trade_date_warns_no_annualized() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-02",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert ret["holding_days"] == 0
+        assert ret["annualized_return_pct"] is None
+        assert any("同一交易日" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_dividend_range_excludes_buy_date() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    dividends_df = pd.DataFrame({
+        "date": pd.to_datetime(["2025-01-02", "2025-01-05"]),
+        "cash_dividend": [1.50, 1.00],
+        "stock_dividend": [0.0, 0.0],
+        "symbol": ["2330", "2330"]
+    })
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        assert len(res["results"]) == 1
+        ret = res["results"][0]
+        assert len(ret["dividends"]) == 1
+        assert ret["dividends"][0]["date"] == "2025-01-05"
+        assert ret["cash_dividend_per_share"] == 1.00
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_dividend_date_is_ex_dividend_date() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    dividends_df = pd.DataFrame({
+        "date": pd.to_datetime(["2025-01-05"]),
+        "cash_dividend": [2.00],
+        "stock_dividend": [0.0],
+        "symbol": ["2330"]
+    })
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        ret = res["results"][0]
+        assert ret["dividends"][0]["date"] == "2025-01-05"
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_stock_dividend_warns_not_counted() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    dividends_df = pd.DataFrame({
+        "date": pd.to_datetime(["2025-01-05"]),
+        "cash_dividend": [1.50],
+        "stock_dividend": [0.1],
+        "symbol": ["2330"]
+    })
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        ret = res["results"][0]
+        assert any("股票股利" in w for w in ret["warnings"])
+        assert ret["stock_dividend_per_share"] == 0.10
+        assert ret["dividends"][0]["stock_dividend"] == 0.10
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_missing_daily_errors_one_symbol_only() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330", "9999"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        assert len(res["results"]) == 1
+        assert res["results"][0]["symbol"] == "2330"
+        assert len(res["errors"]) == 1
+        assert res["errors"][0]["symbol"] == "9999"
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_refreshes_dividends_when_needed() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        with patch.object(advisor, "_ensure_dividends_updated", return_value={"warning": None, "error": None}) as mock_refresh:
+            res = await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+            )
+            assert not res["errors"]
+            mock_refresh.assert_called_once()
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_dividends_refreshed_source() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        with patch.object(advisor, "_ensure_dividends_updated", return_value={"warning": None, "error": None}):
+            res = await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+            )
+            assert res["results"][0]["dividends_source"] == "refreshed"
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_dividends_local_fallback_on_refresh_fail() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        with patch.object(advisor, "_ensure_dividends_updated", return_value={"warning": "Failed connection", "error": "Connection Timeout"}):
+            res = await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+            )
+            assert not res["errors"]
+            ret = res["results"][0]
+            assert ret["dividends_source"] == "local_fallback"
+            assert any("股利更新失敗" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_dividends_missing_after_refresh_fail_errors() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, pd.DataFrame()),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        with patch.object(advisor, "_ensure_dividends_updated", return_value={"warning": None, "error": "Fetch Error"}):
+            res = await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+            )
+            assert len(res["errors"]) == 1
+            assert "無股利資料" in res["errors"][0]["error"]
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_dividend_lock_busy_with_local_fallback() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        with patch.object(advisor, "_ensure_dividends_updated", return_value={"warning": "資料更新正在進行中，暫用本機資料", "error": "Lock Busy"}):
+            res = await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+            )
+            assert len(res["results"]) == 1
+            ret = res["results"][0]
+            assert ret["dividends_source"] == "local_fallback"
+            assert any("股利更新失敗" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_dividend_lock_busy_without_local_errors() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, pd.DataFrame()),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        with patch.object(advisor, "_ensure_dividends_updated", return_value={"warning": "資料更新正在進行中", "error": "Lock Busy"}):
+            res = await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+            )
+            assert len(res["errors"]) == 1
+            assert "無股利資料" in res["errors"][0]["error"]
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_dividends_refresh_once_per_chat() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        updated_set = set()
+        with patch.object(advisor, "_ensure_dividends_updated", wraps=advisor._ensure_dividends_updated) as mock_ref:
+            await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+                updated_dividend_symbols=updated_set,
+            )
+            await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+                updated_dividend_symbols=updated_set,
+            )
+            assert mock_ref.call_count == 2
+            assert ("2330", "tw") in updated_set
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_market_us_rejected() -> None:
+    import asyncio
+    daily_df = _make_daily_df("AAPL", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["AAPL"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="us",
+        )
+        assert len(res["errors"]) == 1
+        assert "僅支援台股" in res["errors"][0]["error"]
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_unsupported_dividend_mode_rejected() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="tw",
+            dividend_mode="reinvest",
+        )
+        assert len(res["errors"]) == 1
+        assert "僅支援現金股利持有" in res["errors"][0]["error"]
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_unsupported_buy_price_basis_rejected() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-01-10",
+            initial_amount=100000.0,
+            market="tw",
+            buy_price_basis="high",
+        )
+        assert len(res["errors"]) == 1
+        assert "buy_price_basis 僅支援" in res["errors"][0]["error"]
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_rounding_rules() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2025-03-31",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        ret = res["results"][0]
+        assert str(ret["buy_price"]).endswith(".0") or len(str(ret["buy_price"]).split(".")[1]) <= 2
+        assert str(ret["end_price"]).endswith(".0") or len(str(ret["end_price"]).split(".")[1]) <= 2
+        assert len(str(ret["shares"]).split(".")[1]) <= 6
+        assert len(str(ret["cash_dividend_per_share"]).split(".")[1]) <= 4
+        assert len(str(ret["dividend_cash"]).split(".")[1]) <= 2
+        assert len(str(ret["market_value"]).split(".")[1]) <= 2
+        assert len(str(ret["final_value"]).split(".")[1]) <= 2
+        assert len(str(ret["total_return_pct"]).split(".")[1]) <= 2
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_holding_days_and_annualized() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=400)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        res = await advisor._handle_calculate_total_return(
+            symbols=["2330"],
+            start_date="2025-01-02",
+            end_date="2026-02-15",
+            initial_amount=100000.0,
+            market="tw",
+        )
+        ret = res["results"][0]
+        assert ret["holding_days"] > 365
+        assert ret["annualized_return_pct"] is not None
+        assert not any("持有期間不足一年" in w for w in ret["warnings"])
+
+    asyncio.run(run())
+
+
+def test_calculate_total_return_triggers_daily_update_once() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df),
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        updated_set = set()
+        with patch.object(advisor, "_ensure_daily_data_updated", wraps=advisor._ensure_daily_data_updated) as mock_ref:
+            await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+                updated_daily_symbols=updated_set,
+            )
+            mock_ref.assert_called_once()
+            assert ("2330", "tw") in updated_set
+
+    asyncio.run(run())
+
+
+def test_stream_chat_can_use_calculate_total_return_tool() -> None:
+    import asyncio
+
+    class StubAdapterWithReturnTool:
+        provider_name = "stub"
+        def __init__(self):
+            self.model = "stub-model"
+            self.calls_count = 0
+
+        async def stream_complete_with_tools(self, *, model, system_prompt, messages, tools):
+            self.calls_count += 1
+            if self.calls_count == 1:
+                yield {"type": "token", "text": "Let me calculate the total return."}
+                yield {
+                    "type": "tool_calls",
+                    "tool_calls": [
+                        {
+                            "id": "ret-call-1",
+                            "name": "calculate_total_return",
+                            "arguments": {
+                                "symbols": ["2330"],
+                                "start_date": "2025-01-02",
+                                "end_date": "2025-03-31",
+                                "initial_amount": 100000.0,
+                                "market": "tw",
+                            }
+                        }
+                    ]
+                }
+            elif self.calls_count == 2:
+                yield {"type": "token", "text": "The total return for 2330 is 14.01%."}
+
+    daily_df = _make_daily_df("2330", periods=100)
+    dividends_df = _make_dividends_df("2330")
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, dividends_df),
+        adapter=StubAdapterWithReturnTool(),
+    )
+
+    events = []
+    async def run():
+        async for event in advisor.stream_chat([{"role": "user", "content": "How much is my return on 2330?"}]):
+            events.append(event)
+
+    asyncio.run(run())
+
+    assert any(ev["event"] == "token" and ev["text"] == "Let me calculate the total return." for ev in events)
+    assert any(ev["event"] == "tool_call" and ev["name"] == "calculate_total_return" for ev in events)
+    assert any(ev["event"] == "tool_result" and ev["name"] == "calculate_total_return" and "報酬" in ev["output_summary"] for ev in events)
+    assert any(ev["event"] == "token" and "14.01%" in ev["text"] for ev in events)
+
+
+def test_calculate_total_return_dividends_empty_after_successful_refresh_errors() -> None:
+    import asyncio
+    daily_df = _make_daily_df("2330", periods=50)
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorageWithDividends(daily_df, pd.DataFrame()),  # explicitly empty local dividends
+        adapter=StubAdapter([]),
+    )
+
+    async def run():
+        with patch.object(advisor, "_ensure_dividends_updated", return_value={"warning": None, "error": None}):
+            res = await advisor._handle_calculate_total_return(
+                symbols=["2330"],
+                start_date="2025-01-02",
+                end_date="2025-01-10",
+                initial_amount=100000.0,
+                market="tw",
+            )
+            assert len(res["errors"]) == 1
+            assert "無股利資料，無法計算含息報酬" in res["errors"][0]["error"]
+
+    asyncio.run(run())
+
+
 

@@ -1328,6 +1328,15 @@ class DuckDBMeta:
             [normalized_market, symbol],
         )
 
+    def delete_meta_freq(self, symbol: str, freq: str, market: str = "tw") -> None:
+        """Remove a metadata row for a specific symbol+market+freq."""
+        normalized_market = normalize_market(market)
+        self._conn.execute(
+            "DELETE FROM data_meta WHERE market = ? AND symbol = ? AND freq = ?;",
+            [normalized_market, symbol, freq],
+        )
+
+
     def close(self) -> None:
         if hasattr(self, "_conn") and self._conn is not None:
             self._conn.close()

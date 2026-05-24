@@ -233,3 +233,120 @@ def test_ai_chat_streaming_with_tools() -> None:
         assert events[3]["event"] == "done"
     finally:
         app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Phase 15-E: AI Q&A investment return tool (calculate_total_return) API & SSE tests
+# ---------------------------------------------------------------------------
+
+
+def test_chat_sse_calculate_total_return_tool_call() -> None:
+    class DummyAdvisorWithTotalReturnTool:
+        async def stream_chat(self, messages: list[dict]) -> AsyncIterator[dict]:
+            yield {
+                "event": "tool_call",
+                "name": "calculate_total_return",
+                "arguments": {
+                    "symbols": ["2330"],
+                    "start_date": "2025-01-02",
+                    "end_date": "2025-03-31",
+                    "initial_amount": 100000.0,
+                }
+            }
+
+    app.dependency_overrides[get_advisor] = lambda: DummyAdvisorWithTotalReturnTool()
+    try:
+        response = client.post(
+            "/api/ai/chat",
+            json={"messages": [{"role": "user", "content": "計算 2330 報酬"}]},
+        )
+        assert response.status_code == 200
+
+        events = []
+        for line in response.iter_lines():
+            line_str = line.decode("utf-8").strip() if isinstance(line, bytes) else str(line).strip()
+            if line_str.startswith("event:"):
+                events.append({"event": line_str[len("event:"):].strip()})
+            elif line_str.startswith("data:"):
+                events[-1]["data"] = json.loads(line_str[len("data:"):].strip())
+
+        assert len(events) == 2
+        assert events[0]["event"] == "tool_call"
+        assert events[0]["data"]["name"] == "calculate_total_return"
+        assert events[0]["data"]["arguments"]["symbols"] == ["2330"]
+        assert events[1]["event"] == "done"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_chat_sse_calculate_total_return_tool_result_summary() -> None:
+    class DummyAdvisorWithTotalReturnResult:
+        async def stream_chat(self, messages: list[dict]) -> AsyncIterator[dict]:
+            yield {
+                "event": "tool_result",
+                "name": "calculate_total_return",
+                "output_summary": "已完成 1 檔含息報酬試算；0 檔失敗"
+            }
+
+    app.dependency_overrides[get_advisor] = lambda: DummyAdvisorWithTotalReturnResult()
+    try:
+        response = client.post(
+            "/api/ai/chat",
+            json={"messages": [{"role": "user", "content": "計算 2330 報酬"}]},
+        )
+        assert response.status_code == 200
+
+        events = []
+        for line in response.iter_lines():
+            line_str = line.decode("utf-8").strip() if isinstance(line, bytes) else str(line).strip()
+            if line_str.startswith("event:"):
+                events.append({"event": line_str[len("event:"):].strip()})
+            elif line_str.startswith("data:"):
+                events[-1]["data"] = json.loads(line_str[len("data:"):].strip())
+
+        assert len(events) == 2
+        assert events[0]["event"] == "tool_result"
+        assert events[0]["data"]["name"] == "calculate_total_return"
+        assert events[0]["data"]["output_summary"] == "已完成 1 檔含息報酬試算；0 檔失敗"
+        assert events[1]["event"] == "done"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_chat_sse_calculate_total_return_partial_symbol_error_done() -> None:
+    class DummyAdvisorWithPartialError:
+        async def stream_chat(self, messages: list[dict]) -> AsyncIterator[dict]:
+            yield {
+                "event": "tool_result",
+                "name": "calculate_total_return",
+                "output_summary": "已完成 1 檔含息報酬試算；1 檔失敗"
+            }
+            yield {
+                "event": "token",
+                "text": "計算完成，其中 9999 失敗。"
+            }
+
+    app.dependency_overrides[get_advisor] = lambda: DummyAdvisorWithPartialError()
+    try:
+        response = client.post(
+            "/api/ai/chat",
+            json={"messages": [{"role": "user", "content": "計算 2330, 9999"}]},
+        )
+        assert response.status_code == 200
+
+        events = []
+        for line in response.iter_lines():
+            line_str = line.decode("utf-8").strip() if isinstance(line, bytes) else str(line).strip()
+            if line_str.startswith("event:"):
+                events.append({"event": line_str[len("event:"):].strip()})
+            elif line_str.startswith("data:"):
+                events[-1]["data"] = json.loads(line_str[len("data:"):].strip())
+
+        assert len(events) == 3
+        assert events[0]["event"] == "tool_result"
+        assert events[0]["data"]["output_summary"] == "已完成 1 檔含息報酬試算；1 檔失敗"
+        assert events[1]["event"] == "token"
+        assert events[1]["data"]["text"] == "計算完成，其中 9999 失敗。"
+        assert events[2]["event"] == "done"
+    finally:
+        app.dependency_overrides.clear()

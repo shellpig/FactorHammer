@@ -90,4 +90,38 @@ describe("MessageBubble", () => {
     expect(screen.getByTestId("tool-chip-details")).toBeInTheDocument();
     expect(screen.getByText(/"symbol": "2330"/)).toBeInTheDocument();
   });
+
+  it("renders calculate_total_return chip in processing state with correct statusText", () => {
+    const toolCalls = [
+      {
+        name: "calculate_total_return",
+        arguments: { symbols: ["2330", "0050"] }
+      }
+    ];
+    render(<MessageBubble role="assistant" content="Calculating..." toolCalls={toolCalls} />);
+    expect(screen.getByText("正在分析 2330, 0050 的含息總報酬率...")).toBeInTheDocument();
+  });
+
+  it("renders calculate_total_return chip in done state with correct statusText", () => {
+    const toolCalls = [
+      {
+        name: "calculate_total_return",
+        arguments: { symbols: ["2330"] },
+        result: { output_summary: "已完成 1 檔含息報酬試算；0 檔失敗" }
+      }
+    ];
+    render(<MessageBubble role="assistant" content="Calculation complete." toolCalls={toolCalls} />);
+    expect(screen.getByText("已完成 2330 的含息總報酬率計算")).toBeInTheDocument();
+  });
+
+  it("handles symbols as a string gracefully without crashing", () => {
+    const toolCalls = [
+      {
+        name: "calculate_total_return",
+        arguments: { symbols: "2330, 0050" }
+      }
+    ];
+    render(<MessageBubble role="assistant" content="Calculating..." toolCalls={toolCalls} />);
+    expect(screen.getByText("正在分析 2330, 0050 的含息總報酬率...")).toBeInTheDocument();
+  });
 });

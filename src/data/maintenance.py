@@ -122,6 +122,8 @@ class DataMaintenance:
         self.meta = meta
         self.cleaner = cleaner
         self._last_us_yfinance_request_ts: float | None = None
+        self.warnings: list[str] = []
+
 
     def rebuild_symbol(self, symbol: str, market: str = "tw") -> QualityReport:
         """
@@ -247,9 +249,10 @@ class DataMaintenance:
         if new_df.empty:
             self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=existing, market=normalized_market)
             self._update_meta(symbol=symbol, freq="daily", source=self._source_name(), df=existing, market=normalized_market)
-            if normalized_market == "tw" and self.meta.get_meta(symbol, "per", market=normalized_market) is None:
+            if normalized_market == "tw" and self._is_p11_missing(symbol=symbol, market=normalized_market):
                 self._rebuild_p11_datasets_best_effort(symbol=symbol, market=normalized_market)
             return 0
+
 
         cleaned_new, _ = self.cleaner.clean(new_df, symbol=symbol)
         before_count = len(existing)
@@ -312,6 +315,16 @@ class DataMaintenance:
         except NotImplementedError:
             return _empty_eps()
 
+    def _is_p11_missing(self, symbol: str, market: str) -> bool:
+        if market != "tw":
+            return False
+        return (
+            self.storage.load_per(symbol, market=market).empty
+            or self.storage.load_monthly_revenue(symbol, market=market).empty
+            or self.storage.load_eps(symbol, market=market).empty
+            or self.storage.load_dividends(symbol, market=market).empty
+        )
+
     def _rebuild_p11_datasets(self, symbol: str, market: str) -> None:
         # Clear stale P11 parquets before fetching so rebuild is a clean overwrite,
         # not an upsert merge that may preserve incorrect historical data.
@@ -365,8 +378,9 @@ class DataMaintenance:
         # block the primary daily update/rebuild pipeline.
         try:
             self._rebuild_p11_datasets(symbol=symbol, market=market)
-        except Exception:  # noqa: BLE001
-            return
+        except Exception as exc:  # noqa: BLE001
+            self.warnings.append(f"P11 {symbol} rebuild failed: {exc}")
+
 
     def _source_name(self) -> str:
         cls = self.fetcher.__class__.__name__.lower()
@@ -374,6 +388,7 @@ class DataMaintenance:
 
     def _update_meta(self, symbol: str, freq: str, source: str, df: pd.DataFrame, market: str = "tw") -> None:
         if df.empty:
+            self.meta.delete_meta_freq(symbol=symbol, freq=freq, market=market)
             return
 
         dates = pd.to_datetime(df["date"], errors="coerce").dropna()

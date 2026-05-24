@@ -92,16 +92,21 @@ export function ToolCallChip({ name, arguments: args, result }: ToolCall) {
   const [isOpen, setIsOpen] = useState(false);
   const isDone = !!result;
   const symbol = args?.symbol || "";
+  const symbols = args?.symbols
+    ? (Array.isArray(args.symbols) ? args.symbols.join(", ") : String(args.symbols))
+    : symbol;
 
   // Compute status text dynamically based on current state and result
   let statusText = "";
   if (!isDone) {
     if (name === "get_price_data") {
-      statusText = `正在更新與載入 ${symbol} 日線資料...`;
+      statusText = `正在更新與載入 ${symbols} 日線資料...`;
     } else if (name === "calculate_indicators") {
-      statusText = `正在更新與載入 ${symbol} 日線資料並計算指標...`;
+      statusText = `正在更新與載入 ${symbols} 日線資料並計算指標...`;
     } else if (name === "get_support_resistance") {
-      statusText = `正在更新與載入 ${symbol} 日線資料並計算支撐壓力...`;
+      statusText = `正在更新與載入 ${symbols} 日線資料並計算支撐壓力...`;
+    } else if (name === "calculate_total_return") {
+      statusText = `正在分析 ${symbols} 的含息總報酬率...`;
     } else {
       statusText = `正在呼叫 ${name}...`;
     }
@@ -110,13 +115,15 @@ export function ToolCallChip({ name, arguments: args, result }: ToolCall) {
     if (summary.includes("錯誤：")) {
       statusText = `執行失敗：${summary.replace("錯誤：", "")}`;
     } else if (summary.includes("更新失敗，改用本機既有資料")) {
-      statusText = `⚠️ 更新失敗，使用 ${symbol} 本機既有資料`;
+      statusText = `⚠️ 更新失敗，使用 ${symbols} 本機既有資料`;
     } else if (summary.includes("資料更新正在進行中，暫用本機資料")) {
-      statusText = `⚠️ 更新正在進行中，暫用 ${symbol} 本機資料`;
+      statusText = `⚠️ 更新正在進行中，暫用 ${symbols} 本機資料`;
     } else if (summary.includes("資料更新正在進行中，稍後再試")) {
       statusText = `❌ 資料更新正在進行中，請稍後再試`;
+    } else if (name === "calculate_total_return") {
+      statusText = `已完成 ${symbols} 的含息總報酬率計算`;
     } else {
-      statusText = `已更新並分析 ${symbol} 日線資料`;
+      statusText = `已更新並分析 ${symbols} 日線資料`;
     }
   }
 

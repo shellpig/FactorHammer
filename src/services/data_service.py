@@ -7,7 +7,7 @@ No Streamlit calls are made here.
 from __future__ import annotations
 
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
@@ -49,6 +49,8 @@ class MaintenanceReport:
     rows_added: int
     success: bool
     error: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
 
 
 @dataclass
@@ -227,6 +229,7 @@ def run_maintenance(
                     source=source,
                     rows_added=-1,   # rebuild doesn't return added count
                     success=True,
+                    warnings=maintenance.warnings,
                 )
             else:
                 added = maintenance.update_daily(symbol, market=normalized_market)
@@ -237,6 +240,7 @@ def run_maintenance(
                     source=source,
                     rows_added=int(added),
                     success=True,
+                    warnings=maintenance.warnings,
                 )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{source}: {exc}")

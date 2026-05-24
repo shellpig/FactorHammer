@@ -43,7 +43,7 @@ export function DataPageClient() {
   const { rows, isLoading, error: listError, mutate } = useDataList(market);
 
   // Job hook — refresh list on completion
-  const { status: jobStatus, current, total, currentSymbol, succeeded, failed,
+  const { status: jobStatus, current, total, currentSymbol, succeeded, failed, warnings = [],
     errorMsg: jobError, startJob, resetJob } = useDataJob(mutate);
 
   const isJobRunning = jobStatus === "running";
@@ -133,12 +133,19 @@ export function DataPageClient() {
         value.trim().toUpperCase() === target.trim().toUpperCase();
       const getFailedReason = (target: string) =>
         failed.find((item) => matchSymbol(item.symbol, target))?.error;
+      const getWarningsForSymbol = (target: string) =>
+        warnings.filter((item) => matchSymbol(item.symbol, target)).map((item) => item.message);
 
       if (jobIntent?.type === "add_symbol") {
         const symbol = jobIntent.symbol.toUpperCase();
         const ok = succeeded.some((item) => matchSymbol(item, symbol));
         if (ok) {
-          toast.success(`已新增標的：${symbol}`);
+          const symWarnings = getWarningsForSymbol(symbol);
+          if (symWarnings.length > 0) {
+            toast.warning(`已新增標的 ${symbol}，但基本面/籌碼更新有警示：${symWarnings.join("；")}`, { duration: 6000 });
+          } else {
+            toast.success(`已新增標的：${symbol}`);
+          }
         } else {
           const reason = getFailedReason(symbol);
           toast.error(reason ? `新增失敗：${symbol}（${reason}）` : `新增失敗：${symbol}`);
@@ -147,7 +154,12 @@ export function DataPageClient() {
         const symbol = jobIntent.symbol.toUpperCase();
         const ok = succeeded.some((item) => matchSymbol(item, symbol));
         if (ok) {
-          toast.success(`已更新：${symbol}`);
+          const symWarnings = getWarningsForSymbol(symbol);
+          if (symWarnings.length > 0) {
+            toast.warning(`已更新 ${symbol}，但基本面/籌碼更新有警示：${symWarnings.join("；")}`, { duration: 6000 });
+          } else {
+            toast.success(`已更新：${symbol}`);
+          }
         } else {
           const reason = getFailedReason(symbol);
           toast.error(reason ? `更新失敗：${symbol}（${reason}）` : `更新失敗：${symbol}`);
@@ -155,10 +167,20 @@ export function DataPageClient() {
       } else {
         const actionLabel = jobIntent?.type === "rebuild_all" ? "重建" : "更新";
         if (failed.length === 0) {
-          toast.success(`${actionLabel}完成：${succeeded.length} 個成功`);
+          if (warnings.length > 0) {
+            const warningSummary = warnings.map((w) => `${w.symbol}: ${w.message}`).join("； ");
+            toast.warning(`${actionLabel}完成（含警示）：${succeeded.length} 個成功。詳細：${warningSummary}`, { duration: 7000 });
+          } else {
+            toast.success(`${actionLabel}完成：${succeeded.length} 個成功`);
+          }
         } else {
           if (succeeded.length > 0) {
-            toast.success(`${actionLabel}完成：${succeeded.length} 個成功`);
+            if (warnings.length > 0) {
+              const warningSummary = warnings.map((w) => `${w.symbol}: ${w.message}`).join("； ");
+              toast.warning(`${actionLabel}完成（含警示）：${succeeded.length} 個成功。詳細：${warningSummary}`, { duration: 7000 });
+            } else {
+              toast.success(`${actionLabel}完成：${succeeded.length} 個成功`);
+            }
           }
           toast.error(
             `${actionLabel}失敗：${failed.length} 檔（${failedSymbols.join("、")}）`,

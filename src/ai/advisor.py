@@ -26,6 +26,9 @@ SYSTEM_PROMPT = """你是一個台股技術分析助理。你的工作是：
 - 預測股價未來走勢
 - 給予資金配置建議
 
+當使用者詢問某檔或多檔股票在指定期間投入金額後的含股利、含息、總報酬、投報率或年化報酬時，必須優先呼叫 calculate_total_return。不得使用 get_price_data 的最近 K 線資料自行推算長區間報酬。
+calculate_total_return 回傳的日期對齊、價格、股利、期末總值、總報酬與年化報酬是唯一可信數字來源。回答時需說明實際買進日、實際期末日、買進價基準、期末價固定用收盤價、股利模式、是否含稅費與 warnings。
+
 注意：如果工具呼叫回傳錯誤（例如 "Auto-update failed" 等），你應該直接回覆「無法取得資料」並簡述該錯誤，絕對不可以猜測或斷言該股票代碼不存在。
 """
 
@@ -58,7 +61,7 @@ _TRADITIONAL_CHINESE_REQUIREMENT = "You must reply entirely in Traditional Chine
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_price_data",
-        "description": "取得指定股票的歷史 K 線資料（日K 或分K）",
+        "description": "取得指定股票的歷史 K 線資料（日K 或分K）。注意：本工具最多回傳最近 60 筆 K 線，不適合用於長區間報酬或含息報酬計算。計算含息總報酬請使用 calculate_total_return。",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -96,6 +99,53 @@ TOOLS: list[dict[str, Any]] = [
                 "lookback": {"type": "integer", "description": "回溯交易日數，預設 60"},
             },
             "required": ["symbol"],
+        },
+    },
+    {
+        "name": "calculate_total_return",
+        "description": (
+            "計算台股一檔或多檔股票 / ETF 在指定期間、指定投入金額下的含息總報酬。"
+            "適用於使用者詢問投入金額、含股利、含息、總報酬、投報率、年化報酬等問題。"
+            "初版僅支援 market='tw'、現金股利持有、不含稅費、不支援股利再投入。"
+            "price basis 僅影響買進價，期末價固定用收盤價。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbols": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "台股代碼列表，例如 ['00713', '00878']",
+                },
+                "market": {
+                    "type": "string",
+                    "enum": ["tw"],
+                    "description": "市場；15-E 初版僅支援 tw",
+                },
+                "start_date": {
+                    "type": "string",
+                    "description": "投入起始日 YYYY-MM-DD，可為非交易日",
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "計算截止日 YYYY-MM-DD，可為非交易日",
+                },
+                "initial_amount": {
+                    "type": "number",
+                    "description": "每檔投入金額，例如 100000",
+                },
+                "buy_price_basis": {
+                    "type": "string",
+                    "enum": ["open", "close"],
+                    "description": "買進價基準，預設 open；只影響買進價，期末價固定用 close",
+                },
+                "dividend_mode": {
+                    "type": "string",
+                    "enum": ["cash"],
+                    "description": "股利處理方式；15-E 初版僅支援 cash（現金持有）",
+                },
+            },
+            "required": ["symbols", "start_date", "end_date", "initial_amount"],
         },
     },
 ]
@@ -1055,6 +1105,7 @@ class AIAdvisor:
         completed_successfully = False
         working_messages = list(messages)
         updated_daily_symbols: set[tuple[str, str]] = set()
+        updated_dividend_symbols: set[tuple[str, str]] = set()
         try:
             for round_idx in range(max_tool_rounds):
                 current_assistant_content = ""
@@ -1097,7 +1148,12 @@ class AIAdvisor:
 
                         # Execute tool
                         try:
-                            tool_output = await self._execute_tool(tool_name, tool_args, updated_daily_symbols)
+                            tool_output = await self._execute_tool(
+                                tool_name,
+                                tool_args,
+                                updated_daily_symbols,
+                                updated_dividend_symbols,
+                            )
                         except Exception as e:
                             tool_output = {"error": str(e)}
 
@@ -1151,6 +1207,15 @@ class AIAdvisor:
             supports = output.get("support_levels", [])
             resistances = output.get("resistance_levels", [])
             return f"已成功計算 {symbol} 支撐位：{len(supports)} 個，壓力位：{len(resistances)} 個{warning_str}"
+        elif tool_name == "calculate_total_return":
+            results = output.get("results", [])
+            errors = output.get("errors", [])
+            all_warnings = []
+            for r in results:
+                if r.get("warnings"):
+                    all_warnings.extend(r["warnings"])
+            first_warning = f" (注意：{all_warnings[0]})" if all_warnings else ""
+            return f"已完成 {len(results)} 檔含息報酬試算；{len(errors)} 檔失敗{first_warning}"
         return f"執行成功{warning_str}"
 
     def ask(self, question: str, max_tool_rounds: int = 6) -> str:
@@ -1170,6 +1235,7 @@ class AIAdvisor:
 
         messages: list[dict[str, Any]] = [{"role": "user", "content": question_text}]
         updated_daily_symbols: set[tuple[str, str]] = set()
+        updated_dividend_symbols: set[tuple[str, str]] = set()
 
         for _ in range(max_tool_rounds):
             try:
@@ -1203,7 +1269,12 @@ class AIAdvisor:
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
                     tool_output = loop.run_until_complete(
-                        self._execute_tool(tool_name, tool_input, updated_daily_symbols)
+                        self._execute_tool(
+                            tool_name,
+                            tool_input,
+                            updated_daily_symbols,
+                            updated_dividend_symbols,
+                        )
                     )
                     messages.append(
                         {
@@ -1282,12 +1353,19 @@ class AIAdvisor:
             raise AICallError("AI response is not valid dashboard JSON.")
         return self._coerce_dashboard_analysis(parsed, technical_summary=technical_summary)
 
-    async def _execute_tool(self, tool_name: str, tool_input: dict[str, Any], updated_daily_symbols: set[tuple[str, str]] | None = None) -> dict[str, Any]:
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        updated_daily_symbols: set[tuple[str, str]] | None = None,
+        updated_dividend_symbols: set[tuple[str, str]] | None = None,
+    ) -> dict[str, Any]:
         """Dispatch tool calls and return a dict result."""
         handlers = {
             "get_price_data": self._handle_get_price_data,
             "calculate_indicators": self._handle_calculate_indicators,
             "get_support_resistance": self._handle_get_support_resistance,
+            "calculate_total_return": self._handle_calculate_total_return,
         }
         handler = handlers.get(tool_name)
         if handler is None:
@@ -1297,10 +1375,13 @@ class AIAdvisor:
         try:
             import inspect
             sig = inspect.signature(handler)
+            kwargs = dict(tool_input)
             if "updated_daily_symbols" in sig.parameters:
-                res = handler(**tool_input, updated_daily_symbols=updated_daily_symbols)
-            else:
-                res = handler(**tool_input)
+                kwargs["updated_daily_symbols"] = updated_daily_symbols
+            if "updated_dividend_symbols" in sig.parameters:
+                kwargs["updated_dividend_symbols"] = updated_dividend_symbols
+
+            res = handler(**kwargs)
 
             if inspect.isawaitable(res):
                 return await res
@@ -1805,6 +1886,425 @@ class AIAdvisor:
         if warning_msg:
             ret["warning"] = warning_msg
         return ret
+
+    async def _ensure_dividends_updated(
+        self,
+        symbol: str,
+        market: str,
+        updated_dividend_symbols: set[tuple[str, str]] | None,
+    ) -> dict[str, Any]:
+        """
+        Ensure dividends data is updated for the given symbol and market.
+        If it hasn't been updated in this session/round, try updating it once.
+        """
+        normalized_market = normalize_market(market)
+        try:
+            normalized_symbol = normalize_symbol(symbol, market=normalized_market)
+        except ValueError:
+            return {
+                "warning": None,
+                "error": f"Invalid symbol format: {symbol}"
+            }
+
+        key = (normalized_symbol, normalized_market)
+        df_local = self.storage.load_dividends(normalized_symbol, market=normalized_market)
+        had_local_data = not df_local.empty
+
+        if updated_dividend_symbols is not None and key in updated_dividend_symbols:
+            return {
+                "warning": None,
+                "error": None if had_local_data else f"Auto-update returned no dividends and no local dividends for symbol: {normalized_symbol}"
+            }
+
+        # Check write lock status from job manager
+        from api.job_manager import get_job_manager
+        manager = get_job_manager()
+        if manager.is_write_locked():
+            if had_local_data:
+                if updated_dividend_symbols is not None:
+                    updated_dividend_symbols.add(key)
+                return {
+                    "warning": "資料更新正在進行中，暫用本機資料",
+                    "error": None
+                }
+            else:
+                return {
+                    "warning": None,
+                    "error": "資料更新正在進行中，稍後再試"
+                }
+
+        # Try to acquire the lock ourselves
+        acquired = await manager.acquire_write_lock()
+        if not acquired:
+            if had_local_data:
+                if updated_dividend_symbols is not None:
+                    updated_dividend_symbols.add(key)
+                return {
+                    "warning": "資料更新正在進行中，暫用本機資料",
+                    "error": None
+                }
+            else:
+                return {
+                    "warning": None,
+                    "error": "資料更新正在進行中，稍後再試"
+                }
+
+        try:
+            if updated_dividend_symbols is not None:
+                updated_dividend_symbols.add(key)
+
+            from src.services.data_service import _build_fetchers_from_config
+            fetchers = _build_fetchers_from_config(market=normalized_market)
+            if not fetchers:
+                raise RuntimeError("No fetcher available")
+
+            from src.data.maintenance import DataMaintenance
+            from src.data.cleaner import DataCleaner
+            from src.data.storage import DuckDBMeta
+            import asyncio
+
+            source, fetcher = fetchers[0]
+            meta = DuckDBMeta()
+            try:
+                maintenance = DataMaintenance(
+                    fetcher=fetcher,
+                    storage=self.storage,
+                    meta=meta,
+                    cleaner=DataCleaner(),
+                )
+                await asyncio.to_thread(
+                    maintenance._rebuild_p11_datasets, normalized_symbol, normalized_market
+                )
+            finally:
+                meta.close()
+
+            return {
+                "warning": None,
+                "error": None
+            }
+        except Exception as exc:
+            if had_local_data:
+                return {
+                    "warning": f"股利更新失敗，改用本機既有資料 (原因: {exc})",
+                    "error": None
+                }
+            else:
+                return {
+                    "warning": None,
+                    "error": f"Auto-update dividends failed: {exc}"
+                }
+        finally:
+            manager.release_write_lock()
+
+    def _align_trade_dates(
+        self,
+        daily: pd.DataFrame,
+        requested_start: str,
+        requested_end: str,
+    ) -> dict[str, Any]:
+        """
+        Align the requested start and end dates with the available daily dates.
+        Returns a dict with aligned timestamps, warnings, or errors.
+        """
+        from src.core.constants import TAIPEI_TZ
+        try:
+            start_ts = pd.Timestamp(requested_start).tz_localize(TAIPEI_TZ) if pd.Timestamp(requested_start).tzinfo is None else pd.Timestamp(requested_start).tz_convert(TAIPEI_TZ)
+            end_ts = pd.Timestamp(requested_end).tz_localize(TAIPEI_TZ) if pd.Timestamp(requested_end).tzinfo is None else pd.Timestamp(requested_end).tz_convert(TAIPEI_TZ)
+        except Exception as exc:
+            return {"error": f"日期格式解析失敗: {exc}"}
+
+        if start_ts > end_ts:
+            return {"error": f"起始日期 {requested_start} 不得晚於結束日期 {requested_end}"}
+
+        daily_dates = pd.to_datetime(daily["date"])
+        if daily_dates.dt.tz is None:
+            daily_dates = daily_dates.dt.tz_localize(TAIPEI_TZ)
+        else:
+            daily_dates = daily_dates.dt.tz_convert(TAIPEI_TZ)
+
+        if daily_dates.empty:
+            return {"error": "本機無可用日線交易日資料"}
+
+        min_avail = daily_dates.min()
+        max_avail = daily_dates.max()
+
+        warnings = []
+
+        if start_ts < min_avail:
+            diff_days = (min_avail - start_ts).days
+            if diff_days <= 30:
+                warnings.append(f"起始日 {requested_start} 早於本機最早資料日，已自動對齊至第一筆交易日 {min_avail.strftime('%Y-%m-%d')}")
+                start_ts = min_avail
+            else:
+                return {"error": f"起始日 {requested_start} 早於本機最早資料超過 30 天，無法計算"}
+
+        if end_ts > max_avail:
+            warnings.append(f"結束日 {requested_end} 晚於本機最新資料日，已自動對齊至最後一筆交易日 {max_avail.strftime('%Y-%m-%d')}")
+            end_ts = max_avail
+
+        trading_start_options = daily_dates[daily_dates >= start_ts]
+        if trading_start_options.empty:
+            return {"error": f"起始日 {start_ts.strftime('%Y-%m-%d')} 之後找不到任何交易日資料"}
+        buy_date = trading_start_options.min()
+
+        trading_end_options = daily_dates[daily_dates <= end_ts]
+        if trading_end_options.empty:
+            return {"error": f"結束日 {end_ts.strftime('%Y-%m-%d')} 之前找不到任何交易日資料"}
+        end_trade_date = trading_end_options.max()
+
+        if buy_date > end_trade_date:
+            return {"error": f"對齊交易日後，買進日 {buy_date.strftime('%Y-%m-%d')} 晚於期末日 {end_trade_date.strftime('%Y-%m-%d')}"}
+
+        if buy_date.strftime("%Y-%m-%d") != start_ts.strftime("%Y-%m-%d"):
+            if start_ts >= min_avail:
+                warnings.append(f"起始日 {requested_start} 為非交易日，已自動對齊下一個交易日 {buy_date.strftime('%Y-%m-%d')}")
+
+        if end_trade_date.strftime("%Y-%m-%d") != end_ts.strftime("%Y-%m-%d"):
+            if end_ts <= max_avail:
+                warnings.append(f"結束日 {requested_end} 為非交易日，已自動對齊上一個交易日 {end_trade_date.strftime('%Y-%m-%d')}")
+
+        if buy_date == end_trade_date:
+            warnings.append("起始日與結束日對齊後為同一交易日，報酬僅反映同日買進價與收盤價差，不納入買進日當天除息")
+
+        return {
+            "buy_date": buy_date,
+            "end_trade_date": end_trade_date,
+            "warnings": warnings,
+            "error": None
+        }
+
+    def _calculate_symbol_total_return(
+        self,
+        *,
+        symbol: str,
+        daily: pd.DataFrame,
+        dividends: pd.DataFrame | None,
+        buy_date: pd.Timestamp,
+        end_trade_date: pd.Timestamp,
+        initial_amount: float,
+        buy_price_basis: str,
+        dividends_source: str,
+        dividends_updated: bool,
+        dividends_update_warning: str | None,
+        initial_warnings: list[str],
+    ) -> dict[str, Any]:
+        """Perform the actual financial return calculation for a single symbol."""
+        from src.core.constants import TAIPEI_TZ
+        warnings = list(initial_warnings)
+        if dividends_update_warning:
+            warnings.append(dividends_update_warning)
+
+        daily_dates = pd.to_datetime(daily["date"])
+        if daily_dates.dt.tz is None:
+            daily_dates_tz = daily_dates.dt.tz_localize(TAIPEI_TZ)
+        else:
+            daily_dates_tz = daily_dates.dt.tz_convert(TAIPEI_TZ)
+
+        daily_buy = daily[daily_dates_tz.dt.date == buy_date.date()]
+        daily_end = daily[daily_dates_tz.dt.date == end_trade_date.date()]
+
+        if daily_buy.empty:
+            return {"error": f"找不到買進日 {buy_date.strftime('%Y-%m-%d')} 的價格資料"}
+        if daily_end.empty:
+            return {"error": f"找不到期末日 {end_trade_date.strftime('%Y-%m-%d')} 的價格資料"}
+
+        row_buy = daily_buy.iloc[0]
+        row_end = daily_end.iloc[0]
+
+        buy_price = float(row_buy["open"] if buy_price_basis == "open" else row_buy["close"])
+        end_price = float(row_end["close"])
+
+        if buy_price <= 0:
+            return {"error": f"買進日 {buy_date.strftime('%Y-%m-%d')} 的買進價 {buy_price} 必須大於 0"}
+        if end_price <= 0:
+            return {"error": f"期末日 {end_trade_date.strftime('%Y-%m-%d')} 的期末價 {end_price} 必須大於 0"}
+
+        shares = initial_amount / buy_price
+
+        cash_div_total = 0.0
+        stock_div_total = 0.0
+        stock_div_count = 0
+        dividends_list = []
+
+        if dividends is not None and not dividends.empty:
+            ex_div_dates = pd.to_datetime(dividends["date"])
+            if ex_div_dates.dt.tz is None:
+                ex_div_dates = ex_div_dates.dt.tz_localize(TAIPEI_TZ)
+            else:
+                ex_div_dates = ex_div_dates.dt.tz_convert(TAIPEI_TZ)
+
+            mask = (ex_div_dates > buy_date) & (ex_div_dates <= end_trade_date)
+            period_divs = dividends.loc[mask].copy()
+
+            if not period_divs.empty:
+                period_divs["parsed_date"] = ex_div_dates.loc[mask]
+                period_divs = period_divs.sort_values("parsed_date")
+
+                for _, r in period_divs.iterrows():
+                    c_div = float(r.get("cash_dividend", 0.0) or 0.0)
+                    s_div = float(r.get("stock_dividend", 0.0) or 0.0)
+                    r_date = r["parsed_date"].strftime("%Y-%m-%d")
+
+                    if c_div > 0 or s_div > 0:
+                        dividends_list.append({
+                            "date": r_date,
+                            "cash_dividend": round(c_div, 4),
+                            "stock_dividend": round(s_div, 4),
+                        })
+                        cash_div_total += c_div
+                        if s_div > 0:
+                            stock_div_total += s_div
+                            stock_div_count += 1
+
+        if stock_div_count > 0:
+            warnings.append(
+                f"本計算未納入股票股利（{stock_div_count} 筆，合計 {stock_div_total:.4f} 元/股），實際含息報酬可能更高"
+            )
+
+        dividend_cash = shares * cash_div_total
+        market_value = shares * end_price
+        final_value = market_value + dividend_cash
+        total_return_pct = (final_value / initial_amount - 1) * 100
+
+        holding_days = (end_trade_date - buy_date).days
+        annualized = None
+        if holding_days > 0:
+            annualized = ((final_value / initial_amount) ** (365 / holding_days) - 1) * 100
+            if holding_days < 365:
+                warnings.append("持有期間不足一年，年化報酬僅供參考")
+        else:
+            warnings.append("持有天數為 0，無年化報酬率")
+
+        return {
+            "symbol": symbol,
+            "buy_date": buy_date.strftime("%Y-%m-%d"),
+            "buy_price": round(buy_price, 2),
+            "end_trade_date": end_trade_date.strftime("%Y-%m-%d"),
+            "end_price": round(end_price, 2),
+            "holding_days": holding_days,
+            "shares": round(shares, 6),
+            "dividends_updated": dividends_updated,
+            "dividends_update_warning": dividends_update_warning,
+            "dividends_source": dividends_source,
+            "cash_dividend_per_share": round(cash_div_total, 4),
+            "stock_dividend_per_share": round(stock_div_total, 4),
+            "dividend_cash": round(dividend_cash, 2),
+            "market_value": round(market_value, 2),
+            "final_value": round(final_value, 2),
+            "total_return_pct": round(total_return_pct, 2),
+            "annualized_return_pct": round(annualized, 2) if annualized is not None else None,
+            "dividends": dividends_list,
+            "warnings": warnings,
+        }
+
+    async def _handle_calculate_total_return(
+        self,
+        symbols: list[str],
+        start_date: str,
+        end_date: str,
+        initial_amount: float,
+        market: str = "tw",
+        buy_price_basis: str = "open",
+        dividend_mode: str = "cash",
+        updated_daily_symbols: set[tuple[str, str]] | None = None,
+        updated_dividend_symbols: set[tuple[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        """Calculate total return for Taiwan stocks including cash dividends."""
+        normalized_market = normalize_market(market)
+        if normalized_market != "tw":
+            return {"results": [], "errors": [{"symbol": None, "error": "目前僅支援台股含息報酬計算"}]}
+        if not symbols:
+            return {"results": [], "errors": [{"symbol": None, "error": "symbols 不可為空"}]}
+        if initial_amount <= 0:
+            return {"results": [], "errors": [{"symbol": None, "error": "initial_amount 必須大於 0"}]}
+        if buy_price_basis not in {"open", "close"}:
+            return {"results": [], "errors": [{"symbol": None, "error": "buy_price_basis 僅支援 open / close"}]}
+        if dividend_mode != "cash":
+            return {"results": [], "errors": [{"symbol": None, "error": "P15-E 初版僅支援現金股利持有，不支援股利再投入"}]}
+
+        results = []
+        errors = []
+
+        for symbol in symbols:
+            try:
+                normalized_symbol = normalize_symbol(symbol, market=normalized_market)
+            except ValueError as exc:
+                errors.append({"symbol": symbol, "error": f"股票代碼格式錯誤: {exc}"})
+                continue
+
+            daily_res = await self._ensure_daily_data_updated(
+                normalized_symbol, normalized_market, updated_daily_symbols
+            )
+            if daily_res["error"]:
+                errors.append({"symbol": normalized_symbol, "error": daily_res["error"]})
+                continue
+
+            daily_df = daily_res["df"]
+            daily_warning = daily_res["warning"]
+
+            div_res = await self._ensure_dividends_updated(
+                normalized_symbol, normalized_market, updated_dividend_symbols
+            )
+
+            dividends_updated = div_res["error"] is None
+            dividends_update_warning = div_res["warning"]
+            dividends_source = "refreshed" if dividends_updated else "local_fallback"
+
+            if div_res["error"]:
+                local_divs = self.storage.load_dividends(normalized_symbol, market=normalized_market)
+                if local_divs.empty:
+                    errors.append({"symbol": normalized_symbol, "error": f"無股利資料，無法計算含息報酬 (原因: {div_res['error']})"})
+                    continue
+                else:
+                    dividends_update_warning = f"股利更新失敗，改用本機既有資料 (原因: {div_res['error']})"
+                    dividends_source = "local_fallback"
+                    dividends_df = local_divs
+            else:
+                dividends_df = self.storage.load_dividends(normalized_symbol, market=normalized_market)
+                if dividends_df.empty:
+                    errors.append({"symbol": normalized_symbol, "error": "無股利資料，無法計算含息報酬"})
+                    continue
+
+            align_res = self._align_trade_dates(daily_df, start_date, end_date)
+            if align_res.get("error"):
+                errors.append({"symbol": normalized_symbol, "error": align_res["error"]})
+                continue
+
+            warnings = []
+            if daily_warning:
+                warnings.append(daily_warning)
+            warnings.extend(align_res["warnings"])
+
+            calc_res = self._calculate_symbol_total_return(
+                symbol=normalized_symbol,
+                daily=daily_df,
+                dividends=dividends_df,
+                buy_date=align_res["buy_date"],
+                end_trade_date=align_res["end_trade_date"],
+                initial_amount=initial_amount,
+                buy_price_basis=buy_price_basis,
+                dividends_source=dividends_source,
+                dividends_updated=dividends_updated,
+                dividends_update_warning=dividends_update_warning,
+                initial_warnings=warnings,
+            )
+
+            if "error" in calc_res:
+                errors.append({"symbol": normalized_symbol, "error": calc_res["error"]})
+            else:
+                results.append(calc_res)
+
+        return {
+            "market": normalized_market,
+            "start_date": start_date,
+            "end_date": end_date,
+            "initial_amount": initial_amount,
+            "buy_price_basis": buy_price_basis,
+            "dividend_mode": dividend_mode,
+            "fractional_shares": True,
+            "results": results,
+            "errors": errors,
+        }
 
     def _append_disclaimer(self, text: str) -> str:
         body = str(text).strip()

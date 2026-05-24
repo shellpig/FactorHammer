@@ -698,3 +698,77 @@ def test_rmtree_with_retry_removes_readonly_directory(tmp_path: pytest.TempPathF
     # Plain rmtree would raise PermissionError on Windows; _rmtree_with_retry must succeed
     _rmtree_with_retry(target)
     assert not target.exists()
+
+
+def test_update_daily_tw_removes_stale_meta_when_parquet_is_empty(tmp_path) -> None:
+    existing = _make_daily("2330", "2024-06-24", 2)
+    fetcher = StubFetcher(
+        full_daily=existing,
+        incremental_daily=pd.DataFrame(columns=STANDARD_COLUMNS),
+        dividends=pd.DataFrame(),
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    # 1. Seed metadata for per in DuckDB (representing a stale meta where meta exists but parquet is empty/missing)
+    meta.upsert_meta(
+        symbol="2330",
+        freq="per",
+        source="finmind",
+        first_date=pd.Timestamp("2024-01-01"),
+        last_date=pd.Timestamp("2024-01-10"),
+        row_count=10,
+        market="tw",
+    )
+    assert meta.get_meta("2330", "per", market="tw") is not None
+    assert storage.load_per("2330").empty  # Parquet is actually empty!
+
+    # 2. Run update_daily. It should detect that P11 is missing (since parquet is empty, despite get_meta not being None)
+    storage.save_daily("2330", existing)
+    added = maintenance.update_daily("2330", market="tw")
+
+    # 3. Verify that P11 datasets were rebuilt
+    assert added == 0
+    assert not storage.load_per("2330").empty
+    assert meta.get_meta("2330", "per", market="tw") is not None
+    # row_count should match the stub fetcher length (1)
+    assert meta.get_meta("2330", "per", market="tw")["row_count"] == 1
+
+
+def test_update_meta_removes_meta_from_db_on_empty_dataframe(tmp_path) -> None:
+    fetcher = StubFetcher(
+        full_daily=pd.DataFrame(columns=STANDARD_COLUMNS),
+        incremental_daily=pd.DataFrame(columns=STANDARD_COLUMNS),
+        dividends=pd.DataFrame(),
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    # Seed metadata
+    meta.upsert_meta(
+        symbol="2330",
+        freq="per",
+        source="finmind",
+        first_date=pd.Timestamp("2024-01-01"),
+        last_date=pd.Timestamp("2024-01-10"),
+        row_count=10,
+        market="tw",
+    )
+    assert meta.get_meta("2330", "per", market="tw") is not None
+
+    # Call _update_meta with empty DataFrame
+    maintenance._update_meta(
+        symbol="2330",
+        freq="per",
+        source="finmind",
+        df=pd.DataFrame(),
+        market="tw",
+    )
+
+    # Metadata should be deleted from DB
+    assert meta.get_meta("2330", "per", market="tw") is None
+

@@ -20,8 +20,7 @@
 - Phase 13 13-A / 13-B 已完成並通過驗證：Dashboard 分析入口與日線定位整理、指標說明與數值呈現整理（壓力 / 支撐來源 label、近20日 / 近60日高點去重說明、台股成交量以日K股數語意呈現）。
 - Phase 14 14-A 已完成並通過驗證：LAN / Tailscale 多裝置存取，採 proxy 同源方案（Next.js `rewrites()` 反代 `/api/*` 至 `127.0.0.1:8000`、uvicorn / `pnpm dev` 綁 `0.0.0.0`、api-client `BASE_URL` 預設空字串走相對路徑、CORS 不動、`NEXT_PUBLIC_API_URL` 保留 escape hatch）；順手把 Next.js dev indicator 搬到右上角避免遮 Mobile Tab Bar。
 - Phase 14 14-B 已完成並通過驗證：手機端 UI 收尾，資料管理頁 mobile 隱藏「區間」「K 棒數」次要欄 + 名稱欄 truncate，toolbar 改為 mobile-only 兩列避免按鈕文字直排，Mobile Tab Bar / StockSelector / AI ChatInput `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value；不補 `@theme`、不動 API。
-- Phase 15 15-A-1 / 15-A-2 / 15-B / 15-C / 15-D 已完成並通過驗證：DeepSeek provider、per-provider secrets validate、AI chat SSE streaming、前端接 SSE + 停止串流 + 思考中 placeholder、tool use 與本機資料自動補抓 / 更新已上線。
-- Phase 15-E 規格已寫入三份主文件，尚未實作：AI 問答投資試算工具 `calculate_total_return`，支援台股指定期間投入金額含息總報酬試算、raw daily + cash dividends、dividends 受控刷新、日期對齊、錯誤隔離與 tool chip 顯示。
+- Phase 15 15-A-1 / 15-A-2 / 15-B / 15-C / 15-D / 15-E 已完成並通過驗證：DeepSeek provider、per-provider secrets validate、AI chat SSE streaming、前端接 SSE + 停止串流 + 思考中 placeholder、tool use、本機資料自動補抓 / 更新、AI 問答含息總報酬試算工具 `calculate_total_return` 已上線。
 - Phase 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成。
 
 ## 技術棧
@@ -258,18 +257,18 @@ risk:
 | 15-B | ✅ 完成 | AI 問答後端 streaming（純對話）：新增 `sse-starlette>=2.0` 依賴；`/api/ai/status` 動態化（依 `ai.enabled` + provider key 狀態，回 `reason: ai_disabled / missing_key / ok`）；`/api/ai/chat` 改 async + `EventSourceResponse`、SSE events `token` / `done` / `error`、`ChatRequest.messages` schema 嚴謹為 `role: user\|assistant`；`AIAdvisor.stream_chat()` + 4 adapter `stream_complete()` async generator（Anthropic `AsyncAnthropic` / OpenAI+DeepSeek `httpx.AsyncClient` aiter_lines / Gemini `alt=sse` aiter_lines）；chat / dashboard 對 DeepSeek 預設 `thinking={"type":"disabled"}`；新增 `api/deps.get_advisor()` dependency injection seam |
 | 15-C | ✅ 完成 | AI 問答前端接 SSE：新增 `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send` / `abort` / `messages` / `streaming`、`AbortController` 中止、`toApiMessages()` 過濾 greeting / 空訊息 / UI-only 欄位）、移除 `use-mock-chat.ts`；chat-page-client 加取消按鈕；逐 token 後以 `requestAnimationFrame` 讓出 paint，避免 React batching 造成整段跳出；空 assistant 泡泡顯示 `思考中...` 輕微閃爍；移除 sidebar「後續開放」徽章；訊息歷史不持久化；版號維持 `0.5.3`（取消誤 bump `0.7.0`）。Gate：`npx tsc --noEmit` 0 errors、vitest 64 files / 450 tests pass；使用者人工驗證 15-C-M1 ~ M5 完成 |
 | 15-D | ✅ 完成 | Chat 啟用 tool use：`AIAdvisor.stream_chat()` 多輪 tool 迴圈（最多 6 輪）+ 4 adapter tool_call delta accumulator；SSE 加 `tool_call` / `tool_result` event；前端顯示 tool chip，`use-ai-chat.ts` 以 `toApiMessages()` 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送 `/api/ai/chat`；日線工具在同一輪 chat 內對同一 `symbol+market` 最多自動補抓 / 更新一次，會先走 `api.job_manager` write lock，成功後續分析，失敗且本機有資料則 warning 後沿用既有資料，失敗且無資料則回結構化錯誤；DeepSeek 人工驗收 M1 ~ M4 已完成。Gate：targeted pytest 56 passed / 1 skipped、全套 pytest 690 passed / 12 deselected、`npx tsc --noEmit` 0 errors、vitest 64 files / 454 tests passed |
-| 15-E | 📝 規格完成、待實作 | AI 問答投資試算工具規格已寫入主規格 / 設計方針 / 測試指南：新增 `calculate_total_return` tool，處理「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題；初版僅支援台股、raw daily + cash dividends、fractional shares、現金股利持有、不含稅費、不支援股利再投入與美股；含息模式需受控刷新 dividends，失敗且無本機 dividends 不得以價格報酬冒充；AI 不得用 `get_price_data` 最近 60 筆 K 線自行推算長區間報酬 |
+| 15-E | ✅ 完成 | AI 問答投資試算工具 `calculate_total_return` 已完成並通過驗證：處理「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題；初版僅支援台股、raw daily + cash dividends、fractional shares、現金股利持有、不含稅費、不支援股利再投入與美股；含息模式受控刷新 dividends，失敗且無本機 dividends 不得以價格報酬冒充；AI 不得用 `get_price_data` 最近 60 筆 K 線自行推算長區間報酬 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–14-B + 15-A-1 + 15-A-2 + 15-B + 15-C + 15-D 全部完成並通過驗證；15-E 規格完成、待實作。** 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成；AI 問答支援 SSE streaming、停止串流、tool use、tool chip 與日線資料自動補抓 / 更新。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–14-B + 15-A-1 + 15-A-2 + 15-B + 15-C + 15-D + 15-E 全部完成並通過驗證。** 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成；AI 問答支援 SSE streaming、停止串流、tool use、tool chip、日線資料自動補抓 / 更新與含息總報酬試算。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
-2026-05-24 狀態（Phase 15-E 規格完成、待實作）：
-- **P15-E 規格寫入完成**：三份主文件已補上 AI 問答投資試算工具 `calculate_total_return`。目標是讓 chat 面對「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題時呼叫 deterministic Python tool，而不是用 `get_price_data` 最近 60 筆 K 線推算。
+2026-05-24 狀態（Phase 15-E 完成並通過驗證）：
+- **P15-E 實作完成**：AI 問答投資試算工具 `calculate_total_return` 已上線；chat 面對「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題時呼叫 deterministic Python tool，而不是用 `get_price_data` 最近 60 筆 K 線推算。
 - **P15-E 邊界決定**：初版僅支援台股；使用 raw daily + cash dividends；允許 fractional shares；股利模式只支援現金持有；不含手續費、證交稅、二代健保補充保費；不支援股利再投入、美股含息報酬、股票股利納入報酬（但需 warning）。
-- **P15-E 關鍵驗收要求**：含息模式必須受控刷新 dividends，refresh 失敗且本機無 dividends 時不得回價格報酬冒充含息報酬；日期需依交易日對齊；部分 symbol 失敗不得影響其他 symbol；tool output 先 round，AI 回答表格核心數字必須直接來自 tool output；DeepSeek 人工驗收為主路徑。
+- **P15-E Gate / 驗證**：targeted pytest `tests/test_advisor.py tests/test_api/test_ai_api.py` 86 passed / 1 deselected；`npx tsc --noEmit` 0 errors；AI tool chip vitest 15 passed（sandbox `spawn EPERM` 後提升權限重跑通過）；主要修正點含 refresh 成功但 dividends 仍空時必須回 error、tool chip malformed `symbols` 不 crash。三處版本同步 `0.5.5`（`pyproject.toml` / `web/package.json` / `api/main.py`）。
 
 2026-05-22 狀態（Phase 14-A 完成）：
 - **P14-A 實作完成**：`run_factorhammer.bat` 後端 uvicorn 改綁 `--host 0.0.0.0`、前端 `pnpm dev -H 0.0.0.0`（規格原本寫 `-- -H 0.0.0.0`，實機跑 pnpm 11 + Next.js 15.3 時 `next dev` 會把 `--` 當 positional 並把 `-H` 誤判為 project directory 直接退出；驗證階段抓到後改為 `-H 0.0.0.0`，規格書 4788 / 設計方針 9889 / 9915 / 9921 四處同步修正並保留反例註解）；`web/next.config.ts` 加 `rewrites()` 把 `/api/:path*` 反代到 `http://127.0.0.1:8000/api/:path*`、另加 `devIndicators.position: "top-right"` 避免手機底部 Tab Bar 被 Next.js dev 浮動鈕遮擋；`web/src/lib/api-client.ts` `BASE_URL` 預設值由 `"http://localhost:8000"` 改為 `""` 走 same-origin proxy，保留 `NEXT_PUBLIC_API_URL` escape hatch；vitest 補兩條（`預設走 same-origin` / `接受 NEXT_PUBLIC_API_URL 覆蓋`）。
