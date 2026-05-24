@@ -30,6 +30,7 @@
 | **V3.2** | 2026/05/20 | **Phase 12 verifier 文件收尾。** 12-A / 12-B / 12-C 已實作；12-B / 12-C 已驗證完成；12-D 同步文件狀態與舊啟動腳本名檢查。12-A install.bat 乾淨環境手動驗證仍待補，因此 Phase 12 不標整體完成。 |
 | **V3.3** | 2026/05/21 | 新增 **Phase 13 Dashboard 現有功能調整** 初版規格。13-A 聚焦個股分析入口與日線定位整理：移除「分析 / 即時更新」按鈕，Enter 成為唯一入口；同代碼 Enter 也必須強制重新呼叫 dashboard payload，先嘗試 `update_daily()` 再分析；隱藏無資料支撐的 `分 K` tab。13-B 聚焦指標說明與數值呈現：壓力 / 支撐補來源標籤或 tooltip，成交量統一以日K股數語意呈現，避免與即時報價來源單位混淆。 |
 | **V3.4** | 2026/05/23 | 新增 **Phase 15 AI Provider 擴充與問答頁接 LLM** 規格，並把延後中的 10-F-2 重編搬遷至 15-B/15-C/15-D。經 codex 規格審核後修正：DeepSeek endpoint URL 對齊官方文件（`https://api.deepseek.com/chat/completions` 與 `/user/balance`，無 `/v1` 前綴）；`sse-starlette` 為 15-B 新增依賴（pyproject.toml 未裝）；DeepSeek `no_quota` 來源只認 402（移除 405 推測）；implementer 不直接動「驗證後已知問題.md」（改為回報、verifier 補檔）；version bump 三處同步（`pyproject.toml` / `web/package.json` / `api/main.py`）。**15-A-1**：DeepSeek Provider 接入 + AI 設定區重寫。Adapter：`OpenAIAdapter` 抽出 `base_url`，新增 `DeepSeekAdapter`（base URL `https://api.deepseek.com/chat/completions`），`DEFAULT_MODELS` 加 `deepseek-v4-flash`，`_resolve_api_key` 加 `deepseek_api_key`，dashboard 路徑啟用 `response_format={'type':'json_object'}` 並對 DeepSeek 預設 `thinking: {"type":"disabled"}` 穩定 JSON + 降成本。Config：`_SECRET_ENV_KEYS` 加 `DEEPSEEK_API_KEY`；DeepSeek key 寫入走既有 `PUT /api/config/secrets` 通用 dict 路徑（**不**動 `/secrets/validate`，留待 15-A-2 整體重構）。前端：[ai-toggle-section.tsx](web/src/components/settings/ai-toggle-section.tsx) 重寫，移除「永久停用」、加 enable toggle + Provider 下拉（anthropic / openai / gemini / deepseek 4 選 1）+ Model input + `PUT /api/config` whitelist 整合 `ai.enabled` / `ai.provider` / `ai.model`；[secrets-section.tsx](web/src/components/settings/secrets-section.tsx) `PROVIDERS` 陣列加一行 `{ key: "deepseek", label: "DeepSeek API Key" }`（其餘 5 欄欄位、儲存按鈕、status 顯示既有）。**15-A-2**：`/api/config/secrets/validate` 重構為 per-provider results map，**FinMind 必填 + 其他 provider 選填 validate-if-present**（沿用現有 onboarding 安全模型）。Status 列舉：`ok` / `invalid_key` / `no_quota`（DeepSeek 402）/ `unreachable` / `skipped`；`ok` 與 `no_quota` 寫入 `.env`，`invalid_key` / `unreachable` 不寫入；FinMind 空白 / 失敗時整包不寫；新增 `validate_deepseek_token`（打 `GET https://api.deepseek.com/user/balance`，無 `/v1`）/ `validate_anthropic_token` / `validate_openai_token` / `validate_gemini_token`；Token Setup Dialog 同步解析新 response shape；設定頁「驗證並儲存」按鈕後 per-provider inline ✅/⚠️/❌。**15-B**：AI 問答後端 streaming（純對話）— pyproject.toml **新增 `sse-starlette>=2.0` 依賴**；`/api/ai/status` 改動態（依 `ai.enabled` + provider key 狀態）；`/api/ai/chat` 改 async + `EventSourceResponse`、events `token`/`done`/`error`、`ChatRequest.messages` schema 嚴謹為 `role: user\|assistant`；`AIAdvisor.stream_chat()` + 4 adapter `stream_complete()` async generator；chat / dashboard 對 DeepSeek 預設 `thinking: {"type":"disabled"}`。**15-C**：AI 問答前端接 SSE — `use-mock-chat.ts` 移除、新增 `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send / abort / messages / streaming`）、chat-page-client 加取消按鈕、markdown 部分閉合直接交給 `react-markdown` 即時 render、移除 sidebar「後續開放」徽章、訊息歷史不持久化、`pyproject.toml` / `web/package.json` / `api/main.py` 三處 version 同步 `0.7.0`。**15-D**：Chat 啟用 tool use — `stream_chat` 加多輪 tool 迴圈（最多 6 輪）、4 adapter 加 tool_call delta accumulator、SSE 加 `tool_call` / `tool_result` 兩種 event、前端可顯示 tool chip；**`use-ai-chat.ts` 必須以 `toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送入 `/api/ai/chat`，避免污染 `ChatRequest.messages` schema**；**手動驗收只在 DeepSeek 上跑**，其他 3 個 provider 的 streaming + tool calls 由 implementer 完成後回報、verifier 統一更新「驗證後已知問題.md」。15-A-2 為 15-A-1 後續可並行；15-B 不接前端（curl 驗 SSE）後出 15-C；15-D 屬 chat 功能延伸。 |
+| **V3.5** | 2026/05/24 | 新增 **Phase 15-E AI 問答投資試算工具** 規格。15-D tool use 完成後，AI 問答需能處理「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題，不得再用 `get_price_data` 最近 60 筆 K 線推算長區間報酬或誤稱本機無完整資料。新增 `calculate_total_return` tool：初版僅支援台股、raw daily + cash dividends、fractional shares、現金股利持有、不含稅費、不支援股利再投入與美股。規格定義 tool schema、日期對齊、日線與 dividends 自動更新 / fallback / error 規則、股利篩選區間、股票股利 warning、output schema、AI 回答規則、pytest / API / vitest / DeepSeek 手動驗收與完成定義。 |
 | **V2.7** | 2026/05/16 | **10-E 規格審查補丁**（12 項）：(1) `JobManager.finish_cancelled_job()` 新增（含 `cancel_job()` race condition 修正——只設 status、不關 queue）；(2) `GET /api/jobs/{id}/result` 擴充允許 cancelled + partial result；(3) 取消 `api/routers/backtest.py` 冗餘端點，前端直接用 `GET /api/config` 取 preset 清單；(4) `initial_capital` 預設 `1000000`，需新增為 `run_backtest_job()` 參數並注入引擎；(5) DCA 序列化映射補充（equity_curve / trades / metrics null 欄位）；(6) `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表；(7) WFA 特化 `WfaProgress` interface 補充；(8) CSV blob 函式位置指定 `src/services/backtest_service.py`；(9) E2E Playwright 統一在 10-E-4 後撰寫；(10) **交易數量單位統一顯示「股」（shares），不做 1000 股→1 張轉換**（與舊 Streamlit 回測頁一致；「張」僅用於 10-D 儀表板的日成交量與籌碼顯示）；(11) 切換市場時 reset state（清空回測結果）；(12) DCA 批次比較 error message 明確定義為「DCA 不支援批次比較（請至單次回測使用）」。 |
 
 ---
@@ -4904,7 +4905,7 @@ Phase 14 仍假設：
 
 Phase 15 的觸發點：使用者要在 FactorHammer 加入 DeepSeek 作為第 4 個 AI provider（OpenAI 相容路徑）；同時回收延後中的 10-F-2（AI 問答頁接 LLM），把該段重編為 15-B / 15-C / 15-D。
 
-Phase 15 拆 5 個子階段：
+Phase 15 拆 6 個子階段：
 
 | 子階段 | 範圍 | 相依 |
 |:---|:---|:---|
@@ -4913,8 +4914,9 @@ Phase 15 拆 5 個子階段：
 | 15-B | AI 問答後端 streaming（純對話、無 tool） | 15-A-1 完成（4 個 provider 才齊） |
 | 15-C | AI 問答前端接 SSE（取代 mock） | 15-B 完成 |
 | 15-D | Chat 啟用 tool use（手動驗收只跑 DeepSeek） | 15-C 完成 |
+| 15-E | AI 問答投資試算工具（含息總報酬） | 15-D 完成 |
 
-15-A-1 與 15-A-2 可同階段交付（15-A-1 先、15-A-2 緊接），15-B / 15-C / 15-D 為串行。15-D 程式碼必須完成 4 個 adapter，但手動驗收只跑 DeepSeek；其他 3 個 provider 列入「驗證後已知問題.md」標註未實機驗證。
+15-A-1 與 15-A-2 可同階段交付（15-A-1 先、15-A-2 緊接），15-B / 15-C / 15-D / 15-E 為串行。15-D 與 15-E 程式碼必須完成 4 個 adapter 可用的 tool contract，但手動驗收主路徑只跑 DeepSeek；其他 3 個 provider 若未實機驗證，列入「驗證後已知問題.md」或驗收備註標註。
 
 ### 15-A-1：DeepSeek Provider 接入 + AI 設定區重寫
 
@@ -5312,16 +5314,559 @@ chat 模式可呼叫 `get_price_data` / `calculate_indicators` / `get_support_re
 | 6 輪 tool 迴圈遇到無限 tool 呼叫 | timeout / 燒 token | 沿用既有 `max_tool_rounds=6`；超過丟「工具呼叫輪數過多」 |
 | Tool 執行同步阻塞 streaming | 使用者感受不到中間 token | tool 執行間 yield `tool_call` event 讓前端顯示 chip 即可 |
 
+### 15-E：AI 問答投資試算工具（含息總報酬）
+
+#### 背景
+
+15-D 已完成 AI 問答 tool use 基礎能力，包含多輪 tool loop、SSE `tool_call` / `tool_result`、前端 tool chip，以及日線資料自動補抓 / 更新。驗收後新增需求：使用者會問類似：
+
+```text
+00713, 00878, 00918, 00929, 這四隻假設 2025 年 1 月第一個交易日投入 10 萬，
+包含股利，到 2026 年 5 月 24 日的投報是多少？把數字都列出來。
+```
+
+目前 AI 可能回答「只能取得最近 60 筆日 K，沒有完整股利資料」。但本機資料實際已有：
+
+- `data/raw/tw/{symbol}/daily.parquet`
+- `data/processed/tw/{symbol}/adj_daily.parquet`
+- `data/raw/tw/{symbol}/dividends.parquet`
+
+問題不是資料層缺資料，而是 AI 問答缺少「含息總報酬試算」專用 tool。既有 `get_price_data` 為避免 token 過大，日 K 回傳硬 cap 為最近 60 筆，不適合回答長區間投報問題。
+
+#### 目標
+
+新增 AI 問答專用投資試算 tool，讓 LLM 遇到「某段期間投入多少、含股利報酬是多少」時，必須呼叫 deterministic Python 工具取得結構化結果。核心目標：
+
+1. 支援台股多檔股票 / ETF 一次試算。
+2. 支援指定起訖日期。
+3. 起始日若非交易日，自動對齊到起始日之後第一個交易日。
+4. 結束日若非交易日，自動對齊到結束日之前最後一個交易日。
+5. 支援指定每檔投入金額。
+6. 含息報酬問題必須受控補抓 / 更新台股 dividends，再納入 `dividends.parquet` 現金股利。
+7. 期間內若有股票股利，初版不納入計算，但必須 warning。
+8. 回傳持有天數與年化報酬率。
+9. Tool 直接回傳計算完成的數字；AI 只負責整理表格與說明，不自行推算核心數值。
+
+#### 非目標
+
+| 不做 | 理由 |
+|:---|:---|
+| 新增 UI 頁面 | 15-E 是 AI 問答 tool 能力，沿用 15-D chat UI |
+| 修改回測頁既有策略回測流程 | 投資試算不是策略回測 |
+| 新增外部資料源 | 只使用既有本機日線與 dividends contract |
+| 美股含息報酬 | 初版僅支援 `market="tw"`；美股 dividends 尚無同等落地契約 |
+| 手續費、證交稅、二代健保補充保費 | 初版只做稅費前比較 |
+| 複雜定期定額 / 多筆買賣 | 初版只支援單筆投入 |
+| 股利再投入 | 初版只支援現金股利持有 |
+| 股票股利納入報酬 | 初版只 warning，不調整股數 |
+| 讓 LLM 讀大量日 K 自行計算 | 核心數值必須由 tool deterministic 計算 |
+
+#### Tool 定義
+
+新增 tool：
+
+```text
+calculate_total_return
+```
+
+用途：
+
+> 依本機台股日 K 與股利資料，計算一檔或多檔股票 / ETF 在指定期間、指定投入金額下的含息總報酬。初版僅支援台股、raw daily + 現金股利、fractional shares、不含稅費、不股利再投入。
+
+Tool schema 使用 `advisor.py` 既有 `TOOLS` 結構描述，實作時不要改成 OpenAI-only function schema；各 adapter 仍由既有轉換函式轉成 provider 對應格式。
+
+```python
+{
+    "name": "calculate_total_return",
+    "description": (
+        "計算台股一檔或多檔股票 / ETF 在指定期間、指定投入金額下的含息總報酬。"
+        "適用於使用者詢問投入金額、含股利、含息、總報酬、投報率、年化報酬等問題。"
+        "初版僅支援 market='tw'、現金股利持有、不含稅費、不支援股利再投入。"
+        "price basis 僅影響買進價，期末價固定用收盤價。"
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "symbols": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "台股代碼列表，例如 ['00713', '00878']",
+            },
+            "market": {
+                "type": "string",
+                "enum": ["tw"],
+                "description": "市場；15-E 初版僅支援 tw",
+            },
+            "start_date": {
+                "type": "string",
+                "description": "投入起始日 YYYY-MM-DD，可為非交易日",
+            },
+            "end_date": {
+                "type": "string",
+                "description": "計算截止日 YYYY-MM-DD，可為非交易日",
+            },
+            "initial_amount": {
+                "type": "number",
+                "description": "每檔投入金額，例如 100000",
+            },
+            "buy_price_basis": {
+                "type": "string",
+                "enum": ["open", "close"],
+                "description": "買進價基準，預設 open；只影響買進價，期末價固定用 close",
+            },
+            "dividend_mode": {
+                "type": "string",
+                "enum": ["cash"],
+                "description": "股利處理方式；15-E 初版僅支援 cash（現金持有）",
+            },
+        },
+        "required": ["symbols", "start_date", "end_date", "initial_amount"],
+    },
+}
+```
+
+#### Tool Input 語意
+
+範例：
+
+```json
+{
+  "symbols": ["00713", "00878", "00918", "00929"],
+  "market": "tw",
+  "start_date": "2025-01-01",
+  "end_date": "2026-05-24",
+  "initial_amount": 100000,
+  "buy_price_basis": "open",
+  "dividend_mode": "cash"
+}
+```
+
+| 欄位 | 型別 | 必填 | 說明 |
+|:---|:---|:---:|:---|
+| `symbols` | `string[]` | 是 | 台股股票 / ETF 代碼，支援多檔 |
+| `market` | `string` | 否 | 預設 `tw`；初版只接受 `tw` |
+| `start_date` | `string` | 是 | 投入日期，可為非交易日 |
+| `end_date` | `string` | 是 | 計算截止日期，可為非交易日 |
+| `initial_amount` | `number` | 是 | 每檔投入金額 |
+| `buy_price_basis` | `string` | 否 | 預設 `open`；支援 `open` / `close`，僅影響買進價 |
+| `dividend_mode` | `string` | 否 | 預設 `cash`；初版只支援 `cash` |
+
+輸入驗證：
+
+1. `market != "tw"`：request 回 error `"目前僅支援台股含息報酬計算"`。
+2. `symbols` 空陣列：回 error。
+3. `initial_amount <= 0`：回 error。
+4. 日期格式無法解析或 `start_date > end_date`：回 error。
+5. `buy_price_basis` 不在 `open` / `close`：回 error。
+6. `dividend_mode != "cash"`：回 error `"P15-E 初版僅支援現金股利持有，不支援股利再投入"`。
+
+#### 資料準備策略
+
+日線資料使用：
+
+```python
+ParquetStorage.load_daily(symbol, market="tw")
+```
+
+`calculate_total_return` 必須沿用 15-D 的「同一輪 chat 內同一 `symbol+market` 最多自動補抓 / 更新一次」機制：
+
+1. handler signature 必須接受 `updated_daily_symbols`。
+2. 每個 symbol 先呼叫既有 `_ensure_daily_data_updated(symbol, market, updated_daily_symbols)`。
+3. 更新成功：使用更新後 `daily.parquet`。
+4. 更新失敗但本機有資料：沿用本機資料，將 warning 合併到該 symbol result。
+5. 更新失敗且本機無資料：該 symbol 回 error，不影響其他 symbols。
+
+股利資料使用：
+
+```python
+ParquetStorage.load_dividends(symbol, market="tw")
+```
+
+含息報酬問題必須嘗試補抓 / 更新台股 dividends。理由：股利是含息報酬核心資料；若日線已更新但 dividends 過舊，tool 會產出看似精準但實際錯誤的報酬率，風險高於明確報錯。
+
+更新規則：
+
+1. 同一輪 chat 內同一 `symbol+market` 最多自動刷新 dividends 一次。
+2. dividends 更新必須走 `api.job_manager` write lock，避免與資料管理頁更新 / 重建互踩。
+3. 若 write lock busy 且本機已有 dividends：允許使用本機既有 dividends 計算，但必須 warning。
+4. 若 write lock busy 且本機沒有 dividends：該 symbol 回 error，不可假裝含息報酬。
+5. 若刷新成功：重新讀取 `load_dividends()` 後計算。
+6. 若刷新失敗但本機已有 dividends：允許計算，但必須 warning `"股利更新失敗，已使用本機既有股利資料"`。
+7. 若刷新失敗且本機沒有 dividends：該 symbol 回 error `"無股利資料，無法計算含息報酬"`。
+8. 若使用者明確要求「不含股利 / 價格報酬」，可跳過 dividends 讀取與更新。
+9. 若使用者只問「投報 / 報酬」未明講是否含股利，15-E 預設採含息報酬，回答需說明「已納入現金股利，股利現金持有」。
+
+`dividends_source` 建議值：
+
+| 值 | 說明 |
+|:---|:---|
+| `refreshed` | 本次成功刷新並使用最新本機 dividends |
+| `local_fallback` | 刷新失敗或 lock busy，使用本機既有 dividends |
+| `missing` | 無可用 dividends，含息報酬不可計算 |
+| `skipped_price_only` | 使用者明確要求不含股利 / 價格報酬，已跳過 dividends |
+
+15-E 初版必須使用 raw daily + cash dividends。不得使用 adjusted daily 後再加 cash dividends，避免重複計入股利。
+
+#### 計算規則
+
+日期對齊：
+
+```text
+buy_date = first daily.date >= start_date
+end_trade_date = last daily.date <= end_date
+```
+
+若找不到起始或結束交易日，該 symbol 回 error，不影響其他 symbols。
+
+邊界 warning / error：
+
+1. 若 `start_date` 早於本機最早資料日，且差距 <= 30 天：warning，實際買進日為本機第一筆可用交易日。
+2. 若 `start_date` 早於本機最早資料日，且差距 > 30 天：error，避免把使用者明顯不同的期間靜默改寫。
+3. 若 `end_date` 晚於本機最新資料日：warning，實際期末日為本機最後一筆可用交易日。
+4. 若 `start_date` 或 `end_date` 是非交易日但仍在資料範圍內：warning，說明實際對齊交易日。
+5. 若 `buy_date == end_trade_date`：warning `"起始日與結束日對齊後為同一交易日，報酬僅反映同日買進價與收盤價差，不納入買進日當天除息"`。
+
+買進價：
+
+```text
+buy_price = daily[buy_date].open   # buy_price_basis = "open"
+buy_price = daily[buy_date].close  # buy_price_basis = "close"
+```
+
+股數初版允許 fractional shares，避免零股 / 整股規則干擾比較：
+
+```text
+shares = initial_amount / buy_price
+```
+
+output 必須標示：
+
+```json
+"fractional_shares": true
+```
+
+期末價固定用收盤價，不受 `buy_price_basis` 影響：
+
+```text
+end_price = daily[end_trade_date].close
+```
+
+`dividend.date` 語意必須明確定義為「除息交易日」（ex-dividend date），不是股利發放日。現金股利篩選：
+
+```text
+buy_date < dividend.date <= end_trade_date
+cash_dividend > 0
+```
+
+買進日當天若剛好除息，本階段保守採 `>`，不納入買進日當天除息。未來若需更精準，可新增 `dividend_inclusion_rule`。
+
+現金股利：
+
+```text
+cash_dividend_per_share = sum(dividends.cash_dividend)
+dividend_cash = shares * cash_dividend_per_share
+```
+
+`stock_dividend` 初版不納入報酬計算。但期間內若有任一筆 `stock_dividend > 0`，該 symbol result 必須加 warning：
+
+```text
+本計算未納入股票股利（N 筆，合計 X 元/股），實際含息報酬可能更高
+```
+
+`dividends` 明細仍需列出 `stock_dividend`。
+
+總值與報酬：
+
+```text
+market_value = shares * end_price
+final_value = market_value + dividend_cash
+total_return_pct = (final_value / initial_amount - 1) * 100
+```
+
+持有天數與年化報酬：
+
+```text
+holding_days = (end_trade_date - buy_date).days
+annualized_return_pct = ((final_value / initial_amount) ** (365 / holding_days) - 1) * 100
+```
+
+規則：
+
+1. `holding_days > 0` 才計算 `annualized_return_pct`。
+2. `holding_days == 0` 時 `annualized_return_pct = null`，加 warning。
+3. `holding_days < 365` 時仍計算，但加 warning `"持有期間不足一年，年化報酬僅供參考"`。
+
+Tool output 必須先完成 rounding，避免 LLM 自行截斷導致表格不一致。
+
+| 欄位 | 精度 |
+|:---|---:|
+| `buy_price` / `end_price` | 2 位 |
+| `shares` | 6 位 |
+| `cash_dividend_per_share` | 4 位 |
+| `stock_dividend_per_share` | 4 位 |
+| `dividend_cash` | 2 位 |
+| `market_value` | 2 位 |
+| `final_value` | 2 位 |
+| `total_return_pct` | 2 位 |
+| `annualized_return_pct` | 2 位 |
+
+#### Tool Output Schema
+
+```json
+{
+  "market": "tw",
+  "start_date": "2025-01-01",
+  "end_date": "2026-05-24",
+  "initial_amount": 100000,
+  "buy_price_basis": "open",
+  "dividend_mode": "cash",
+  "fractional_shares": true,
+  "results": [
+    {
+      "symbol": "00713",
+      "buy_date": "2025-01-02",
+      "buy_price": 53.10,
+      "end_trade_date": "2026-05-22",
+      "end_price": 55.70,
+      "holding_days": 506,
+      "shares": 1883.239171,
+      "dividends_updated": true,
+      "dividends_update_warning": null,
+      "dividends_source": "refreshed",
+      "cash_dividend_per_share": 4.8400,
+      "stock_dividend_per_share": 0.0000,
+      "dividend_cash": 9114.88,
+      "market_value": 104896.42,
+      "final_value": 114011.30,
+      "total_return_pct": 14.01,
+      "annualized_return_pct": 9.73,
+      "dividends": [
+        {"date": "2025-03-21", "cash_dividend": 1.4000, "stock_dividend": 0.0000},
+        {"date": "2025-06-20", "cash_dividend": 1.1000, "stock_dividend": 0.0000}
+      ],
+      "warnings": []
+    }
+  ],
+  "errors": []
+}
+```
+
+錯誤隔離範例：
+
+```json
+{
+  "results": [
+    {"symbol": "00713", "...": "..."}
+  ],
+  "errors": [
+    {"symbol": "9999", "error": "No local daily data for symbol: 9999"}
+  ]
+}
+```
+
+#### AI 回答規則
+
+系統提示與 tool description 需明確要求：
+
+1. 遇到「投入金額、某段期間、含股利 / 含息 / 總報酬 / 投報率 / 年化報酬」問題時，優先呼叫 `calculate_total_return`。
+2. 不得用 `get_price_data` 的最近 60 筆資料推算長區間報酬。
+3. 不得宣稱「本機沒有股利資料」，除非 `calculate_total_return` 明確回傳該 symbol 無股利資料或缺資料 warning / error。
+4. 回答必須列出 tool 回傳的關鍵假設：起始日對齊、結束日對齊、買進價使用 open 或 close、期末價固定使用 close、股利模式為現金持有、是否允許 fractional shares、不含稅費。
+5. 表格核心數字必須直接來自 tool output。
+6. 若部分 symbol 失敗，仍回覆成功 symbol，並列出失敗原因。
+7. 若 result 有 warnings，回答中必須摘要列出。
+
+`SYSTEM_PROMPT` 追加骨架：
+
+```text
+當使用者詢問某檔或多檔股票在指定期間投入金額後的含股利、含息、總報酬、投報率或年化報酬時，
+必須優先呼叫 calculate_total_return。不得使用 get_price_data 的最近 K 線資料自行推算長區間報酬。
+calculate_total_return 回傳的日期對齊、價格、股利、期末總值、總報酬與年化報酬是唯一可信數字來源。
+回答時需說明實際買進日、實際期末日、買進價基準、期末價固定用收盤價、股利模式、是否含稅費與 warnings。
+```
+
+`get_price_data` tool description 需補：
+
+```text
+注意：本工具最多回傳最近 60 筆 K 線，不適合用於長區間報酬或含息報酬計算。計算含息總報酬請使用 calculate_total_return。
+```
+
+#### 範例驗收資料
+
+使用者問題：
+
+```text
+00713, 00878, 00918, 00929, 這四隻假設2025年1月第一個交易日投入10萬,
+包含股利, 到2026年5月24日的投報是多少? 把數字都列出來
+```
+
+預期 tool input：
+
+```json
+{
+  "symbols": ["00713", "00878", "00918", "00929"],
+  "market": "tw",
+  "start_date": "2025-01-01",
+  "end_date": "2026-05-24",
+  "initial_amount": 100000,
+  "buy_price_basis": "open",
+  "dividend_mode": "cash"
+}
+```
+
+以目前本機資料估算，預期可得到下列表格。不含手續費 / 稅，股利現金持有，允許 fractional shares；期末日因 2026-05-24 非交易日，對齊至 2026-05-22。
+
+| 代碼 | 買進日 | 買進價 | 期末日 | 期末價 | 每股股利合計 | 期末總值 | 含息報酬 |
+|:---|:---|---:|:---|---:|---:|---:|---:|
+| 00713 | 2025-01-02 | 53.10 | 2026-05-22 | 55.70 | 4.8400 | 114,011.30 | 14.01% |
+| 00878 | 2025-01-02 | 22.16 | 2026-05-22 | 28.27 | 2.8500 | 140,433.21 | 40.43% |
+| 00918 | 2025-01-02 | 23.04 | 2026-05-22 | 26.99 | 3.1050 | 130,620.66 | 30.62% |
+| 00929 | 2025-01-02 | 17.99 | 2026-05-22 | 27.08 | 1.4000 | 158,310.17 | 58.31% |
+
+#### 實作建議
+
+建議修改：
+
+| 位置 | 動作 |
+|:---|:---|
+| `src/ai/advisor.py` | `TOOLS` 新增 `calculate_total_return`；`get_price_data` description 補 60 筆限制與報酬試算導流文案；`_execute_tool()` handlers 新增 `_handle_calculate_total_return`；`_summarize_tool_output()` 新增 tool summary；`SYSTEM_PROMPT` 補報酬試算 tool 使用規則 |
+| `web/src/components/ai/message-bubble.tsx` | 若 tool chip 已泛用，確認可顯示 `calculate_total_return` 與 summary |
+| `web/src/hooks/use-ai-chat.ts` | 沿用 15-D `tool_call` / `tool_result` parser，不需新增 SSE event type |
+
+handler 建議 signature：
+
+```python
+async def _handle_calculate_total_return(
+    self,
+    symbols: list[str],
+    start_date: str,
+    end_date: str,
+    initial_amount: float,
+    market: str = "tw",
+    buy_price_basis: str = "open",
+    dividend_mode: str = "cash",
+    updated_daily_symbols: set[tuple[str, str]] | None = None,
+    updated_dividend_symbols: set[tuple[str, str]] | None = None,
+) -> dict[str, Any]:
+    ...
+```
+
+`_execute_tool()` 既有 `inspect.signature` 會偵測 handler 是否接受 `updated_daily_symbols` 並注入；`calculate_total_return` 必須吃此參數以沿用 15-D once-per-chat 日線更新機制。若新增 `updated_dividend_symbols`，`_execute_tool()` 也需對應注入，確保同輪同 symbol 不重複刷新 dividends。
+
+可選拆分：
+
+- 若 `_handle_calculate_total_return` 太長，可抽到 `src/ai/tools.py` 或 `src/services/return_service.py`。
+- 15-E 初版可先放在 `AIAdvisor` 內，維持與 15-D tool pattern 一致。
+
+股利刷新 helper：
+
+- 新增 `_ensure_dividends_updated(symbol, market, updated_dividend_symbols)`。
+- helper 必須和 `_ensure_daily_data_updated()` 一樣遵守 once-per-chat 與 write lock。
+- helper 可復用 maintenance 既有 P11 dividends 更新流程；若初版為最小改動選擇重跑 P11 datasets，也必須標示 best-effort 且失敗不 crash 整輪 chat。
+- 若無法只刷新 dividends，可接受先刷新 P11 datasets（per / monthly / dividends / eps）作為 15-E 初版實作，但測試需確認失敗時 fallback / error 行為正確。
+
+不得使用：
+
+- `load_adjusted()` + cash dividends 疊加。
+- 美股 dividends fallback。
+- 繞過 maintenance / storage contract 的 ad hoc 外部網路即時抓股利。
+
+#### 測試計畫
+
+新增 / 調整 `tests/test_advisor.py`：
+
+1. `calculate_total_return` 單檔正常計算。
+2. 多檔 symbols 正常計算，順序與 input 一致。
+3. `start_date` 非交易日，自動對齊下一個交易日並 warning。
+4. `end_date` 非交易日，自動對齊上一個交易日並 warning。
+5. `start_date` 早於本機最早資料 30 天內：warning。
+6. `start_date` 早於本機最早資料超過 30 天：error。
+7. `end_date` 晚於本機最新資料：warning。
+8. `buy_date == end_trade_date`：warning，`annualized_return_pct = null`。
+9. 股利範圍只包含 `buy_date < dividend.date <= end_trade_date`。
+10. `dividend.date` 以除息交易日語意處理。
+11. `stock_dividend > 0` 時不納入計算，但回 warning 且明細包含 `stock_dividend`。
+12. 缺日線資料時該 symbol 回 error，不影響其他 symbols。
+13. 含息報酬模式下，dividends 缺失會嘗試自動刷新。
+14. dividends 刷新成功後使用最新 dividends 計算，`dividends_source="refreshed"`。
+15. dividends 刷新失敗但本機已有資料時可計算，`dividends_source="local_fallback"` 且 warning。
+16. dividends 刷新失敗且本機無資料時該 symbol 回 error，不可回價格報酬冒充含息報酬。
+17. write lock busy 且本機已有 dividends 時 warning fallback；無 dividends 時 error。
+18. 同輪同 `symbol+market` dividends 最多刷新一次。
+19. 明確價格報酬模式可跳過 dividends，`dividends_source="skipped_price_only"`。
+20. `market="us"` 回 `"目前僅支援台股含息報酬計算"`。
+21. 不支援的 `dividend_mode` 回 error。
+22. 不支援的 `buy_price_basis` 回 error。
+23. 數值精度 round 規則正確。
+24. `holding_days` 與 `annualized_return_pct` 計算正確。
+25. `calculate_total_return` 正確觸發日線自動更新且同輪同 `symbol+market` 不重複更新。
+26. `stream_chat` 能在含息報酬問題中處理 `calculate_total_return` tool call 並回傳 tool_result。
+
+調整 `tests/test_api/test_ai_api.py`：
+
+1. SSE 可傳回 `tool_call` name=`calculate_total_return`。
+2. SSE 可傳回 `tool_result` summary。
+3. 部分 symbol 失敗時 SSE 不 crash，最後仍可 `done`。
+
+Frontend vitest：
+
+1. 若 tool chip 已泛用，至少補 `message-bubble` 可顯示 `calculate_total_return` tool chip 與 summary。
+
+#### 手動驗收
+
+M1. 問 00713 / 00878 / 00918 / 00929 從 2025 年第一個交易日投入 10 萬，到 2026-05-24 含息報酬，AI 需呼叫 `calculate_total_return`，不得回答「只有最近 60 筆」。
+
+M2. 回答需列出代碼、買進日、買進價、期末日、期末價、持有天數、每股現金股利合計、股利現金、期末總值、含息報酬、年化報酬。
+
+M3. 問非交易日區間，回答需說明實際對齊交易日。
+
+M4. 問不存在代碼，回答需列出該代碼錯誤，不影響其他有效代碼。
+
+M5. 問「股利再投入」時，初版需明確回答目前只支援現金股利持有，不得假裝已計算再投入。
+
+M6. 問 AAPL 或 `market=us` 類問題時，需明確回答目前僅支援台股含息報酬計算。
+
+M7. 若期間內有股票股利測試資料，回答需列出 warning，不得默默忽略。
+
+M8. 模擬本機 dividends 缺失但可補抓：AI 需先刷新 dividends，再計算含息報酬。
+
+M9. 模擬 dividends 補抓失敗且本機無 dividends：AI 不得回價格報酬冒充含息報酬，需明確列出該 symbol 無法計算。
+
+#### 風險與待決
+
+| 項目 | 決議 / 後續 |
+|:---|:---|
+| 股利再投入 | 初版只支援 `dividend_mode="cash"`；未來要先定義除息日或發放日再投入、使用價格、是否允許 fractional shares |
+| 股票股利 | 初版不納入但必須 warning；未來若納入，需定義 `stock_dividend` 欄位語意、股數增加日期、對後續現金股利與期末市值的影響 |
+| 整股 / 零股 | 初版允許 fractional shares；若需真實台股交易，後續新增 `share_rounding = "fractional" \| "board_lot" \| "odd_lot"` |
+| 稅費 | 初版不含交易成本與稅費；後續需定義手續費、證交稅、ETF 稅率、股利所得稅 / 二代健保補充保費 |
+| 美股 | 初版不支援；未來需先確認美股 dividends parquet、schema、raw / adjusted daily 報酬語意、split 與 cash dividend 計算 |
+| adjusted daily 重複計入 | 15-E 初版明確採 raw daily + cash dividends，不用 adjusted daily 疊加 cash dividends |
+
+#### 完成定義
+
+15-E 完成時需滿足：
+
+1. AI 問答能自動選用 `calculate_total_return` 回答含息報酬問題。
+2. 不再因 `get_price_data` 60 筆 cap 而誤稱無 2025 年資料。
+3. Tool 回傳 deterministic 結構化數字。
+4. Tool output 包含持有天數、總報酬率、年化報酬率。
+5. 日期對齊、資料不足、美股不支援、股利缺資料、股票股利未納入等情況皆有明確 warning / error。
+6. 含息報酬模式會受控刷新 dividends；刷新失敗且無本機 dividends 時不得回價格報酬冒充含息報酬。
+7. 前端 tool chip 正常顯示試算工具呼叫與結果。
+8. 自動測試覆蓋日期對齊、股利範圍、多檔、錯誤隔離、精度、stock_dividend warning、日線自動更新整合、dividends 自動刷新與 fallback / error。
+9. DeepSeek 人工驗收通過代表主驗收完成；其他 provider 若未實機驗收，需比照 15-D 記錄在已知問題或驗收備註。
+
 ### 15 共用注意
 
 - 10-F-2 的設計內容已搬遷至 15-B / 15-C / 15-D；`開發設計方針.md` 原 10-F-2 區塊保留為「已搬遷至 Phase 15」標記，不留實作細節以避免雙份。
-- **15-A-1 / 15-A-2 / 15-B / 15-C / 15-D 不改 `PROJECT_BRIEF.md`；由 verifier 在每個 sub 完成驗證後補上對應 Phase 15 進度與行範圍索引**（避免新 session 只讀 PROJECT_BRIEF 找不到 P15）。
+- **15-A-1 / 15-A-2 / 15-B / 15-C / 15-D / 15-E 不改 `PROJECT_BRIEF.md`；由 verifier 在每個 sub 完成驗證後補上對應 Phase 15 進度與行範圍索引**（避免新 session 只讀 PROJECT_BRIEF 找不到 P15）。
 - 15-A-1 與 15-B 不改前端 chat 區塊；15-C 才動。
 - **「驗證後已知問題.md」implementer 不直接動**；由 verifier 在 15-D 完成驗證後寫入「3 provider streaming + tool calls 未實機驗證」條目。
 - DeepSeek endpoint URL 對齊官方文件：base URL `https://api.deepseek.com/chat/completions`、balance 端點 `https://api.deepseek.com/user/balance`，**無 `/v1` 前綴**。
 - DeepSeek 對 dashboard 與 chat 預設傳 `thinking: {"type":"disabled"}`（V4 系列預設啟用會增加延遲與成本，本專案不需 reasoning trace）。
 - Version bump 一律三處同步：`pyproject.toml` / `web/package.json` / `api/main.py`。
-- **【Phase 15 設計約束】四個 AI provider 功能必須等價**：Anthropic / OpenAI / Gemini / DeepSeek 在 FactorHammer 內必須都能跑 (a) dashboard JSON 分析、(b) AI chat streaming、(c) chat tool use、(d) provider key validate-if-present。差異只允許在 adapter payload / SSE 解析 / tool call accumulator 等實作細節，**不得在產品功能面缺項**。15-D 手動驗收只跑 DeepSeek 是「驗證範圍」收斂，不是「功能差異」；其他 3 provider 程式碼仍需完成 4 adapter 對等實作。
+- **【Phase 15 設計約束】四個 AI provider 功能必須等價**：Anthropic / OpenAI / Gemini / DeepSeek 在 FactorHammer 內必須都能跑 (a) dashboard JSON 分析、(b) AI chat streaming、(c) chat tool use、(d) provider key validate-if-present、(e) 15-E chat tool contract。差異只允許在 adapter payload / SSE 解析 / tool call accumulator 等實作細節，**不得在產品功能面缺項**。15-D / 15-E 手動驗收主路徑只跑 DeepSeek 是「驗證範圍」收斂，不是「功能差異」；其他 3 provider 程式碼仍需完成 4 adapter 對等實作。
 - **【已知設計債】adapter 介面 provider-specific payload 漂移**：目前 `generate_stock_dashboard_analysis` 在上層判斷 `if self.provider in {"openai", "deepseek"}` 決定要不要傳 `response_format` / `thinking` kwargs，把 OpenAI/DeepSeek 專用欄位散落在 dashboard service 層。codex 四審指出此設計違反「provider-specific payload 應由各 adapter 內部消化」原則。Phase 15 採務實做法（上層 kwargs + 非目標 adapter 收 `**kwargs` 忽略），維持 4 provider 功能等價但不重構介面。**未來 ticket**：把 `complete()` 介面改為語意性參數（如 `output_format="json"` / `thinking_mode="disabled"`），由各 adapter 自行轉換為自家 payload；Anthropic / Gemini 各自評估是否走原生 JSON mode 或 prompt 約束 + schema。本債務不卡 Phase 15 收尾。
 
 ---

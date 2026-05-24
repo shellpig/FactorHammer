@@ -21,6 +21,7 @@
 - Phase 14 14-A 已完成並通過驗證：LAN / Tailscale 多裝置存取，採 proxy 同源方案（Next.js `rewrites()` 反代 `/api/*` 至 `127.0.0.1:8000`、uvicorn / `pnpm dev` 綁 `0.0.0.0`、api-client `BASE_URL` 預設空字串走相對路徑、CORS 不動、`NEXT_PUBLIC_API_URL` 保留 escape hatch）；順手把 Next.js dev indicator 搬到右上角避免遮 Mobile Tab Bar。
 - Phase 14 14-B 已完成並通過驗證：手機端 UI 收尾，資料管理頁 mobile 隱藏「區間」「K 棒數」次要欄 + 名稱欄 truncate，toolbar 改為 mobile-only 兩列避免按鈕文字直排，Mobile Tab Bar / StockSelector / AI ChatInput `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value；不補 `@theme`、不動 API。
 - Phase 15 15-A-1 / 15-A-2 / 15-B / 15-C / 15-D 已完成並通過驗證：DeepSeek provider、per-provider secrets validate、AI chat SSE streaming、前端接 SSE + 停止串流 + 思考中 placeholder、tool use 與本機資料自動補抓 / 更新已上線。
+- Phase 15-E 規格已寫入三份主文件，尚未實作：AI 問答投資試算工具 `calculate_total_return`，支援台股指定期間投入金額含息總報酬試算、raw daily + cash dividends、dividends 受控刷新、日期對齊、錯誤隔離與 tool chip 顯示。
 - Phase 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成。
 
 ## 技術棧
@@ -32,7 +33,7 @@
 - **後端：** FastAPI、uvicorn、httpx；SSE 以 FastAPI `StreamingResponse` 實作
 - **前端：** Next.js 15+、React 19+、TypeScript 5+、Tailwind CSS v4、SWR、Lightweight Charts、Radix UI、sonner、cmdk、shadcn/ui pattern
 - **舊 UI：** Streamlit 已於 Phase 10-H 移除；Plotly 僅保留於 `src/backtest/report.py` 報告生成
-- **AI：** OpenAI / Anthropic / Gemini（provider-neutral）
+- **AI：** OpenAI / Anthropic / Gemini / DeepSeek（provider-neutral）
 - **測試：** pytest（固定 `.venv\Scripts\python.exe`）、Vitest、Playwright
 
 ## 目錄結構
@@ -257,12 +258,18 @@ risk:
 | 15-B | ✅ 完成 | AI 問答後端 streaming（純對話）：新增 `sse-starlette>=2.0` 依賴；`/api/ai/status` 動態化（依 `ai.enabled` + provider key 狀態，回 `reason: ai_disabled / missing_key / ok`）；`/api/ai/chat` 改 async + `EventSourceResponse`、SSE events `token` / `done` / `error`、`ChatRequest.messages` schema 嚴謹為 `role: user\|assistant`；`AIAdvisor.stream_chat()` + 4 adapter `stream_complete()` async generator（Anthropic `AsyncAnthropic` / OpenAI+DeepSeek `httpx.AsyncClient` aiter_lines / Gemini `alt=sse` aiter_lines）；chat / dashboard 對 DeepSeek 預設 `thinking={"type":"disabled"}`；新增 `api/deps.get_advisor()` dependency injection seam |
 | 15-C | ✅ 完成 | AI 問答前端接 SSE：新增 `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send` / `abort` / `messages` / `streaming`、`AbortController` 中止、`toApiMessages()` 過濾 greeting / 空訊息 / UI-only 欄位）、移除 `use-mock-chat.ts`；chat-page-client 加取消按鈕；逐 token 後以 `requestAnimationFrame` 讓出 paint，避免 React batching 造成整段跳出；空 assistant 泡泡顯示 `思考中...` 輕微閃爍；移除 sidebar「後續開放」徽章；訊息歷史不持久化；版號維持 `0.5.3`（取消誤 bump `0.7.0`）。Gate：`npx tsc --noEmit` 0 errors、vitest 64 files / 450 tests pass；使用者人工驗證 15-C-M1 ~ M5 完成 |
 | 15-D | ✅ 完成 | Chat 啟用 tool use：`AIAdvisor.stream_chat()` 多輪 tool 迴圈（最多 6 輪）+ 4 adapter tool_call delta accumulator；SSE 加 `tool_call` / `tool_result` event；前端顯示 tool chip，`use-ai-chat.ts` 以 `toApiMessages()` 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送 `/api/ai/chat`；日線工具在同一輪 chat 內對同一 `symbol+market` 最多自動補抓 / 更新一次，會先走 `api.job_manager` write lock，成功後續分析，失敗且本機有資料則 warning 後沿用既有資料，失敗且無資料則回結構化錯誤；DeepSeek 人工驗收 M1 ~ M4 已完成。Gate：targeted pytest 56 passed / 1 skipped、全套 pytest 690 passed / 12 deselected、`npx tsc --noEmit` 0 errors、vitest 64 files / 454 tests passed |
+| 15-E | 📝 規格完成、待實作 | AI 問答投資試算工具規格已寫入主規格 / 設計方針 / 測試指南：新增 `calculate_total_return` tool，處理「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題；初版僅支援台股、raw daily + cash dividends、fractional shares、現金股利持有、不含稅費、不支援股利再投入與美股；含息模式需受控刷新 dividends，失敗且無本機 dividends 不得以價格報酬冒充；AI 不得用 `get_price_data` 最近 60 筆 K 線自行推算長區間報酬 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–14-B + 15-A-1 + 15-A-2 + 15-B + 15-C + 15-D 全部完成並通過驗證。** 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成；AI 問答支援 SSE streaming、停止串流、tool use、tool chip 與日線資料自動補抓 / 更新。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–14-B + 15-A-1 + 15-A-2 + 15-B + 15-C + 15-D 全部完成並通過驗證；15-E 規格完成、待實作。** 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成；AI 問答支援 SSE streaming、停止串流、tool use、tool chip 與日線資料自動補抓 / 更新。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+
+2026-05-24 狀態（Phase 15-E 規格完成、待實作）：
+- **P15-E 規格寫入完成**：三份主文件已補上 AI 問答投資試算工具 `calculate_total_return`。目標是讓 chat 面對「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題時呼叫 deterministic Python tool，而不是用 `get_price_data` 最近 60 筆 K 線推算。
+- **P15-E 邊界決定**：初版僅支援台股；使用 raw daily + cash dividends；允許 fractional shares；股利模式只支援現金持有；不含手續費、證交稅、二代健保補充保費；不支援股利再投入、美股含息報酬、股票股利納入報酬（但需 warning）。
+- **P15-E 關鍵驗收要求**：含息模式必須受控刷新 dividends，refresh 失敗且本機無 dividends 時不得回價格報酬冒充含息報酬；日期需依交易日對齊；部分 symbol 失敗不得影響其他 symbol；tool output 先 round，AI 回答表格核心數字必須直接來自 tool output；DeepSeek 人工驗收為主路徑。
 
 2026-05-22 狀態（Phase 14-A 完成）：
 - **P14-A 實作完成**：`run_factorhammer.bat` 後端 uvicorn 改綁 `--host 0.0.0.0`、前端 `pnpm dev -H 0.0.0.0`（規格原本寫 `-- -H 0.0.0.0`，實機跑 pnpm 11 + Next.js 15.3 時 `next dev` 會把 `--` 當 positional 並把 `-H` 誤判為 project directory 直接退出；驗證階段抓到後改為 `-H 0.0.0.0`，規格書 4788 / 設計方針 9889 / 9915 / 9921 四處同步修正並保留反例註解）；`web/next.config.ts` 加 `rewrites()` 把 `/api/:path*` 反代到 `http://127.0.0.1:8000/api/:path*`、另加 `devIndicators.position: "top-right"` 避免手機底部 Tab Bar 被 Next.js dev 浮動鈕遮擋；`web/src/lib/api-client.ts` `BASE_URL` 預設值由 `"http://localhost:8000"` 改為 `""` 走 same-origin proxy，保留 `NEXT_PUBLIC_API_URL` escape hatch；vitest 補兩條（`預設走 same-origin` / `接受 NEXT_PUBLIC_API_URL 覆蓋`）。
@@ -314,11 +321,11 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~5406 行）
+### 量化交易系統規格書_shellpig版.md（~5951 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-33 | 查版本變更，最新為 `V3.4`（Phase 15 AI Provider 擴充與問答頁接 LLM；含 15-A-1 DeepSeek Provider 接入 + AI 設定區重寫、15-A-2 secrets/validate per-provider results、15-B 後端 streaming、15-C 前端接 SSE、15-D Chat 啟用 tool use） |
+| 修訂歷史 | 3-33 | 查版本變更，最新為 `V3.5`（新增 Phase 15-E AI 問答投資試算工具 `calculate_total_return`；含台股含息總報酬、raw daily + cash dividends、dividends 受控刷新、日期對齊與錯誤隔離規格） |
 | 專案願景與目標 | 47-62 | 理解定位 |
 | 技術語言與套件選型 | 64-91 | 技術決策參考 |
 | 系統架構（四層架構圖） | 93-177 | 理解整體結構 |
@@ -340,7 +347,7 @@ risk:
 | **Phase 12 首次執行 Token Onboarding 與 Portable Runtime 重整（12-A~12-D）** | **4172-4592** | **install.bat 改版、portable Node v22.11.0、`run_factorhammer.bat`、`POST /api/config/secrets/validate` + FinMind 驗證、`_write_env` atomic helper 重構、Token Setup Dialog 強制 block modal、SWR mutate；實作 12-A/B/C 時必讀** |
 | **Phase 13 Dashboard 現有功能調整（13-A~13-B）** | **4596-4731** | **Dashboard 分析入口與日線定位整理、同代碼 Enter 強制重跑 payload、隱藏無效分K、壓力 / 支撐來源說明、成交量日K股數語意統一時必讀** |
 | **Phase 14 區網與遠端存取與手機 UI 收尾（14-A / 14-B）** | **4735-4901** | **14-A LAN / Tailscale 多裝置存取規格、proxy 同源 vs 環境變數 A/B 對照、`run_factorhammer.bat` host 改動、Next.js `rewrites()`、`api-client.ts` `BASE_URL` 預設值、CORS 不動的原因、安全模型、Tailscale 行為；14-B 手機端 UI 收尾規格、資料管理頁 mobile A4 隱藏次要欄、Mobile Tab Bar `bg-background` 改 arbitrary value 修 Tailwind v4 utility 失效、不補 `@theme` 的理由時必讀** |
-| **Phase 15 AI Provider 擴充與問答頁接 LLM（15-A-1 / 15-A-2 / 15-B / 15-C / 15-D）** | **4903-5328** | **DeepSeek Provider 接入 + AI 設定區重寫、`/api/config/secrets/validate` 重構為 per-provider results map + 移除 Google API Key alias、AI 問答後端 streaming（純對話）、AI 問答前端接 SSE、Chat 啟用 tool use；OpenAIAdapter 抽 `base_url`、DeepSeekAdapter 對齊官方 endpoint（無 `/v1`）、`sse-starlette>=2.0` 依賴、FinMind 必填 + 其他 provider validate-if-present 安全模型、ChatRequest schema 嚴謹化、多輪 tool 迴圈 + tool_call delta accumulator + `toApiMessages()` UI-only entries 過濾規則時必讀** |
+| **Phase 15 AI Provider 擴充與問答頁接 LLM（15-A-1 / 15-A-2 / 15-B / 15-C / 15-D / 15-E）** | **4903-5873** | **DeepSeek Provider 接入 + AI 設定區重寫、`/api/config/secrets/validate` 重構為 per-provider results map + 移除 Google API Key alias、AI 問答後端 streaming（純對話）、AI 問答前端接 SSE、Chat 啟用 tool use、AI 問答投資試算工具；OpenAIAdapter 抽 `base_url`、DeepSeekAdapter 對齊官方 endpoint（無 `/v1`）、`sse-starlette>=2.0` 依賴、FinMind 必填 + 其他 provider validate-if-present 安全模型、ChatRequest schema 嚴謹化、多輪 tool 迴圈 + tool_call delta accumulator + `toApiMessages()` UI-only entries 過濾規則、`calculate_total_return` schema / 日期對齊 / raw daily + cash dividends / dividends refresh fallback / output schema 時必讀** |
 | 子階段總覽 | 2666-2680 | Phase 總覽（含 Phase 11） |
 | 費用估算 | 2685-2703 | API / yfinance / TWSE / TPEx / Next.js / US-2 資料源成本 |
 | 10-E：回測研究工作台 | 2942-3387 | 實作 10-E-1~4、Job lifecycle、SSE、取消、CSV、toast/skeleton/error boundary/command palette 整合時必讀 |
@@ -356,15 +363,16 @@ risk:
 | 13-B：Dashboard 指標說明與數值呈現整理 | 4666-4713 | 壓力 / 支撐來源 label 或 tooltip、去重說明、成交量日K股數語意、避免即時報價量單位混淆時必讀 |
 | 14-A：LAN / Tailscale 存取（proxy 同源） | 4755-4830 | 14-A 目標、proxy 同源 vs 環境變數 A/B 對照、CORS 不動的原因、必須動的四項、Phase 14-A 不做與風險時必讀 |
 | 14-B：手機端 UI 收尾 | 4831-4901 | 14-B 目標、資料管理頁 mobile A4（隱藏次要欄 + 名稱欄 truncate）/ Mobile Tab Bar C（arbitrary value）鎖定路徑、不動的部分、必須動的四檔、Phase 14-B 不做與風險時必讀 |
-| 15-A-1：DeepSeek Provider 接入 + AI 設定區重寫 | 4919-4999 | DeepSeekAdapter 設計（繼承 OpenAIAdapter、base URL `https://api.deepseek.com/chat/completions` 無 `/v1`）、`DEFAULT_MODELS["deepseek"]="deepseek-v4-flash"`、`_resolve_api_key("deepseek")`、Dashboard 對 openai/deepseek 傳 `response_format={"type":"json_object"}` 與 deepseek 額外 `thinking={"type":"disabled"}`、`_SECRET_ENV_KEYS` 加 `DEEPSEEK_API_KEY`、`AiToggleSection` 解鎖（toggle / Provider 下拉 / Model input、停用時欄位 disabled）、`useConfig` / `updateConfig` hook（body `{ patch }` 對齊 `ConfigPatchRequest`）、`SecretsSection` 加 DeepSeek 欄位、`SecretsStatus.deepseek` TS type、安全模型、不做事項、風險（與 15-A-2 contract 邊界）時必讀 |
-| 15-A-2：secrets/validate 重構為 per-provider results + 移除 Google API Key alias | 5000-5119 | per-provider `ValidationResult`（`ok` / `invalid_key` / `no_quota` / `unreachable` / `skipped`）、FinMind 必填 + 其他 provider validate-if-present、`validate_deepseek_token`（`GET /user/balance` 無 `/v1`，DeepSeek 402 或 `is_available=false` = `no_quota`，缺 `is_available` / JSON 解析失敗 = `unreachable`）/ `validate_anthropic_token` / `validate_openai_token` / `validate_gemini_token` / FinMind 沿用 `validate_finmind_token()`、`ok` 與 `no_quota` 寫入 `.env`、`invalid_key` / `unreachable` 不寫入、router 以 `update_secrets` 作單一寫入點、Token Setup Dialog 同步 response shape 並保留非 200 / malformed guard、設定頁 inline status badge、`SecretsStatus` 移除 `google: boolean`、`google_api_key` fallback 移除（supersede P12-C / 10-G-2 google status/UI）時必讀 |
-| 15-B：AI 問答後端 streaming（純對話） | 5120-5189 | `sse-starlette>=2.0` 依賴、`/api/ai/status` 動態化（依 `ai.enabled` + provider key 狀態）、`/api/ai/chat` 改 async + `EventSourceResponse`、SSE events `token` / `done` / `error`、`ChatRequest.messages` schema 嚴謹為 `role: user\|assistant`、`AIAdvisor.stream_chat()` async generator、4 adapter `stream_complete()` async、chat / dashboard 對 DeepSeek 預設 `thinking={"type":"disabled"}` 時必讀 |
-| 15-C：AI 問答前端接 SSE | 5190-5248 | `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send` / `abort` / `messages` / `streaming`）、移除 `use-mock-chat.ts`、chat-page-client 加取消按鈕、markdown 部分閉合直接交給 `react-markdown` 即時 render、移除 sidebar「後續開放」徽章、訊息歷史不持久化、三處版本同步 `0.7.0` 時必讀 |
-| 15-D：Chat 啟用 tool use（手動驗收只跑 DeepSeek） | 5249-5328 | `stream_chat` 多輪 tool 迴圈（最多 6 輪）、4 adapter tool_call delta accumulator、SSE `tool_call` / `tool_result` event、前端 tool chip、`use-ai-chat.ts` 必須以 `toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送入 `/api/ai/chat`、日線工具同輪 chat 同一 `symbol+market` 最多自動補抓 / 更新一次且走 write lock、手動驗收只在 DeepSeek 上跑時必讀 |
-| 附錄 A：免責聲明全文 | 5329-5349 | 免責聲明文案 |
-| 附錄 B：架構決策補充 | 5350-5406 | 美股邊界與 AI provider 抽象 |
+| 15-A-1：DeepSeek Provider 接入 + AI 設定區重寫 | 4921-5001 | DeepSeekAdapter 設計（繼承 OpenAIAdapter、base URL `https://api.deepseek.com/chat/completions` 無 `/v1`）、`DEFAULT_MODELS["deepseek"]="deepseek-v4-flash"`、`_resolve_api_key("deepseek")`、Dashboard 對 openai/deepseek 傳 `response_format={"type":"json_object"}` 與 deepseek 額外 `thinking={"type":"disabled"}`、`_SECRET_ENV_KEYS` 加 `DEEPSEEK_API_KEY`、`AiToggleSection` 解鎖（toggle / Provider 下拉 / Model input、停用時欄位 disabled）、`useConfig` / `updateConfig` hook（body `{ patch }` 對齊 `ConfigPatchRequest`）、`SecretsSection` 加 DeepSeek 欄位、`SecretsStatus.deepseek` TS type、安全模型、不做事項、風險（與 15-A-2 contract 邊界）時必讀 |
+| 15-A-2：secrets/validate 重構為 per-provider results + 移除 Google API Key alias | 5002-5121 | per-provider `ValidationResult`（`ok` / `invalid_key` / `no_quota` / `unreachable` / `skipped`）、FinMind 必填 + 其他 provider validate-if-present、`validate_deepseek_token`（`GET /user/balance` 無 `/v1`，DeepSeek 402 或 `is_available=false` = `no_quota`，缺 `is_available` / JSON 解析失敗 = `unreachable`）/ `validate_anthropic_token` / `validate_openai_token` / `validate_gemini_token` / FinMind 沿用 `validate_finmind_token()`、`ok` 與 `no_quota` 寫入 `.env`、`invalid_key` / `unreachable` 不寫入、router 以 `update_secrets` 作單一寫入點、Token Setup Dialog 同步 response shape 並保留非 200 / malformed guard、設定頁 inline status badge、`SecretsStatus` 移除 `google: boolean`、`google_api_key` fallback 移除（supersede P12-C / 10-G-2 google status/UI）時必讀 |
+| 15-B：AI 問答後端 streaming（純對話） | 5122-5191 | `sse-starlette>=2.0` 依賴、`/api/ai/status` 動態化（依 `ai.enabled` + provider key 狀態）、`/api/ai/chat` 改 async + `EventSourceResponse`、SSE events `token` / `done` / `error`、`ChatRequest.messages` schema 嚴謹為 `role: user\|assistant`、`AIAdvisor.stream_chat()` async generator、4 adapter `stream_complete()` async、chat / dashboard 對 DeepSeek 預設 `thinking={"type":"disabled"}` 時必讀 |
+| 15-C：AI 問答前端接 SSE | 5192-5250 | `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send` / `abort` / `messages` / `streaming`）、移除 `use-mock-chat.ts`、chat-page-client 加取消按鈕、markdown 部分閉合直接交給 `react-markdown` 即時 render、移除 sidebar「後續開放」徽章、訊息歷史不持久化、三處版本同步 `0.7.0` 時必讀 |
+| 15-D：Chat 啟用 tool use（手動驗收只跑 DeepSeek） | 5251-5316 | `stream_chat` 多輪 tool 迴圈（最多 6 輪）、4 adapter tool_call delta accumulator、SSE `tool_call` / `tool_result` event、前端 tool chip、`use-ai-chat.ts` 必須以 `toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送入 `/api/ai/chat`、日線工具同輪 chat 同一 `symbol+market` 最多自動補抓 / 更新一次且走 write lock、手動驗收只在 DeepSeek 上跑時必讀 |
+| 15-E：AI 問答投資試算工具（含息總報酬） | 5317-5859 | `calculate_total_return` tool schema、台股多檔含息總報酬、起訖日期交易日對齊、每檔投入金額、raw daily + cash dividends、fractional shares、現金股利持有、不含稅費、不支援股利再投入與美股、dividends refresh / lock busy / local fallback / missing error、股票股利 warning、output rounding、AI 回答規則、範例四檔 ETF 驗收資料、測試計畫與完成定義時必讀 |
+| 附錄 A：免責聲明全文 | 5874-5894 | 免責聲明文案 |
+| 附錄 B：架構決策補充 | 5895-5951 | 美股邊界與 AI provider 抽象 |
 
-### 開發設計方針.md（~11541 行）
+### 開發設計方針.md（~11834 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -388,7 +396,7 @@ risk:
 | **Phase 12 首次執行 Token Onboarding 與 Portable Runtime 重整** | **9174-9615** | **實作 P12 前必讀：12-A install.bat 內部結構與 portable Node 流程、12-B `_write_env` atomic helper + `validate_finmind_token` 程式碼、12-C Token Setup Dialog hooks 範例 + SWR mutate 整合、既有測試 mock 調整** |
 | **Phase 13 Dashboard 現有功能調整** | **9619-9873** | **實作 P13 前必讀：13-A Enter 提交與同代碼 `mutate()`、分K tab 條件顯示；13-B 壓力 / 支撐來源說明、成交量 formatter 與報價列成交量來源規則** |
 | **Phase 14 區網與遠端存取與手機 UI 收尾** | **9875-10116** | **實作 P14 前必讀：14-A `run_factorhammer.bat` 兩行改法、`next.config.ts` `rewrites()` 範例、`api-client.ts` `BASE_URL` 預設改空字串、CORS 不動的原因、`NEXT_PUBLIC_API_URL` escape hatch 去留；14-B DataTable mobile 隱藏次要欄與名稱欄 truncate 設計、Tab Bar `bg-[hsl(var(--background))]` arbitrary value 修法、`stock-selector` / `chat-input` 順手修、為什麼不補 `@theme`** |
-| **Phase 15 AI Provider 擴充與問答頁接 LLM** | **10117-11541** | **實作 P15 前必讀：15-A-1 DeepSeekAdapter 樣板（繼承 OpenAIAdapter、`base_url` 抽出）/ `BaseProviderAdapter.complete` kwargs 簽名 / dashboard 對 openai/deepseek 加 kwargs / `useConfig` / `updateConfig` hook（`{ patch }` 包裝對齊 `ConfigPatchRequest`）/ AiToggleSection 重寫（toggle / Provider 下拉 / Model input / useEffect 同步 SWR / dirty guard / 停用時欄位 disabled）/ 三處版本 bump；15-A-2 per-provider `validate_*_token()` 程式碼（含 DeepSeek `is_available` 保守 fallback）/ `post_secrets_validate` 改寫（`update_secrets` 單一寫入點）/ Token Setup Dialog 新 response shape + 非 200 / malformed guard / `get_config()` 移除 `google_api_key` fallback；15-B `sse-starlette` 與 `EventSourceResponse` 樣板 / `AIAdvisor.stream_chat()` async generator / 4 adapter `stream_complete()` async；15-C `use-ai-chat.ts` 完整 hook + ReadableStream + AbortController；15-D `stream_chat` 多輪 tool 迴圈 / tool_call delta accumulator / `toApiMessages()` UI-only entries 過濾** |
+| **Phase 15 AI Provider 擴充與問答頁接 LLM** | **10117-11834** | **實作 P15 前必讀：15-A-1 DeepSeekAdapter 樣板（繼承 OpenAIAdapter、`base_url` 抽出）/ `BaseProviderAdapter.complete` kwargs 簽名 / dashboard 對 openai/deepseek 加 kwargs / `useConfig` / `updateConfig` hook（`{ patch }` 包裝對齊 `ConfigPatchRequest`）/ AiToggleSection 重寫（toggle / Provider 下拉 / Model input / useEffect 同步 SWR / dirty guard / 停用時欄位 disabled）/ 三處版本 bump；15-A-2 per-provider `validate_*_token()` 程式碼（含 DeepSeek `is_available` 保守 fallback）/ `post_secrets_validate` 改寫（`update_secrets` 單一寫入點）/ Token Setup Dialog 新 response shape + 非 200 / malformed guard / `get_config()` 移除 `google_api_key` fallback；15-B `sse-starlette` 與 `EventSourceResponse` 樣板 / `AIAdvisor.stream_chat()` async generator / 4 adapter `stream_complete()` async；15-C `use-ai-chat.ts` 完整 hook + ReadableStream + AbortController；15-D `stream_chat` 多輪 tool 迴圈 / tool_call delta accumulator / `toApiMessages()` UI-only entries 過濾；15-E `calculate_total_return` handler / dividends refresh helper / raw daily + cash dividends 計算 / output rounding / system prompt 規則** |
 | 10-E 回測研究工作台 | 6920-7480 | 實作 backtest jobs、partial cancellation、CSV blob、共用 hook/元件時必讀 |
 | 10-G 設定頁 + 全局整合 | 7649-8119 | 實作 toast、Error Boundary、Skeleton、Command Palette、settings/secrets/theme/preset CRUD 時必讀 |
 | 11-B 資料層 / Service / API / 前端 | 8509-8705 | 實作 PER、monthly_revenue、dividends/EPS storage、valuation/monthly/dividend/industry PER API 與 panel 時必讀 |
@@ -407,8 +415,9 @@ risk:
 | 15-B：AI 問答後端 streaming | 10937-11161 | `sse-starlette` 依賴與 `EventSourceResponse` 樣板、`AIAdvisor.stream_chat()` async generator、4 adapter `stream_complete()` async（Anthropic SDK stream / OpenAI httpx stream / Gemini httpx stream / DeepSeek 繼承 OpenAI）、SSE event 結構、`ChatRequest.messages` pydantic schema 嚴謹化時必讀 |
 | 15-C：AI 問答前端接 SSE | 11162-11347 | `use-ai-chat.ts` 完整 hook（fetch + ReadableStream + AbortController + SSE 解析）、chat-page-client 整合與取消按鈕、sidebar 移除「後續開放」徽章、訊息歷史不持久化規則時必讀 |
 | 15-D：Chat 啟用 tool use | 11348-11541 | `stream_chat` 多輪 tool 迴圈程式碼（最多 6 輪）、4 adapter tool_call delta accumulator、SSE `tool_call` / `tool_result` event 結構、前端 tool chip 樣式、`toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）的位置與規則、日線工具同輪 chat 同一 `symbol+market` 最多自動補抓 / 更新一次且走 write lock 時必讀 |
+| 15-E：AI 問答投資試算工具 | 11537-11821 | `calculate_total_return` tool schema、`get_price_data` 60 筆限制導流文案、`_handle_calculate_total_return` signature、`updated_dividend_symbols` 注入、輸入驗證、`_ensure_dividends_updated()` once-per-chat + write lock、raw daily 讀取、dividends refresh fallback/error、日期對齊 helper、純計算 helper、股票股利 warning、rounding、`_summarize_tool_output()` summary、SYSTEM_PROMPT 報酬試算規則時必讀 |
 
-### 測試指南.md（~4857 行）
+### 測試指南.md（~4977 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -432,7 +441,7 @@ risk:
 | **Phase 12 測試（12-A~12-D）** | **3768-4024** | **P12 安裝腳本 / Backend Config API / Frontend Token Dialog 測試；含 install.bat 乾淨機器手動驗收 8 點、`secrets/validate` router 14 case + service 12 case、Token Setup Dialog 16 case + 整合 3 case、onboarding 手動驗收 10 點、Phase 12 完成 Gate** |
 | **Phase 13 測試（13-A~13-B）** | **4027-4141** | **Dashboard 現有功能調整測試；含移除按鈕、Enter 提示、新 / 同代碼 Enter 重新請求、分K tab 條件顯示、壓力 / 支撐來源、成交量日K股數語意** |
 | **Phase 14 測試（14-A / 14-B）** | **4143-4320** | **14-A LAN / Tailscale 多裝置存取測試（vitest `api-client BASE_URL` 兩條新案、`tests/test_api` regression、Playwright 不動、6 個手動驗收 14-A-M1 ~ M6、Phase 14 完成 Gate）；14-B 手機端 UI 收尾測試（vitest DataTable 兩條 + Sidebar 一條新案、4 個手動驗收 14-B-M1 ~ M4、Playwright mobile 建議補測、Phase 14-B 完成 Gate）** |
-| **Phase 15 測試（15-A-1 / 15-A-2 / 15-B / 15-C / 15-D）** | **4321-4757** | **15-A-1 pytest 12 條（含 P0 鬼影 bug 保護網兩條：`test_get_config_secrets_includes_deepseek_api_key` / `test_deepseek_adapter_reads_key_from_env_via_config`）+ vitest 12 條（useConfig hook 三條 / ai-toggle async 同步 + dirty guard + disabled fields / secrets-section deepseek 兩條）+ 手動驗收 M1~M7（M3 重啟驗收為 P0 不可跳）；15-A-2 per-provider validate router/service tests + FinMind 必填整包不寫 + DeepSeek missing `is_available` / malformed JSON → `unreachable` regression + onboarding non-200/malformed response 不白屏 regression + Google API Key 移除手動驗收；15-B `stream_chat` / `sse-starlette` / `EventSourceResponse` / `ChatRequest` schema 嚴謹化 tests + curl 驗 SSE；15-C `use-ai-chat` hook + AbortController + sidebar 徽章移除 + `use-mock-chat` 5 條移除；15-D 多輪 tool 迴圈 + tool_call delta accumulator + `toApiMessages` helper tests + DeepSeek 手動驗收 only** |
+| **Phase 15 測試（15-A-1 / 15-A-2 / 15-B / 15-C / 15-D / 15-E）** | **4321-4874** | **15-A-1 pytest 12 條（含 P0 鬼影 bug 保護網兩條：`test_get_config_secrets_includes_deepseek_api_key` / `test_deepseek_adapter_reads_key_from_env_via_config`）+ vitest 12 條；15-A-2 per-provider validate router/service tests + FinMind 必填整包不寫 + Google API Key 移除手動驗收；15-B `stream_chat` / `sse-starlette` / `EventSourceResponse` / `ChatRequest` schema 嚴謹化 tests + curl 驗 SSE；15-C `use-ai-chat` hook + AbortController + sidebar 徽章移除 + `use-mock-chat` 5 條移除；15-D 多輪 tool 迴圈 + tool_call delta accumulator + `toApiMessages` helper tests + DeepSeek 手動驗收 only；15-E `calculate_total_return` pytest 26+ 條、API SSE 3 條、tool chip / `toApiMessages` vitest、DeepSeek 手動驗收 M1~M9** |
 | 10-E 回測工作台測試 | 2786-2939 | 驗 10-E-1~4：backtest jobs、cancelled partial result、CSV、toast/skeleton/error panel |
 | 10-G 設定頁 + 全局整合測試 | 3005-3092 | 驗 10-G-1 toast/error boundary/skeleton/command palette 與 10-G-2 settings |
 | 11-E UI/UX 收尾調整測試 | 3696-3740 | 驗 11-E：sidebar 名稱 + 版號、警示文字字色、quote header 一排、K 線「前收」標籤、編輯按鈕位置、placeholder 移除 |
@@ -448,8 +457,9 @@ risk:
 | 15-B 測試（AI 問答後端 streaming，純對話） | 4529-4602 | 驗 15-B：`stream_chat` async generator tests + 4 adapter `stream_complete()` mock SSE stream + `/api/ai/status` 動態化 tests + `/api/ai/chat` 改 async + `EventSourceResponse` tests + `ChatRequest.messages` role 嚴謹化、curl `--no-buffer` 驗 SSE event 順序 `token` / `done` / `error` |
 | 15-C 測試（AI 問答前端接 SSE） | 4603-4666 | 驗 15-C：`use-ai-chat` hook tests（mock fetch + ReadableStream + AbortController）+ chat-page-client 取消按鈕互動 + sidebar 徽章移除 regression + `use-mock-chat` 5 條測試移除 + 手動驗收 SSE token 逐字顯示 / Stop 中斷 / 跳頁清訊息 |
 | 15-D 測試（Chat 啟用 tool use） | 4667-4757 | 驗 15-D：`stream_chat` 多輪 tool 迴圈 tests（最多 6 輪、超出 raise）+ 4 adapter tool_call delta accumulator tests + SSE `tool_call` / `tool_result` event 結構 tests + `toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）tests + 日線自動補抓 / 更新 once-per-chat tests + DeepSeek 手動驗收 M1 ~ M4 |
-| 全專案最終回歸 | 4758-4799 | Phase 完成後 |
-| 測試數量統計總覽 | 4800-4857 | 測試統計（含 Phase 11 估算；P12 屬腳本 + onboarding 類、P14 屬部署面，未計入測試數量總覽表） |
+| 15-E 測試（AI 問答投資試算工具） | 4741-4858 | 驗 15-E：`calculate_total_return` 單檔 / 多檔 / 日期對齊 / dividends refresh / local fallback / missing error / stock_dividend warning / rounding / annualized return / daily update once-per-chat / `stream_chat` tool_result tests；API SSE `tool_call` / `tool_result` / partial error tests；前端 tool chip 與 `toApiMessages` regression；DeepSeek 手動驗收 M1 ~ M9 |
+| 全專案最終回歸 | 4876-4917 | Phase 完成後 |
+| 測試數量統計總覽 | 4918-4977 | 測試統計（含 Phase 11 估算；P12 屬腳本 + onboarding 類、P14 屬部署面，未計入測試數量總覽表） |
 
 ### web/_design/ — 10-C 視覺設計稿（Phase 10-C 實作必讀）
 
