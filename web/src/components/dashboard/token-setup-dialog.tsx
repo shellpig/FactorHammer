@@ -6,9 +6,6 @@ import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 type ValidateRequestBody = {
   finmind: string;
-  anthropic?: string;
-  openai?: string;
-  gemini?: string;
 };
 
 export function TokenSetupDialog({
@@ -19,11 +16,7 @@ export function TokenSetupDialog({
   onSaved: () => void | Promise<void>;
 }) {
   const [finmind, setFinmind] = useState("");
-  const [anthropic, setAnthropic] = useState("");
-  const [openai, setOpenai] = useState("");
-  const [gemini, setGemini] = useState("");
   const [showFinmind, setShowFinmind] = useState(false);
-  const [aiKeysExpanded, setAiKeysExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -36,9 +29,6 @@ export function TokenSetupDialog({
     setErrorMsg(null);
 
     const body: ValidateRequestBody = { finmind: finmindToken };
-    if (anthropic.trim()) body.anthropic = anthropic.trim();
-    if (openai.trim()) body.openai = openai.trim();
-    if (gemini.trim()) body.gemini = gemini.trim();
 
     try {
       // 15-A-2：新 response shape — HTTP 200 + data.results.finmind.status
@@ -149,57 +139,9 @@ export function TokenSetupDialog({
               </div>
             </label>
 
-            <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
-              <button
-                type="button"
-                onClick={() => setAiKeysExpanded((prev) => !prev)}
-                disabled={saving}
-                className="text-sm text-slate-200 hover:text-slate-100 disabled:opacity-70"
-              >
-                AI API Keys（選填）
-              </button>
-
-              {aiKeysExpanded ? (
-                <div className="mt-3 space-y-2">
-                  <label className="block space-y-1">
-                    <span className="text-xs text-slate-400">Anthropic API Key</span>
-                    <input
-                      aria-label="Anthropic API Key"
-                      type="password"
-                      value={anthropic}
-                      onChange={(event) => setAnthropic(event.target.value)}
-                      disabled={saving}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 disabled:opacity-70"
-                      placeholder="留空代表不更新"
-                    />
-                  </label>
-                  <label className="block space-y-1">
-                    <span className="text-xs text-slate-400">OpenAI API Key</span>
-                    <input
-                      aria-label="OpenAI API Key"
-                      type="password"
-                      value={openai}
-                      onChange={(event) => setOpenai(event.target.value)}
-                      disabled={saving}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 disabled:opacity-70"
-                      placeholder="留空代表不更新"
-                    />
-                  </label>
-                  <label className="block space-y-1">
-                    <span className="text-xs text-slate-400">Gemini API Key</span>
-                    <input
-                      aria-label="Gemini API Key"
-                      type="password"
-                      value={gemini}
-                      onChange={(event) => setGemini(event.target.value)}
-                      disabled={saving}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 disabled:opacity-70"
-                      placeholder="留空代表不更新"
-                    />
-                  </label>
-                </div>
-              ) : null}
-            </div>
+            <p className="text-xs text-slate-400">
+              若需使用 AI 分析，可至「設定」頁面設定 API Key 與模型，並在該頁面最下方開啟AI 分析功能。
+            </p>
 
             {errorMsg ? <p className="text-sm text-red-300">{errorMsg}</p> : null}
           </div>

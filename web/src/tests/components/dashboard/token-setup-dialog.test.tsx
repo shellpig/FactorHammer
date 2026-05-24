@@ -189,13 +189,11 @@ describe("TokenSetupDialog", () => {
     expect(input).toHaveAttribute("type", "text");
   });
 
-  it("expands optional AI keys section", () => {
+  it("renders static AI key help text", () => {
     render(<TokenSetupDialog open onSaved={() => undefined} />);
-    expect(screen.queryByLabelText("Anthropic API Key")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "AI API Keys（選填）" }));
-    expect(screen.getByLabelText("Anthropic API Key")).toBeInTheDocument();
-    expect(screen.getByLabelText("OpenAI API Key")).toBeInTheDocument();
-    expect(screen.getByLabelText("Gemini API Key")).toBeInTheDocument();
+    expect(
+      screen.getByText("若需使用 AI 分析，可至「設定」頁面設定 API Key 與模型，並在該頁面最下方開啟AI 分析功能。")
+    ).toBeInTheDocument();
   });
 
   it("enables save after FinMind token entered", () => {
@@ -211,8 +209,6 @@ describe("TokenSetupDialog", () => {
 
     render(<TokenSetupDialog open onSaved={onSaved} />);
     fireEvent.change(screen.getByLabelText("FinMind Token"), { target: { value: "fm-token" } });
-    fireEvent.click(screen.getByRole("button", { name: "AI API Keys（選填）" }));
-    fireEvent.change(screen.getByLabelText("OpenAI API Key"), { target: { value: "sk-openai" } });
     fireEvent.click(screen.getByRole("button", { name: "儲存並繼續" }));
 
     await waitFor(() => {
@@ -225,7 +221,6 @@ describe("TokenSetupDialog", () => {
 
     const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string);
     expect(body.finmind).toBe("fm-token");
-    expect(body.openai).toBe("sk-openai");
   });
 
   it("shows error message when finmind status is invalid_key", async () => {
@@ -321,20 +316,17 @@ describe("TokenSetupDialog", () => {
     expect(screen.getByTestId("token-setup-saving-spinner")).toBeInTheDocument();
   });
 
-  it("sends trimmed values for finmind and optional keys", async () => {
+  it("sends trimmed values for finmind", async () => {
     const onSaved = vi.fn();
     vi.stubGlobal("fetch", vi.fn().mockReturnValueOnce(makeValidateOkResponse()));
 
     render(<TokenSetupDialog open onSaved={onSaved} />);
     fireEvent.change(screen.getByLabelText("FinMind Token"), { target: { value: "  fm-token  " } });
-    fireEvent.click(screen.getByRole("button", { name: "AI API Keys（選填）" }));
-    fireEvent.change(screen.getByLabelText("Anthropic API Key"), { target: { value: "  ant-token  " } });
     fireEvent.click(screen.getByRole("button", { name: "儲存並繼續" }));
 
     await waitFor(() => {
       const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string);
       expect(body.finmind).toBe("fm-token");
-      expect(body.anthropic).toBe("ant-token");
     });
   });
 

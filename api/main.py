@@ -20,7 +20,7 @@ load_dotenv(get_project_root() / ".env", override=False)
 app = FastAPI(
     title="FactorHammer API",
     description="Backend API for FactorHammer — Taiwan/US stock research toolkit.",
-    version="0.5.5.1",
+    version="0.5.6",
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────
