@@ -1,5 +1,7 @@
 # FactorHammer（QuantTrader）
 
+[English](./README.md) | **繁體中文** | [简体中文](./README_zh-CN.md)
+
 ![Python](https://img.shields.io/badge/PYTHON-3.12+-3776AB?logo=python&logoColor=white)
 ![Node.js](https://img.shields.io/badge/NODE.JS-22-339933?logo=node.js&logoColor=white)
 ![Next.js](https://img.shields.io/badge/NEXT.JS-15-000000?logo=next.js&logoColor=white)
@@ -129,6 +131,33 @@ tools/node/       (gitignore) install.bat 下載的 portable Node.js
 
 ---
 
+## 後續預計新增規格
+
+以下為規劃中的方向，尚未排入正式 Phase，順序與範圍可能調整。
+
+- **Portfolio / Watchlist（觀察清單與持股組合）**
+  讓使用者建立自選觀察清單與持股組合，記錄成本、張數，並計算損益、股利收入與整體風險暴露，作為單股分析之外的組合層視角。
+
+- **回測結果保存與比較中心**
+  目前已有 batch / sweep / walk-forward；下一步把歷史回測結果集中管理，支援標籤、收藏、跨次比較與報告匯出，避免結果散落、難以回溯。
+
+- **策略模板產生器**
+  以 UI 或 AI 輔助產生策略骨架（均線、動能、突破、籌碼條件等組合），並自動帶出基本測試，降低從零撰寫策略的門檻。
+
+- **AI 分析評估與防幻覺機制**
+  建立固定問題集，驗證 AI 回答是否引用正確的本機資料、是否出現亂算、是否如實標明資料缺口；目標是把 AI 問答從「能用」推進到「可信」。
+
+- **更多台股 / 美股資料項目**
+  例如財報細項、股權分散、融資維持率、外資期貨未平倉等。建議先從**大盤指數 + 類股指數**著手，因為它能直接改善單股分析的背景脈絡。
+
+- **風險與資金管理模組**
+  納入最大部位限制、停損、再平衡，以及 Kelly / fixed fractional、drawdown 控制等資金管理研究功能。
+
+- **安全與隱私檢查**
+  掃描 `.env`、API key、資料目錄與 log，檢查是否存在敏感資訊外洩風險。
+
+---
+
 ## License
 
-個人專案，無保固。僅供研究與學習用途，**不得用於商業或實盤交易**。
+本專案以 [MIT License](./LICENSE) 釋出。僅供研究與學習用途，**不得用於商業或實盤交易**；不附任何保固。

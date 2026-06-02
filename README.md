@@ -1,4 +1,6 @@
-# FactorHammer（QuantTrader）
+# FactorHammer (QuantTrader)
+
+**English** | [繁體中文](./README_zh-TW.md) | [简体中文](./README_zh-CN.md)
 
 ![Python](https://img.shields.io/badge/PYTHON-3.12+-3776AB?logo=python&logoColor=white)
 ![Node.js](https://img.shields.io/badge/NODE.JS-22-339933?logo=node.js&logoColor=white)
@@ -7,128 +9,155 @@
 ![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS-0078D6?logo=windows&logoColor=white)
 ![Trading](https://img.shields.io/badge/TRADING-RESEARCH%20ONLY-red)
 
-> 台股 / 美股 US-1 量化研究工具・個人版・Windows 本機・**不接實盤**
+> A quantitative research tool for Taiwan / US (US-1) stocks · personal edition · runs locally on Windows · **no live trading**
 
-純研究、回測、AI 分析用途。資料管線、策略開發、批次掃描與走樣外驗證皆在本機完成，零外部伺服器依賴。
-
----
-
-## ⚠️ 免責聲明
-
-本專案為個人研究工具，**不構成任何投資建議**，也不接任何券商實盤。所有資料來自公開免費 API（FinMind、yfinance、TWSE / TPEx OpenAPI、Goodinfo 等），可能存在延遲、遺漏或錯誤。使用者需自行承擔依此進行任何決策的風險。
+For research, backtesting, and AI analysis only. The data pipeline, strategy development, batch sweeps, and walk-forward validation all run locally, with zero external server dependencies.
 
 ---
 
-## 能做什麼
+## ⚠️ Disclaimer
 
-| 範疇 | 功能 |
+This is a personal research tool. It **does not constitute investment advice** and is not connected to any broker for live trading. All data comes from free public APIs (FinMind, yfinance, TWSE / TPEx OpenAPI, Goodinfo, etc.) and may be delayed, incomplete, or incorrect. You are solely responsible for any decisions made based on it.
+
+---
+
+## What It Does
+
+| Area | Capabilities |
 |---|---|
-| 資料管線 | 台股日 K / 1m intraday、籌碼、融資券、PER、月營收、股利、EPS、股東會；美股 US-1 日 K / 1m |
-| 技術分析 | pandas-ta 指標封裝、K 線形態、籌碼分析、技術摘要 |
-| 回測引擎 | 向量化（`generate_signals`）與事件驅動（`on_bar`）雙引擎並行，含手續費 / 滑價 / 稅費模型 |
-| 策略庫 | MA Cross、RSI、KD、MACD、Bollinger Band、Bias、Donchian Breakout、DCA |
-| 進階研究 | 批次回測（batch）、參數掃描（sweep）、走樣外驗證（walk-forward） |
-| AI 分析 | Provider-neutral（Anthropic / OpenAI / Gemini / DeepSeek），支援 Dashboard 分析與 AI 問答；不設定則停用 |
-| 前端 | Next.js dashboard，含 K 線、報價列、回測結果、串流 AI 問答、設定頁 |
+| Data pipeline | TW daily K / 1m intraday, institutional chips, margin trading, PER, monthly revenue, dividends, EPS, shareholder meetings; US (US-1) daily K / 1m |
+| Technical analysis | pandas-ta indicator wrappers, candlestick patterns, chip analysis, technical summaries |
+| Backtest engines | Vectorized (`generate_signals`) and event-driven (`on_bar`) engines running in parallel, with commission / slippage / tax models |
+| Strategy library | MA Cross, RSI, KD, MACD, Bollinger Band, Bias, Donchian Breakout, DCA |
+| Advanced research | Batch backtesting, parameter sweeps, walk-forward analysis |
+| AI analysis | Provider-neutral (Anthropic / OpenAI / Gemini / DeepSeek); supports dashboard analysis and AI Q&A; disabled when not configured |
+| Frontend | Next.js dashboard with candlestick charts, quote bar, backtest results, streaming AI Q&A, and a settings page |
 
 ---
 
-## 技術棧
+## Tech Stack
 
-- **語言 / 套件管理**：Python 3.12+（uv 管理）、Node.js 22（portable，自動安裝）
-- **資料層**：DuckDB + Parquet（零伺服器、本機落地）
-- **資料處理**：pandas、pandas-ta
-- **後端**：FastAPI、uvicorn、httpx、sse-starlette；SSE 走 `EventSourceResponse`
-- **前端**：Next.js 15、React 19、TypeScript 5、Tailwind v4、SWR、Lightweight Charts、Radix UI、shadcn/ui pattern
-- **AI**：Anthropic / OpenAI / Gemini / DeepSeek（provider-neutral）
-- **測試**：pytest、Vitest、Playwright
+- **Language / package management**: Python 3.12+ (managed by uv), Node.js 22 (portable, auto-installed)
+- **Data layer**: DuckDB + Parquet (serverless, stored locally)
+- **Data processing**: pandas, pandas-ta
+- **Backend**: FastAPI, uvicorn, httpx, sse-starlette; SSE via `EventSourceResponse`
+- **Frontend**: Next.js 15, React 19, TypeScript 5, Tailwind v4, SWR, Lightweight Charts, Radix UI, shadcn/ui pattern
+- **AI**: Anthropic / OpenAI / Gemini / DeepSeek (provider-neutral)
+- **Testing**: pytest, Vitest, Playwright
 
 ---
 
 ## Quick Start
 
-**前置要求**：Windows 10 / 11。
+**Requirements**: Windows 10 / 11.
 
-### 1. 雙擊 `install.bat`
+### 1. Double-click `install.bat`
 
-一次性安裝，自動完成：
+A one-time setup that automatically:
 
-- 安裝 `uv` 並 `uv sync` 建立 `.venv`
-- 下載 portable Node.js v22.11.0 到 `tools\node\`（**不污染系統環境**）
-- 安裝前端套件（pnpm 11.1.1，frozen-lockfile）
-- 從 `.env.example` 建立 `.env`
+- Installs `uv` and runs `uv sync` to create `.venv`
+- Downloads portable Node.js v22.11.0 into `tools\node\` (**does not touch the system environment**)
+- Installs frontend dependencies (pnpm 11.1.1, frozen-lockfile)
+- Creates `.env` from `.env.example`
 
-### 2. 雙擊 `run_factorhammer.bat`
+### 2. Double-click `run_factorhammer.bat`
 
-自動啟動 FastAPI（:8000）+ Next.js（:3000），並開啟瀏覽器到 `/dashboard`。
+Starts FastAPI (:8000) + Next.js (:3000) and opens the browser at `/dashboard`.
 
-首次進入會跳出設定頁面，可在 UI 設定 AI Provider 與 API Key（不設定則 AI 功能停用，其它功能正常）。
+On first launch a settings page appears where you can configure the AI provider and API keys in the UI (if left unconfigured, AI features are disabled while everything else works normally).
 
-關閉時把兩個視窗 Ctrl+C 或直接關掉。
-
----
-
-## AI 功能
-
-AI 功能為可選；未設定 API Key 時，資料管理、分析與回測仍可正常使用。
-
-- **Provider**：支援 Anthropic、OpenAI、Gemini、DeepSeek，可在設定頁切換 provider 與 model。
-- **API Key 管理**：設定頁可分別儲存與驗證 FinMind / Anthropic / OpenAI / Gemini / DeepSeek key。
-- **Dashboard AI 分析**：個股分析頁可使用目前選定 provider 產生分析摘要。
-- **AI 問答**：AI 頁支援 SSE 串流回覆、停止串流，以及 Markdown 顯示。
-- **Tool use**：AI 問答可呼叫本機資料工具，依問題讀取日線、技術指標、支撐壓力與 K 線型態；缺日線資料時會透過既有資料管線自動補抓 / 更新一次。
+To shut down, press Ctrl+C in both windows or just close them.
 
 ---
 
-## 目錄結構（精簡）
+## AI Features
+
+AI is optional; without an API key, data management, analysis, and backtesting all work normally.
+
+- **Provider**: supports Anthropic, OpenAI, Gemini, and DeepSeek; switch provider and model on the settings page.
+- **API key management**: save and validate FinMind / Anthropic / OpenAI / Gemini / DeepSeek keys individually on the settings page.
+- **Dashboard AI analysis**: the single-stock analysis page can generate an analysis summary using the currently selected provider.
+- **AI Q&A**: the AI page supports SSE streaming responses, stop-streaming, and Markdown rendering.
+- **Tool use**: AI Q&A can call local data tools to read daily K, technical indicators, support / resistance, and candlestick patterns based on the question; if daily data is missing, it auto-fetches / updates once through the existing data pipeline.
+
+---
+
+## Directory Structure (condensed)
 
 ```
 src/
-├── core/         config、constants、market、strategy_config
-├── data/         fetcher、cleaner、storage、maintenance、realtime
-├── backtest/     向量化 / 事件驅動引擎、cost、metrics、report、batch、sweep、walk_forward
-├── strategy/     StrategyBase + examples/（MA、RSI、KD、MACD、Bollinger、Bias、Donchian、DCA）
-├── analysis/     technical_summary、pattern、chip_analysis
-├── indicators/   pandas-ta 封裝 + 別名映射
-├── ai/           advisor（LLM Provider Tool Use）
-└── services/     dashboard / backtest / data / config 服務層
+├── core/         config, constants, market, strategy_config
+├── data/         fetcher, cleaner, storage, maintenance, realtime
+├── backtest/     vectorized / event-driven engines, cost, metrics, report, batch, sweep, walk_forward
+├── strategy/     StrategyBase + examples/ (MA, RSI, KD, MACD, Bollinger, Bias, Donchian, DCA)
+├── analysis/     technical_summary, pattern, chip_analysis
+├── indicators/   pandas-ta wrappers + alias mapping
+├── ai/           advisor (LLM provider tool use)
+└── services/     dashboard / backtest / data / config service layer
 
-api/              FastAPI 後端（routers/、job_manager、deps）
-web/              Next.js 前端（App Router）
-tests/            pytest 測試套件
-data/             (gitignore) DuckDB + Parquet 落地資料
-tools/node/       (gitignore) install.bat 下載的 portable Node.js
+api/              FastAPI backend (routers/, job_manager, deps)
+web/              Next.js frontend (App Router)
+tests/            pytest test suite
+data/             (gitignored) DuckDB + Parquet local data
+tools/node/       (gitignored) portable Node.js downloaded by install.bat
 ```
 
-完整目錄與檔案說明見 `PROJECT_BRIEF.md`。
+See `PROJECT_BRIEF.md` for the full directory and file reference.
 
 ---
 
-## 文件導覽
+## Documentation Guide
 
-| 文件 | 用途 |
+| Document | Purpose |
 |---|---|
-| [`PROJECT_BRIEF.md`](./PROJECT_BRIEF.md) | **新 session 入口**；架構、進度、規格索引 |
-| [`量化交易系統規格書_shellpig版.md`](./量化交易系統規格書_shellpig版.md) | 各 Phase 範圍、API / UI 合約、驗收條件 |
-| [`開發設計方針.md`](./開發設計方針.md) | 實作細節、檔案位置、資料契約、類別 / 函式設計 |
-| [`測試指南.md`](./測試指南.md) | 驗證指令、測試範圍、手動驗收清單 |
-| [`驗證後已知問題.md`](./驗證後已知問題.md) | 當前未完成項、驗收缺口、已接受的邊界決定 |
-| [`未涵蓋資料項目.md`](./未涵蓋資料項目.md) | 目前不抓不存的資料項目 |
+| [`PROJECT_BRIEF.md`](./PROJECT_BRIEF.md) | **Entry point for a new session**; architecture, progress, spec index |
+| [`量化交易系統規格書_shellpig版.md`](./量化交易系統規格書_shellpig版.md) | Per-phase scope, API / UI contracts, acceptance criteria |
+| [`開發設計方針.md`](./開發設計方針.md) | Implementation details, file locations, data contracts, class / function design |
+| [`測試指南.md`](./測試指南.md) | Verification commands, test scope, manual acceptance checklist |
+| [`驗證後已知問題.md`](./驗證後已知問題.md) | Open items, acceptance gaps, accepted boundary decisions |
+| [`未涵蓋資料項目.md`](./未涵蓋資料項目.md) | Data items currently not fetched or stored |
 
-最新 Phase 進度只維護在 `PROJECT_BRIEF.md`，避免雙份內容漂移。
+The latest phase progress is maintained only in `PROJECT_BRIEF.md` to avoid content drift across two copies.
 
 ---
 
-## 資料來源與限制
+## Data Sources & Limitations
 
-- **台股**：FinMind 免費層為主、yfinance 備援；股東會走 TWSE / TPEx OpenAPI；股利政策以 Goodinfo 頁作除息 fallback 參考。
-- **美股**：yfinance（日 K + 1m intraday）。
-- **時區鐵律**：所有 datetime 皆 timezone-aware；台股 `Asia/Taipei`、美股 `America/New_York`。
-- **更新策略**：一次性下載歷史 → Parquet 落地；日常增量更新由 `data/maintenance.py` 處理。
-- **未涵蓋項目**：見 [`未涵蓋資料項目.md`](./未涵蓋資料項目.md)。
+- **Taiwan stocks**: FinMind free tier as primary, yfinance as fallback; shareholder meetings via TWSE / TPEx OpenAPI; dividend policy uses the Goodinfo page as an ex-dividend fallback reference.
+- **US stocks**: yfinance (daily K + 1m intraday).
+- **Timezone rule**: all datetimes are timezone-aware; TW uses `Asia/Taipei`, US uses `America/New_York`.
+- **Update strategy**: download history once → land in Parquet; daily incremental updates handled by `data/maintenance.py`.
+- **Not covered**: see [`未涵蓋資料項目.md`](./未涵蓋資料項目.md).
+
+---
+
+## Planned Features
+
+The following are directions under consideration. They are not yet scheduled into formal phases, and their order and scope may change.
+
+- **Portfolio / Watchlist**
+  Let users build watchlists and holdings portfolios, recording cost and share count, and computing P&L, dividend income, and overall risk exposure — a portfolio-level view beyond single-stock analysis.
+
+- **Backtest result archive & comparison center**
+  Batch / sweep / walk-forward already exist; the next step is to centrally manage historical backtest results with tagging, favorites, cross-run comparison, and report export, so results don't get scattered and hard to trace.
+
+- **Strategy template generator**
+  Generate strategy scaffolds via UI or AI (combinations of moving averages, momentum, breakout, chip conditions, etc.) with basic tests auto-generated, lowering the barrier to writing a strategy from scratch.
+
+- **AI analysis evaluation & anti-hallucination**
+  Build a fixed question set to verify whether AI answers cite the correct local data, avoid bogus calculations, and honestly flag data gaps — moving AI Q&A from "usable" to "trustworthy".
+
+- **More TW / US data items**
+  For example financial-statement line items, shareholding dispersion, margin maintenance ratio, foreign-investor futures open interest. Starting with **market indices + sector indices** is recommended, since they directly improve the context for single-stock analysis.
+
+- **Risk & money management module**
+  Add max position limits, stop-loss, rebalancing, plus money-management research features such as Kelly / fixed fractional and drawdown control.
+
+- **Security & privacy checks**
+  Scan `.env`, API keys, the data directory, and logs for potential leakage of sensitive information.
 
 ---
 
 ## License
 
-個人專案，無保固。僅供研究與學習用途，**不得用於商業或實盤交易**。
+Released under the [MIT License](./LICENSE). For research and learning purposes only; **not for commercial use or live trading**, and provided without warranty.
