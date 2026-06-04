@@ -4,11 +4,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
+import ssl
 import time
 from typing import Any
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.ssl_ import create_urllib3_context
 import yfinance as yf
 
 
@@ -1325,13 +1328,34 @@ class ActiveEtfSource(ABC):
         """
 
 
+class _RelaxedStrictHTTPAdapter(HTTPAdapter):
+    """Keeps full TLS chain verification but disables OpenSSL 3.x strict mode.
+
+    MoneyDJ's certificate chain contains a CA cert missing the Subject Key
+    Identifier extension; OpenSSL 3.x's VERIFY_X509_STRICT (on by default in
+    newer urllib3) rejects this with "Missing Subject Key Identifier". Clearing
+    only that flag lets the otherwise-trusted chain validate normally, without
+    falling back to verify=False (which would disable trust entirely).
+    """
+
+    def init_poolmanager(self, *args: Any, **kwargs: Any) -> Any:
+        ctx = create_urllib3_context()
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        kwargs["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kwargs)
+
+
 class MoneyDjActiveEtfSource(ActiveEtfSource):
     """MoneyDJ active ETF holding source."""
 
     HOLDINGS_URL = "https://www.moneydj.com/ETF/X/Basic/Basic0007B.xdjhtm?etfid={CODE}.TW"
 
     def __init__(self, session: requests.Session | None = None, timeout_seconds: int = 20):
-        self._session = session or requests.Session()
+        if session is None:
+            self._session = requests.Session()
+            self._session.mount("https://www.moneydj.com", _RelaxedStrictHTTPAdapter())
+        else:
+            self._session = session
         self._timeout_seconds = timeout_seconds
 
     def fetch_list(self) -> pd.DataFrame:
@@ -1399,6 +1423,11 @@ class MoneyDjActiveEtfSource(ActiveEtfSource):
         try:
             response = self._session.get(url, headers=headers, timeout=self._timeout_seconds)
             response.raise_for_status()
+            # MoneyDJ serves UTF-8 but omits charset in Content-Type, so requests
+            # defaults to ISO-8859-1 and mangles the Chinese holdings table. Fall
+            # back to the body-detected encoding when that default kicks in.
+            if not response.encoding or response.encoding.lower() == "iso-8859-1":
+                response.encoding = response.apparent_encoding or "utf-8"
             html_content = response.text
         except Exception as exc:  # noqa: BLE001
             raise FetcherError(f"Failed to fetch holdings for {normalized_code} from MoneyDJ: {exc}") from exc

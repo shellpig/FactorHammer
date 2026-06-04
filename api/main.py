@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import ai, analysis, config, data, jobs, realtime
+from api.routers import ai, analysis, config, data, jobs, realtime, active_etf
 from src.core.config import get_project_root
 
 load_dotenv(get_project_root() / ".env", override=False)
@@ -20,7 +20,7 @@ load_dotenv(get_project_root() / ".env", override=False)
 app = FastAPI(
     title="FactorHammer API",
     description="Backend API for FactorHammer — Taiwan/US stock research toolkit.",
-    version="0.5.6",
+    version="0.7.0",
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────
@@ -39,6 +39,7 @@ app.include_router(jobs.router)
 app.include_router(analysis.router)
 app.include_router(realtime.router)
 app.include_router(ai.router)
+app.include_router(active_etf.router)
 
 
 # ── No-cache middleware ───────────────────────────────────────────────────

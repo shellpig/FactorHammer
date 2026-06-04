@@ -1192,11 +1192,18 @@ class ParquetStorage:
     def save_active_etf_list_meta(self, meta: dict[str, Any]) -> None:
         path = self._active_etf_list_meta_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        import uuid
+        tmp_name = f"active_etf_list_meta_{uuid.uuid4().hex}.tmp"
+        tmp_path = path.parent / tmp_name
         try:
             tmp_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp_path.replace(path)
         except Exception as exc:  # noqa: BLE001
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
             raise StorageError(f"Failed to write active ETF list meta: {path}") from exc
 
     def load_active_etf_list_meta(self) -> dict[str, Any]:

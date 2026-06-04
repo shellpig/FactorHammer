@@ -3,12 +3,13 @@
 import datetime
 from datetime import date
 from pathlib import Path
+import ssl
 import time
 import pytest
 import pandas as pd
 
 from src.core.exceptions import FetcherError
-from src.data.fetcher import MoneyDjActiveEtfSource
+from src.data.fetcher import MoneyDjActiveEtfSource, _RelaxedStrictHTTPAdapter
 from src.data.storage import ParquetStorage, StorageError
 from src.services.active_etf_service import ActiveEtfService, _HOLDINGS_CACHE
 
@@ -75,6 +76,77 @@ def test_moneydj_active_etf_fetch_list_fallback(monkeypatch, tmp_path):
     assert isinstance(df, pd.DataFrame)
     assert df.empty
     assert list(df.columns) == ["etf_code", "etf_name"]
+
+
+def test_moneydj_default_session_relaxes_x509_strict():
+    """Default session must keep TLS verification but clear VERIFY_X509_STRICT.
+
+    MoneyDJ's cert chain has a CA cert missing the Subject Key Identifier
+    extension; OpenSSL 3.x strict mode rejects it. The fix mounts a relaxed
+    adapter on the MoneyDJ host only, without disabling cert trust.
+    """
+    source = MoneyDjActiveEtfSource()
+
+    adapter = source._session.get_adapter("https://www.moneydj.com/ETF/X/Basic/Basic0007B.xdjhtm")
+    assert isinstance(adapter, _RelaxedStrictHTTPAdapter)
+
+    # Other hosts keep the default adapter (no relaxation leaks elsewhere)
+    other = source._session.get_adapter("https://api.finmindtrade.com")
+    assert not isinstance(other, _RelaxedStrictHTTPAdapter)
+
+    # The relaxed adapter's SSL context must verify certs but not be strict
+    pool = adapter.poolmanager
+    ctx = pool.connection_pool_kw.get("ssl_context")
+    assert ctx is not None
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert not (ctx.verify_flags & ssl.VERIFY_X509_STRICT)
+
+
+def test_moneydj_fetch_holdings_decodes_charsetless_utf8(monkeypatch):
+    """MoneyDJ sends UTF-8 with no charset header; fetch must not decode as latin-1.
+
+    requests defaults charsetless text/html to ISO-8859-1, which mangles the
+    Chinese holdings table and breaks parsing. fetch_holdings must fall back to
+    the body-detected encoding.
+    """
+    import requests
+
+    html = (
+        '<html><head><meta charset="utf-8"></head><body>'
+        '<div id="ctl00_ctl00_MainContent_MainContent_sdate3">2026/06/03</div>'
+        "<table>"
+        "<tr><th>個股名稱</th><th>比例</th><th>持股</th></tr>"
+        "<tr><td>台積電(2330.TW)</td><td>9.97%</td><td>11,960,000</td></tr>"
+        "</table></body></html>"
+    )
+    resp = requests.Response()
+    resp.status_code = 200
+    resp._content = html.encode("utf-8")
+    resp.headers["Content-Type"] = "text/html"  # no charset -> requests picks latin-1
+    resp.encoding = "ISO-8859-1"
+
+    source = MoneyDjActiveEtfSource()
+    monkeypatch.setattr(source._session, "get", lambda *a, **k: resp)
+
+    snapshot_date, df = source.fetch_holdings("00981A")
+
+    assert snapshot_date == date(2026, 6, 3)
+    assert len(df) == 1
+    assert df.iloc[0]["holding_code"] == "2330.TW"
+    assert df.iloc[0]["holding_name"] == "台積電"
+    assert df.iloc[0]["shares"] == 11960000
+    assert df.iloc[0]["weight_pct"] == 9.97
+
+
+def test_moneydj_injected_session_left_untouched():
+    """A caller-supplied session must not get the relaxed adapter auto-mounted."""
+    import requests
+
+    injected = requests.Session()
+    source = MoneyDjActiveEtfSource(session=injected)
+    assert source._session is injected
+    adapter = source._session.get_adapter("https://www.moneydj.com/")
+    assert not isinstance(adapter, _RelaxedStrictHTTPAdapter)
 
 
 # ---------------------------------------------------------------------------

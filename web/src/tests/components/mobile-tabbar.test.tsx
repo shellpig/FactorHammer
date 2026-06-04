@@ -31,15 +31,16 @@ const PAGES = [
   { testid: "mobile-nav-dashboard", label: "分析", href: "/dashboard" },
   { testid: "mobile-nav-backtest",  label: "回測", href: "/backtest" },
   { testid: "mobile-nav-data",      label: "資料", href: "/data" },
+  { testid: "mobile-nav-active-etf",label: "ETF",  href: "/active-etf" },
   { testid: "mobile-nav-ai",        label: "AI",   href: "/ai" },
   { testid: "mobile-nav-settings",  label: "設定", href: "/settings" },
 ];
 
 describe("MobileTabBar", () => {
-  it("renders 5 mobile nav items", () => {
+  it("renders 6 mobile nav items", () => {
     render(<Sidebar />);
     const items = screen.getAllByTestId(/mobile-nav-/);
-    expect(items.length).toBe(5);
+    expect(items.length).toBe(6);
   });
 
   it.each(PAGES)("renders $testid with shortLabel $label", ({ testid, label }) => {

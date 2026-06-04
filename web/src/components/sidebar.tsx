@@ -12,6 +12,7 @@ import {
   FolderOpen,
   Bot,
   Settings,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCommandPaletteEntry } from "@/hooks/use-command-palette";
@@ -28,6 +29,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "個股分析", shortLabel: "分析",  href: "/dashboard", icon: BarChart3 },
   { label: "回測研究", shortLabel: "回測",  href: "/backtest",  icon: TrendingUp },
   { label: "資料管理", shortLabel: "資料",  href: "/data",      icon: FolderOpen },
+  { label: "主動ETF",  shortLabel: "ETF",   href: "/active-etf",icon: FileText },
   { label: "AI 問答",  shortLabel: "AI",    href: "/ai",        icon: Bot },
   { label: "設定",     shortLabel: "設定",  href: "/settings",  icon: Settings },
 ];
@@ -53,6 +55,12 @@ export function Sidebar() {
     group: "pages",
     label: "回測研究",
     action: () => router.push("/backtest"),
+  });
+  useCommandPaletteEntry({
+    id: "nav-active-etf",
+    group: "pages",
+    label: "主動ETF",
+    action: () => router.push("/active-etf"),
   });
   useCommandPaletteEntry({
     id: "nav-ai",
@@ -97,7 +105,7 @@ export function Sidebar() {
         className="lg:hidden fixed bottom-0 left-0 right-0 z-50 h-14 bg-[hsl(var(--background))] border-t border-border"
         aria-label="手機底部導覽"
       >
-        <div className="grid grid-cols-5 h-full">
+        <div className="grid grid-cols-6 h-full">
           {NAV_ITEMS.map((item) => (
             <MobileTabItem key={item.href} item={item} active={pathname === item.href} />
           ))}
