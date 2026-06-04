@@ -5871,6 +5871,206 @@ M9. 模擬 dividends 補抓失敗且本機無 dividends：AI 不得回價格報�
 
 ---
 
+## Phase 16：主動式 ETF 持股追蹤
+
+> 目標：追蹤台股**主動式 ETF**每日持股變化。畫面一次看一檔，提供兩塊資訊：①持股變動、②目前總體持股。
+> **持股資料**源為 MoneyDJ 靜態 HTML 持股頁；**持股不接 FinMind、不算金額、不碰股價、不接實盤**。純粹「抓快照 → 落地 → 相鄰兩快照 diff 股數」。
+> （**ETF 名單**另重用既有 FinMind `TaiwanStockInfo` cache，見「名單範圍」；「不接 FinMind」僅指持股資料，不含名單。）
+> 注意：股票型主動 ETF 可持有**海外股**（如 00983A 持有 `TSLA.US` / `AMD.US`），故持股資料模型必須市場中立（見資料模型）。
+> 拍板日：2026-06-04（grill 規格討論，使用者逐題確認）；2026-06-04 codex 二審補強。
+
+### 16 範圍與子階段
+
+| 子階段 | 範圍 | 對應層 |
+|:---|:---|:---|
+| **16-A 資料層** | MoneyDJ 持股 parser + 主動 ETF 名單 cache/filter（`stock_info_tw.parquet` cache-first + `^\d{5}A$`）+ 快照儲存（per-ETF parquet append、依 `資料日期` dedup）+ diff 計算（相鄰兩快照 Δ股數、新進/剔除） | `src/data/`、`src/services/` |
+| **16-B API + 前端頁** | FastAPI router（名單、單檔持股+diff、on-view lazy fetch）+ Next.js `主動ETF` 新頁（ETF 選擇器 + ①持股變動 + ②總體持股、雙日期標示、響應式） | `api/`、`web/` |
+| **16-C 整合驗證 + 文件** | 手動驗收 + 規格書 / 設計方針 / 測試指南 / PROJECT_BRIEF 收束 | 文件 / 回歸 |
+
+backend-first：16-A 純 Python 可獨立 pytest 完成，diff 語意為核心風險先釘死；16-B 才碰 API/UI；16-C 走 verifier 角色收文件。
+
+### 16 資料源決策（2026-06-04 拍板）
+
+調查結論：**單一官方集中端點不存在**。
+
+| 來源 | 完整持股 | 有股數 | 可程式化 | 判定 |
+|:---|:---:|:---:|:---:|:---|
+| TWSE OpenAPI | ❌ | — | — | 只有基金基本資料 / 外資持股比，無成分股 |
+| TWSE ETFortune（e添富） | ❌ | — | — | 只有 chart / 績效 ajax，無持股端點 |
+| 投信投顧公會 SITCA | ❌ | — | — | 純連結轉導至各投信，無 API / CSV |
+| 各投信官網 PCF | ✅ | ✅ | ⚠️ | 完整但 JS 渲染 + session gate（如統一 ezmoney 302），逐家 parser |
+| **MoneyDJ `Basic0007B`** | ✅（全 51 檔） | ✅ | ✅ | **靜態 HTML、含代碼+股數+資料日期、單一 URL 全涵蓋；主頁 `basic0007` 僅前 10 大，須用 `Basic0007B`** |
+
+**v1 採 MoneyDJ 全量持股頁**：`https://www.moneydj.com/ETF/X/Basic/Basic0007B.xdjhtm?etfid={CODE}.TW`（`{CODE}` 大寫，如 `00981A`）。
+
+> ⚠️ **2026-06-04 codex 審核更正**：`basic0007.xdjhtm`（主頁）只顯示**前 10 大**持股，旁邊「查看全部」按鈕才連到 `Basic0007B`。**必須抓 `Basic0007B`** 才有全量（00981A 實測 51 檔，靜態 HTML 可解）。早期規格誤指 `basic0007`，已更正。
+
+- 優點：伺服器渲染靜態 HTML（curl 可取）、含「個股名稱（內嵌代碼，如 `台積電(2330.TW)`）/ 投資比例% / 持有股數（股）」、頁面標示「資料日期」、URL 格式統一→一支 parser 涵蓋全部主動 ETF。
+- **已知風險（必須在設計上隔離）**：MoneyDJ 為商業聚合站、**非官方**，可能落後原始揭露、有 ToS 灰色地帶、改版即壞、可能擋爬蟲。因此 fetcher 必須設計為**可抽換的資料源 seam**（介面與實作分離），未來若要改投信官方 headless 抓取，只換 fetcher 不動 service / API / UI。
+- 考量本工具為個人研究用途（個版、不商用、不接實盤），v1 接受上述風險。
+
+### 16 名單範圍（universe）
+
+採動態全名單（討論選項 C）：
+
+- 來源：**重用既有 cache-first 機制**——`src/services/data_service.py` 的 `_load_symbol_names("tw")` 模式（讀 `data/stock_info_tw.parquet`，7 天 TTL，miss 才打 FinMind `TaiwanStockInfo`，**吞所有錯誤、失敗回空**），以代號規則 `^\d{5}A$`（股票型主動 ETF，第六碼 = A，**指 ETF 自身代碼**，與其持有的海外成分股無關）過濾，得 `etf_code` + `etf_name`。重用既有 helper、不新增脆弱 HTML 爬蟲。
+  - **2026-06-04 codex 審核更正**：TWSE active-list 公開頁只有說明文字與「第六碼 A/D」規則、**無 ETF 清單列**，不可作為可程式化來源。
+  - **降級行為（codex 二審補強）**：「持股不接 FinMind」僅指持股；名單可用既有 FinMind cache。無 token / cache stale 且重抓失敗時，cache-first helper 回空 → `GET /list` 回**空陣列**，前端顯示「名單暫無，請確認 FinMind token 或稍後重試」，**不得 raise 讓整頁崩**（`FinMindFetcher` 無 token 會 raise，必須被 helper 的 try/except 吞掉）。
+  - implementer 於 16-A gate 須確認 `00981A` 等實際出現在 `stock_info`；新上市主動 ETF 尚未進 FinMind 清單視為已知延遲，列 warning 不阻擋。
+- **v1 範圍限股票型主動 ETF（代號 `^\d{5}A$`）**；債券型（第六碼 `D`）持有債券、語意不同，列為後續，不在 16 範圍。
+- 新上市主動 ETF 由名單來源自動帶出，無需改碼；下市標的若名單移除則選擇器不再出現（不主動刪歷史快照）。
+- 名單僅供「ETF 選擇器」列出選項；**持股資料為 lazy 取數**——使用者選哪一檔才抓哪一檔，畫面一次只呈現一檔。
+
+### 16 快照與 dedup 模型
+
+MoneyDJ 只揭露「最新一天」持股（無歷史 API），故歷史只能由本工具**每次開頁自行擷取快照累積**：
+
+1. 開啟某 ETF（或在選擇器切換到該 ETF）時，向 MoneyDJ 取該檔當前頁，解析「資料日期」。
+2. **dedup**：若該「資料日期」等於本機已存的最新快照日期 → **不再 append**，直接使用本機既有快照。
+3. 若為新日期 → append 一筆新快照落地。
+4. **「持股變動」= 本機最新快照 vs 上一筆快照的 Δ股數**；UI 必須同時顯示這兩個快照日期（例如「2026/06/03 → 2026/06/04」）。
+5. 為避免快速重開頁反覆打 MoneyDJ，允許在 process 內加輕量 TTL（如同檔 60 秒內不重抓），TTL 命中時直接用本機資料。
+
+**forward-only 限制（必須在 UI / 文件明示）**：歷史無法回補。第一次擷取某 ETF 只有單一快照、沒有前次可比；「持股變動」實際語意是「最新快照 vs 上一次擷取」，若使用者未在每個交易日開頁，兩筆快照可能非相鄰交易日——UI 以實際日期區間如實標示，不得假裝為昨天。
+
+### 16 Diff 語意
+
+以「個股」為鍵 join 最新快照與上一筆快照（鍵見下方 parser 風險），計算 `delta_shares = 最新.shares − 前次.shares`，單位為**股**（不換算成張）：
+
+| 情況 | 判定 | delta_shares |
+|:---|:---|:---|
+| 兩快照都有、股數增加 | 買進 | `+ (新 − 舊)` |
+| 兩快照都有、股數減少 | 賣出 | `− (舊 − 新)` |
+| 兩快照都有、股數不變 | 無變化 | `0`（不列入買賣區） |
+| 只在最新快照 | 新進 | `+ 最新.shares` |
+| 只在上一筆快照 | 剔除 | `− 前次.shares`（最新持股為 0） |
+
+### 16 資料模型
+
+新增獨立資料夾與 `ParquetStorage` 方法（不進 DuckDB `data_meta`，比照 `shareholder_meeting` 慣例，避免污染資料管理頁狀態判定）：
+
+```
+data/raw/tw_active_etf/
+  active_etf_list.parquet          # 主動 ETF 名單（market-wide 單檔）
+  active_etf_list.meta.json        # 名單最後擷取時間
+  {etf_code}/holdings.parquet      # per-ETF 快照累積（append-only）
+```
+
+- `active_etf_list.parquet` 欄位：`etf_code`(str) / `etf_name`(str)。
+- `{etf_code}/holdings.parquet` 欄位：`snapshot_date`(date，MoneyDJ 資料日期) / `holding_code`(str，**完整 ticker，含市場後綴**，如 `2330.TW` / `TSLA.US`，**不可去後綴**) / `holding_name`(str，括號前名稱，MoneyDJ 可能截斷，如 `Technologies`) / `shares`(int，股) / `weight_pct`(float)。多個 `snapshot_date` 直接堆疊；同一 `snapshot_date` 不重複 append（dedup）。
+  - **diff join 鍵用 `holding_code`**（完整 ticker 唯一且穩定）；`holding_name` 僅供顯示，不當鍵（會截斷 / 可能重複）。
+  - **2026-06-04 codex 二審更正**：主動 ETF 持股可為海外股（00983A 實測 39 檔美股），早期規格寫「去 `.TW` 後綴」會丟失市場資訊，已改為保留完整 ticker。
+- **資料管理頁不得動主動 ETF 資料**：個股單檔刪除 / 更新 / 重建一律不碰 `tw_active_etf/`（比照股東會全市場資料的邊界決定）。
+
+### 16 API 合約
+
+新增 `api/routers/active_etf.py`，掛在 `/api/active-etf`：
+
+| 端點 | 回傳 |
+|:---|:---|
+| `GET /api/active-etf/list` | `{ "etfs": [{ "code": "00981A", "name": "主動統一台股增長" }, ...] }`（cache-first 唯讀；見下方落地說明） |
+| `GET /api/active-etf/{code}/holdings` | 取該檔（on-view lazy fetch + dedup + diff），見下方 shape |
+
+`GET /api/active-etf/{code}/holdings` 回傳：
+
+```json
+{
+  "etf_code": "00981A",
+  "etf_name": "主動統一台股增長",
+  "latest_date": "2026-06-04",
+  "previous_date": "2026-06-03",
+  "has_previous": true,
+  "holdings": [
+    { "rank": 1, "holding_code": "2330.TW", "holding_name": "台積電", "shares": 1234000, "weight_pct": 23.5, "delta_shares": 12000 },
+    { "rank": 2, "holding_code": "TSLA.US", "holding_name": "Tesla",  "shares": 16131,   "weight_pct": 9.08,  "delta_shares": -500 }
+  ],
+  "changes": {
+    "buys":    [{ "holding_code": "2330.TW", "holding_name": "台積電", "delta_shares": 12000 }],
+    "sells":   [{ "holding_code": "TSLA.US", "holding_name": "Tesla",  "delta_shares": -500 }],
+    "entries": [{ "holding_code": "3008.TW", "holding_name": "大立光", "delta_shares": 3000 }],
+    "exits":   [{ "holding_code": "2317.TW", "holding_name": "鴻海",   "delta_shares": -8000 }]
+  }
+}
+```
+
+- `has_previous=false`（首次擷取）時：`previous_date=null`、`changes` 各陣列為空、`holdings[].delta_shares=null`。
+- **ETF code 正規化與防護（2026-06-04 codex 審核補強）**：API / service / storage 只接受 `^\d{5}A$`，一律轉大寫；不符回 `422`。storage 寫檔前 path 必須 `resolve()` 後確認仍位於 `data/raw/tw_active_etf/` 之下（沿用 Phase 9-A symbol 路徑穿越防護），拒絕任何穿越。
+- **write lock 責任層（2026-06-04 codex 審核更正）**：`{code}/holdings` 的 **append 落地** write lock 由 **API router 層**取得 / 釋放，沿用 `api/routers/data.py` 模式（`if manager.is_write_locked(): 409` → `await manager.acquire_write_lock()` → `finally: release_write_lock()`）。`ActiveEtfService` 維持 **sync**、**不得 import `api.job_manager`**；`acquire_write_lock()` 為 async，不可在 sync service 內呼叫。
+- **`/list` 落地不走 write lock（2026-06-04 codex 二審補強）**：名單為 cache-first 唯讀；當 cache miss / stale 需刷新 `active_etf_list.parquet` + `.meta.json` 時，採 **atomic replace（write unique tmp + `os.replace`）整檔覆寫**（非 append，無多寫者競爭 race）。tmp 檔名需包含 pid / uuid / timestamp 等唯一片段，避免兩個 `/list` 同時刷新共用同一 `.tmp` 互踩；沿用既有 `_write_env` 的 atomic 寫法精神，因此不需 router write lock。`{code}/holdings` 才是 append、需 lock。
+
+### 16 UI 合約
+
+新增第 6 個側邊欄入口（`web/src/components/sidebar.tsx`）：`label="主動ETF"` / `shortLabel="ETF"` / `href="/active-etf"`，新頁 `web/src/app/active-etf/`。桌機 6 入口、手機底部 Tab 6 顆。
+
+頁面組成：
+
+1. **ETF 選擇器**：列出 `GET /list` 全部主動 ETF（代碼 + 名稱），可搜尋；選定後一次只呈現該檔。預設可記憶上次選擇（localStorage）。
+2. **①持股變動**（區塊一）：
+   - **UI 主標題為「持股變動」**（不用「前一日買賣」，避免快照非相鄰交易日時誤導）；**副標為日期區間**，標示實際比較的兩個快照「`{previous_date}` → `{latest_date}`」。
+   - **全部**有變動的個股（不限 top10），分「買進」「賣出」兩區，各依 `|delta_shares|` 由大到小；新進標「新進」、剔除標「剔除」徽章。
+   - `delta_shares` 顯示單位為**股**（不除以 1000）。
+   - `has_previous=false`：顯示「首次擷取，尚無前次資料可比較」。
+3. **②目前總體持股**（區塊二）：
+   - **全部**持股表，欄位：`排名 / 個股名稱 / 股數(股) / 權重% / Δ股數(較前次)`，依權重由大到小。
+   - `delta_shares` 與區塊一同源；`has_previous=false` 時 Δ欄留白。
+4. **響應式**：沿用全站 layout 慣例支援桌機 + 手機。
+
+### 16 邊界與限制
+
+| 項目 | 邊界決定 |
+|:---|:---|
+| 金額 / 額度 | v1 不算；只給 Δ股數（股）。未來若要金額，需引入成分股收盤價（股數變化 × 收盤價，標近似值） |
+| 單位 | 一律「股」，不換算「張」 |
+| 資料源 | MoneyDJ（非官方）；fetcher 設計為可抽換 seam，未來可換投信官方 headless |
+| 歷史回補 | 不支援；forward-only，自開始擷取後累積 |
+| 名單 | 僅股票型主動 ETF（`^\d{5}A$`，指 ETF 自身代碼）；債券型（`D`）後續 |
+| 海外持股 | 股票型主動 ETF 可持有海外股（如 00983A 持 `TSLA.US` 等）；`holding_code` 保留完整 ticker（`2330.TW` / `TSLA.US`），UI 不為海外股做特殊處理（仍只顯示名稱 + 股數 + 權重 + Δ） |
+| 成分股代碼 | `Basic0007B` 個股名稱內嵌完整 ticker `(2330.TW)` / `(TSLA.US)`，parser 從括號取 `holding_code`（不去後綴）；缺括號時 fallback 名稱作 diff 鍵 |
+| ETF 名單來源 | 重用 FinMind `TaiwanStockInfo` cache（cache-first、失敗回空）；「持股不接 FinMind」僅指持股，名單可用 cache |
+| data_meta | 主動 ETF 資料不進 `data_meta`，不影響資料管理頁狀態 |
+| 持股股價 / FinMind | 持股資料完全不依賴股價 / FinMind（名單除外） |
+
+### 16 各階段驗收標準
+
+**16-A（資料層）**
+1. MoneyDJ `Basic0007B` parser 能從 fixture HTML 正確解析「資料日期」與**全量**持股明細（名稱 / 從括號取**完整 ticker**（含 `.TW` / `.US` 後綴）/ 持有股數（股，不除 1000）/ 投資比例%）；fixture 取 00981A 全 51 檔，row 數須等於實際檔數（不可只剩前 10）。**另需一條海外持股 fixture（如 00983A，含 `TSLA.US`）驗證 `holding_code` 保留 `.US` 後綴**。
+2. 名單以 cache-first helper（`stock_info_tw.parquet` 7 天 TTL）+ `^\d{5}A$` filter 回代碼 + 名稱；**無 token / 重抓失敗時回空陣列、不 raise**。
+3. 快照儲存：同一 `snapshot_date` 不重複 append（dedup）；不同日期正確堆疊。
+4. diff 計算：買進 / 賣出 / 新進 / 剔除四種情況皆正確；首次（單一快照）回 `has_previous=false`、holdings delta 為 null。
+
+**16-B（API + 前端頁）**
+1. `GET /list` 回名單；`GET /{code}/holdings` 回正確 shape（含 `latest_date` / `previous_date` / `has_previous` / `holdings` / `changes`）。
+2. on-view dedup：同一資料日期重複開頁不重存（可驗 parquet 列數不增）。
+3. ETF code 正規化：非 `^\d{5}A$` 的 code 回 `422`；storage path 穿越嘗試被拒（仍限 `data/raw/tw_active_etf/` 下）。
+4. write lock 由 router 持有（sync service 不 import `api.job_manager`）。
+5. 前端：選擇器切換 ETF、①全量買賣分區、②全量持股含 Δ、雙日期標示、首次擷取文案。
+6. `npx tsc --noEmit` 0 errors；vitest 元件測試綠。
+
+**16-C（整合驗證 + 文件）**
+1. 全套 pytest 不低於 Phase 15 baseline。
+2. 手動驗收清單（見測試指南 16）通過。
+3. 規格書 / 設計方針 / 測試指南 / PROJECT_BRIEF 同步。
+
+### 16 完成定義
+
+1. 側邊欄新增「主動ETF」入口，新頁可運作。
+2. 可切換任一股票型主動 ETF，畫面一次呈現一檔。
+3. 顯示「持股變動」（全量、分買賣、含新進/剔除、Δ股數以股為單位）與「目前總體持股」（全量、含 Δ股數）。
+4. on-view 擷取 + 依資料日期 dedup；明確標示比較的兩個快照日期。
+5. 首次擷取有明確「尚無前次可比較」文案。
+6. 持股資料不依賴股價 / FinMind；fetcher 為可抽換 seam。
+7. 自動測試覆蓋 parser、dedup、diff 四情況、API shape、前端兩塊渲染。
+
+### 16 共用注意
+
+- 資料源 fetcher 與上層 service 必須解耦（介面化），MoneyDJ 為 v1 唯一實作；換源不得波及 service / API / UI。
+- 主動 ETF 資料**不進 `data_meta`、資料管理頁不碰**（比照股東會邊界）。
+- **PROJECT_BRIEF.md 由 verifier 在各 sub 驗證後補進度與行範圍索引**；implementer 不改 PROJECT_BRIEF。
+- **「驗證後已知問題.md」implementer 不直接動**；由 verifier 收錄（MoneyDJ 非官方 / forward-only / 缺代碼 fallback 等已知風險）。
+- Version bump 一律三處同步：`pyproject.toml` / `web/package.json` / `api/main.py`（Phase 16 建議 minor bump）。
+
+---
+
 ## 附錄 A：免責聲明全文
 
 本工具（shellpig 量化交易研究系統）為個人研究輔助工具，使用前請確認以下事項：
