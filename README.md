@@ -26,12 +26,13 @@ This is a personal research tool. It **does not constitute investment advice** a
 | Area | Capabilities |
 |---|---|
 | Data pipeline | TW daily K / 1m intraday, institutional chips, margin trading, PER, monthly revenue, dividends, EPS, shareholder meetings; US (US-1) daily K / 1m |
+| Active ETF tracking | Active Taiwan ETF list, MoneyDJ daily holdings snapshots, holding-level weight / share count, and buy / sell / entry / exit diffs |
 | Technical analysis | pandas-ta indicator wrappers, candlestick patterns, chip analysis, technical summaries |
 | Backtest engines | Vectorized (`generate_signals`) and event-driven (`on_bar`) engines running in parallel, with commission / slippage / tax models |
 | Strategy library | MA Cross, RSI, KD, MACD, Bollinger Band, Bias, Donchian Breakout, DCA |
 | Advanced research | Batch backtesting, parameter sweeps, walk-forward analysis |
 | AI analysis | Provider-neutral (Anthropic / OpenAI / Gemini / DeepSeek); supports dashboard analysis and AI Q&A; disabled when not configured |
-| Frontend | Next.js dashboard with candlestick charts, quote bar, backtest results, streaming AI Q&A, and a settings page |
+| Frontend | Next.js dashboard with candlestick charts, quote bar, backtest results, active ETF holdings, streaming AI Q&A, and a settings page |
 
 ---
 
@@ -93,7 +94,7 @@ src/
 ├── analysis/     technical_summary, pattern, chip_analysis
 ├── indicators/   pandas-ta wrappers + alias mapping
 ├── ai/           advisor (LLM provider tool use)
-└── services/     dashboard / backtest / data / config service layer
+└── services/     dashboard / backtest / data / config / active ETF service layer
 
 api/              FastAPI backend (routers/, job_manager, deps)
 web/              Next.js frontend (App Router)
@@ -124,6 +125,7 @@ The latest phase progress is maintained only in `PROJECT_BRIEF.md` to avoid cont
 ## Data Sources & Limitations
 
 - **Taiwan stocks**: FinMind free tier as primary, yfinance as fallback; shareholder meetings via TWSE / TPEx OpenAPI; dividend policy uses the Goodinfo page as an ex-dividend fallback reference.
+- **Active Taiwan ETFs**: MoneyDJ holdings pages for daily portfolio snapshots and adjacent-snapshot holding diffs.
 - **US stocks**: yfinance (daily K + 1m intraday).
 - **Timezone rule**: all datetimes are timezone-aware; TW uses `Asia/Taipei`, US uses `America/New_York`.
 - **Update strategy**: download history once → land in Parquet; daily incremental updates handled by `data/maintenance.py`.

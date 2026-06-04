@@ -26,12 +26,13 @@
 | 范畴 | 功能 |
 |---|---|
 | 数据管线 | 台股日 K / 1m intraday、筹码、融资券、PER、月营收、股利、EPS、股东会；美股 US-1 日 K / 1m |
+| 主动式 ETF 追踪 | 主动式 ETF 名单、MoneyDJ 每日持股快照、持股权重 / 股数，以及买进 / 卖出 / 新进 / 剔除差异 |
 | 技术分析 | pandas-ta 指标封装、K 线形态、筹码分析、技术摘要 |
 | 回测引擎 | 向量化（`generate_signals`）与事件驱动（`on_bar`）双引擎并行，含手续费 / 滑价 / 税费模型 |
 | 策略库 | MA Cross、RSI、KD、MACD、Bollinger Band、Bias、Donchian Breakout、DCA |
 | 进阶研究 | 批量回测（batch）、参数扫描（sweep）、样本外验证（walk-forward） |
 | AI 分析 | Provider-neutral（Anthropic / OpenAI / Gemini / DeepSeek），支持 Dashboard 分析与 AI 问答；不设定则停用 |
-| 前端 | Next.js dashboard，含 K 线、报价列、回测结果、流式 AI 问答、设定页 |
+| 前端 | Next.js dashboard，含 K 线、报价列、回测结果、主动式 ETF 持股、流式 AI 问答、设定页 |
 
 ---
 
@@ -93,7 +94,7 @@ src/
 ├── analysis/     technical_summary、pattern、chip_analysis
 ├── indicators/   pandas-ta 封装 + 别名映射
 ├── ai/           advisor（LLM Provider Tool Use）
-└── services/     dashboard / backtest / data / config 服务层
+└── services/     dashboard / backtest / data / config / active ETF 服务层
 
 api/              FastAPI 后端（routers/、job_manager、deps）
 web/              Next.js 前端（App Router）
@@ -124,6 +125,7 @@ tools/node/       (gitignore) install.bat 下载的 portable Node.js
 ## 数据来源与限制
 
 - **台股**：FinMind 免费层为主、yfinance 备援；股东会走 TWSE / TPEx OpenAPI；股利政策以 Goodinfo 页作除息 fallback 参考。
+- **台股主动式 ETF**：MoneyDJ 持股页提供每日持股快照，并用相邻快照计算持股增减差异。
 - **美股**：yfinance（日 K + 1m intraday）。
 - **时区铁律**：所有 datetime 皆 timezone-aware；台股 `Asia/Taipei`、美股 `America/New_York`。
 - **更新策略**：一次性下载历史 → Parquet 落地；日常增量更新由 `data/maintenance.py` 处理。
