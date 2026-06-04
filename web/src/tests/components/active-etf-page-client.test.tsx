@@ -265,4 +265,33 @@ describe("ActiveEtfPageClient", () => {
     );
     expect(screen.getByText("比較區間：首次擷取快照")).toBeInTheDocument();
   });
+
+  it("triggers background sweep on mount when selected code is resolved", () => {
+    vi.mocked(hooks.useActiveEtfList).mockReturnValue({
+      etfs: [{ code: "00981A", name: "主動統一台股增長" }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    vi.mocked(hooks.useActiveEtfHoldings).mockReturnValue({
+      holdings: null,
+      isLoading: false,
+      isError: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const fetchSpy = vi.spyOn(global, "fetch").mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ status: "started" }), { status: 202 }))
+    );
+
+    render(<ActiveEtfPageClient />);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("/api/active-etf/sweep?skip_code=00981A"),
+      expect.objectContaining({ method: "POST" })
+    );
+  });
 });

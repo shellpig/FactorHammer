@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
-from api.deps import get_manager
-from api.job_manager import JobManager
 from src.core.exceptions import FetcherError
 from src.services.active_etf_service import ActiveEtfService
 
 router = APIRouter(prefix="/api/active-etf", tags=["active_etf"])
+
+_sweep_running = False
 
 
 @router.get("/list")
@@ -29,11 +30,10 @@ def get_active_etf_list() -> dict[str, Any]:
 @router.get("/{code}/holdings")
 async def get_active_etf_holdings(
     code: str,
-    manager: JobManager = Depends(get_manager),
 ) -> dict[str, Any]:
     """Get holdings and difference details for a specific active ETF.
 
-    Guarded by write lock.
+    Guarded by per-ETF Lock inside service layer.
     """
     normalized_code = code.strip().upper()
     if not re.match(r"^\d{5}A$", normalized_code):
@@ -43,29 +43,6 @@ async def get_active_etf_holdings(
                 "error": {
                     "code": "INVALID_CODE",
                     "message": "無效的 ETF 代碼格式，必須為 5 位數字加 A",
-                }
-            },
-        )
-
-    if manager.is_write_locked():
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": {
-                    "code": "WRITE_LOCK_BUSY",
-                    "message": "目前有其他資料操作正在進行，請稍後再試",
-                }
-            },
-        )
-
-    acquired = await manager.acquire_write_lock()
-    if not acquired:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": {
-                    "code": "WRITE_LOCK_BUSY",
-                    "message": "目前有其他資料操作正在進行，請稍後再試",
                 }
             },
         )
@@ -94,5 +71,36 @@ async def get_active_etf_holdings(
                 }
             },
         ) from exc
-    finally:
-        manager.release_write_lock()
+
+
+@router.post("/sweep", status_code=202)
+async def trigger_sweep(skip_code: str | None = None) -> dict[str, Any]:
+    """Trigger background active ETF holdings sweep.
+
+    Immediately returns 202 to the client.
+    """
+    global _sweep_running
+
+    if _sweep_running:
+        return {"status": "already_running"}
+
+    normalized_skip = None
+    if skip_code:
+        skip_code_clean = skip_code.strip().upper()
+        if re.match(r"^\d{5}A$", skip_code_clean):
+            normalized_skip = skip_code_clean
+
+    _sweep_running = True
+
+    def run_sweep():
+        global _sweep_running
+        try:
+            service = ActiveEtfService()
+            service.sweep_all(skip_code=normalized_skip)
+        finally:
+            _sweep_running = False
+
+    # Run in background thread using asyncio.to_thread to avoid blocking event loop
+    asyncio.create_task(asyncio.to_thread(run_sweep))
+
+    return {"status": "started"}

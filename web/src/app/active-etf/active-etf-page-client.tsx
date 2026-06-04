@@ -26,6 +26,18 @@ export function ActiveEtfPageClient() {
     }
   }, [etfs]);
 
+  // Trigger background sweep once selectedCode is resolved
+  useEffect(() => {
+    if (selectedCode && /^\d{5}A$/.test(selectedCode)) {
+      const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost";
+      fetch(`${origin}/api/active-etf/sweep?skip_code=${selectedCode}`, {
+        method: "POST",
+      }).catch((err) => {
+        console.error("Failed to trigger background active ETF sweep:", err);
+      });
+    }
+  }, [selectedCode]);
+
   // Handle selected ETF change
   const handleSelectEtf = (code: string) => {
     setSelectedCode(code || null);

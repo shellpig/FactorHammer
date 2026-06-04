@@ -12,9 +12,17 @@ from src.core.exceptions import FetcherError
 from src.data.fetcher import MoneyDjActiveEtfSource
 from src.data.storage import ParquetStorage, StorageError
 
+import threading
+from collections import defaultdict
+
 # Process-level cache to avoid overloading MoneyDJ: {etf_code: last_fetch_timestamp}
 _HOLDINGS_CACHE: dict[str, float] = {}
 _CACHE_TTL_SECONDS = 60
+
+# Phase 16-D sweep cache and per-ETF locks
+_SWEEP_CACHE: dict[str, float] = {}
+_ETF_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)
+
 
 
 class ActiveEtfService:
@@ -92,18 +100,22 @@ class ActiveEtfService:
         last_fetch = _HOLDINGS_CACHE.get(normalized_code, 0.0)
 
         if now - last_fetch >= _CACHE_TTL_SECONDS:
-            # TTL missed or expired, fetch from MoneyDJ and store
-            source = MoneyDjActiveEtfSource()
-            try:
-                snapshot_date, df = source.fetch_holdings(normalized_code)
-                self.storage.save_active_etf_holdings(normalized_code, snapshot_date, df)
-                # Update TTL cache
-                _HOLDINGS_CACHE[normalized_code] = now
-            except FetcherError:
-                # Propagate FetcherError to let the API router return 4xx/5xx/etc.
-                raise
-            except Exception as exc:  # noqa: BLE001
-                raise FetcherError(f"Unexpected fetch failure for active ETF {normalized_code}: {exc}") from exc
+            # TTL missed or expired, fetch from MoneyDJ and store under per-ETF lock
+            with _ETF_LOCKS[normalized_code]:
+                # Double check TTL under lock
+                last_fetch = _HOLDINGS_CACHE.get(normalized_code, 0.0)
+                if now - last_fetch >= _CACHE_TTL_SECONDS:
+                    source = MoneyDjActiveEtfSource()
+                    try:
+                        snapshot_date, df = source.fetch_holdings(normalized_code)
+                        self.storage.save_active_etf_holdings(normalized_code, snapshot_date, df)
+                        # Update TTL cache
+                        _HOLDINGS_CACHE[normalized_code] = time.time()
+                    except FetcherError:
+                        # Propagate FetcherError to let the API router return 4xx/5xx/etc.
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        raise FetcherError(f"Unexpected fetch failure for active ETF {normalized_code}: {exc}") from exc
 
         # 3. Read history dates and calculate differences
         dates = self.storage.load_active_etf_holdings_dates(normalized_code)
@@ -279,3 +291,95 @@ class ActiveEtfService:
                 "exits": exits,
             },
         }
+
+    def refresh_holdings_snapshot(self, etf_code: str, latest_close_date: datetime.date | None = None) -> None:
+        """Gated holdings refresh (MoneyDJ fetch & save) for a single ETF.
+
+        Only fetches if latest close date is newer than the latest local snapshot date.
+        """
+        normalized_code = str(etf_code).strip().upper()
+        now = time.time()
+
+        # Check process-level fetch cache
+        if now - _HOLDINGS_CACHE.get(normalized_code, 0.0) < _CACHE_TTL_SECONDS:
+            return
+
+        with _ETF_LOCKS[normalized_code]:
+            # Double check TTL under lock
+            if now - _HOLDINGS_CACHE.get(normalized_code, 0.0) < _CACHE_TTL_SECONDS:
+                return
+
+            source = MoneyDjActiveEtfSource()
+            # 1. Fetch latest close date from primary/fallback market source (no DB storage)
+            if latest_close_date is None:
+                latest_close_date = source.fetch_latest_close_date(normalized_code)
+
+            if latest_close_date is None:
+                return  # Skip if failed to query close date
+
+            # 2. Load latest local snapshot date
+            dates = self.storage.load_active_etf_holdings_dates(normalized_code)
+            latest_snapshot_date = dates[-1] if dates else None
+
+            # 3. Gating check
+            if latest_snapshot_date is None or latest_close_date > latest_snapshot_date:
+                try:
+                    snapshot_date, df = source.fetch_holdings(normalized_code)
+                    self.storage.save_active_etf_holdings(normalized_code, snapshot_date, df)
+                    _HOLDINGS_CACHE[normalized_code] = time.time()
+                except Exception:  # noqa: BLE001
+                    raise
+
+    def sweep_all(self, skip_code: str | None = None) -> None:
+        """Sweep all active ETFs to fetch missing daily snapshots.
+
+        Iterates through the active ETF list, gating each ETF by checking if
+        latest_close_date > latest_snapshot_date. Skips skip_code and uses
+        _SWEEP_CACHE for a 60s per-ETF cooling period.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        normalized_skip = str(skip_code).strip().upper() if skip_code else None
+        etfs = self.get_list()
+
+        for idx, item in enumerate(etfs):
+            code = item["code"]
+            normalized_code = code.strip().upper()
+
+            if normalized_skip and normalized_code == normalized_skip:
+                continue
+
+            # Check _SWEEP_CACHE (60s TTL)
+            now = time.time()
+            if now - _SWEEP_CACHE.get(normalized_code, 0.0) < 60.0:
+                continue
+
+            source = MoneyDjActiveEtfSource()
+            # Query latest close date first
+            try:
+                latest_close_date = source.fetch_latest_close_date(normalized_code)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Sweep failed to fetch close date for {normalized_code}: {exc}")
+                latest_close_date = None
+
+            if latest_close_date is None:
+                # Do NOT write _SWEEP_CACHE on failure so we can retry next time
+                continue
+
+            # Write sweep cache on successful query
+            _SWEEP_CACHE[normalized_code] = time.time()
+
+            # Compare and refresh
+            dates = self.storage.load_active_etf_holdings_dates(normalized_code)
+            latest_snapshot = dates[-1] if dates else None
+
+            if latest_snapshot is None or latest_close_date > latest_snapshot:
+                try:
+                    self.refresh_holdings_snapshot(normalized_code, latest_close_date=latest_close_date)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(f"Sweep failed to refresh holdings for {normalized_code}: {exc}")
+
+            # Politeness delay
+            if idx < len(etfs) - 1:
+                time.sleep(1.0)

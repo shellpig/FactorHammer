@@ -1327,6 +1327,15 @@ class ActiveEtfSource(ABC):
                 holdings_df has columns: ['holding_code', 'holding_name', 'shares', 'weight_pct']
         """
 
+    @abstractmethod
+    def fetch_latest_close_date(self, etf_code: str) -> date | None:
+        """Fetch the latest close date for a given ETF from the market.
+
+        Returns:
+            date | None: Latest trading close date, or None if failed.
+        """
+
+
 
 class _RelaxedStrictHTTPAdapter(HTTPAdapter):
     """Keeps full TLS chain verification but disables OpenSSL 3.x strict mode.
@@ -1407,6 +1416,49 @@ class MoneyDjActiveEtfSource(ActiveEtfSource):
             df["etf_name"] = df["etf_name"].astype(str).str.strip()
             df = df.drop_duplicates(subset=["etf_code"]).reset_index(drop=True)
         return df
+
+    def fetch_latest_close_date(self, etf_code: str) -> date | None:
+        """Fetch the latest close date for a TW active ETF from primary source (FinMind) or fallback (yfinance)."""
+        import datetime
+        import re
+
+        normalized_code = str(etf_code).strip().upper()
+        if not re.match(r"^\d{5}A$", normalized_code):
+            return None
+
+        # 1. 取得近幾天的區間（例如過去 10 天，足夠拿到最後一筆交易日）
+        end_date = datetime.date.today()
+        start_date = end_date - datetime.timedelta(days=10)
+
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
+
+        # 2. 嘗試用 FinMindFetcher 抓取日線
+        try:
+            fetcher = FinMindFetcher()
+            # FinMind 用純碼 '00981A'
+            df = fetcher.fetch_daily(normalized_code, start_str, end_str)
+            if not df.empty and "date" in df.columns:
+                dates = pd.to_datetime(df["date"])
+                if not dates.empty:
+                    return dates.max().date()
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 3. 嘗試用 YFinanceFetcher 抓取日線
+        try:
+            # yfinance 用 '00981A.TW'
+            yf_symbol = f"{normalized_code}.TW"
+            fetcher = YFinanceFetcher(market="tw")
+            df = fetcher.fetch_daily(yf_symbol, start_str, end_str)
+            if not df.empty and "date" in df.columns:
+                dates = pd.to_datetime(df["date"])
+                if not dates.empty:
+                    return dates.max().date()
+        except Exception:  # noqa: BLE001
+            pass
+
+        return None
 
     def fetch_holdings(self, etf_code: str) -> tuple[date, pd.DataFrame]:
         """Fetch active ETF holdings from MoneyDJ URL."""

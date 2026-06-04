@@ -363,3 +363,139 @@ def test_service_get_holdings_with_diff_calculation(tmp_path, monkeypatch):
     assert len(changes["exits"]) == 1
     assert changes["exits"][0]["holding_code"] == "9999.TW"
     assert changes["exits"][0]["delta_shares"] == -200
+
+
+def test_fetch_latest_close_date(monkeypatch):
+    """Verify that MoneyDjActiveEtfSource.fetch_latest_close_date queries primary/fallback sources correctly."""
+    source = MoneyDjActiveEtfSource()
+
+    # 1. Mock FinMindFetcher daily response
+    from src.data.fetcher import FinMindFetcher, YFinanceFetcher
+
+    # Mock FinMind success
+    mock_fm_df = pd.DataFrame([{"date": "2026-06-04", "close": 100.0}])
+    monkeypatch.setattr(FinMindFetcher, "fetch_daily", lambda self, sym, start, end: mock_fm_df)
+    assert source.fetch_latest_close_date("00981A") == datetime.date(2026, 6, 4)
+
+    # Mock FinMind failure, YFinance success
+    def mock_fm_fail(self, sym, start, end):
+        raise Exception("FinMind failed")
+    monkeypatch.setattr(FinMindFetcher, "fetch_daily", mock_fm_fail)
+
+    mock_yf_df = pd.DataFrame([{"date": "2026-06-03", "close": 100.0}])
+    monkeypatch.setattr(YFinanceFetcher, "fetch_daily", lambda self, sym, start, end: mock_yf_df)
+    assert source.fetch_latest_close_date("00981A") == datetime.date(2026, 6, 3)
+
+    # Both fail -> None
+    monkeypatch.setattr(YFinanceFetcher, "fetch_daily", lambda self, sym, start, end: pd.DataFrame())
+    assert source.fetch_latest_close_date("00981A") is None
+
+
+def test_service_refresh_holdings_snapshot_gating(tmp_path, monkeypatch):
+    """Verify gating logic in refresh_holdings_snapshot."""
+    storage = ParquetStorage(data_dir=tmp_path)
+    service = ActiveEtfService(storage=storage)
+    etf = "00981A"
+
+    # Reset caches
+    from src.services.active_etf_service import _HOLDINGS_CACHE
+    if etf in _HOLDINGS_CACHE:
+        del _HOLDINGS_CACHE[etf]
+
+    # Mock close date to 2026-06-04
+    monkeypatch.setattr(
+        MoneyDjActiveEtfSource,
+        "fetch_latest_close_date",
+        lambda self, code: datetime.date(2026, 6, 4)
+    )
+
+    # Mock MoneyDJ fetch_holdings to return 2026-06-04
+    mock_df = pd.DataFrame([{"holding_code": "2330.TW", "holding_name": "TSMC", "shares": 100, "weight_pct": 10.0}])
+    fetch_called = 0
+    def mock_fetch_holdings(self, code):
+        nonlocal fetch_called
+        fetch_called += 1
+        return datetime.date(2026, 6, 4), mock_df
+    monkeypatch.setattr(MoneyDjActiveEtfSource, "fetch_holdings", mock_fetch_holdings)
+
+    # 1. Local holdings empty -> should fetch
+    service.refresh_holdings_snapshot(etf)
+    assert fetch_called == 1
+    assert len(storage.load_active_etf_holdings(etf)) == 1
+
+    # 2. Local holdings snapshot date is 2026-06-04, latest close is 2026-06-04 -> should NOT fetch (gate)
+    if etf in _HOLDINGS_CACHE:
+        del _HOLDINGS_CACHE[etf]  # clear TTL cache to isolate gating
+    service.refresh_holdings_snapshot(etf)
+    assert fetch_called == 1  # still 1, not called
+
+    # 3. Local holdings date is 2026-06-04, latest close is 2026-06-05 -> should fetch
+    monkeypatch.setattr(
+        MoneyDjActiveEtfSource,
+        "fetch_latest_close_date",
+        lambda self, code: datetime.date(2026, 6, 5)
+    )
+    def mock_fetch_holdings_v2(self, code):
+        nonlocal fetch_called
+        fetch_called += 1
+        return datetime.date(2026, 6, 5), mock_df
+    monkeypatch.setattr(MoneyDjActiveEtfSource, "fetch_holdings", mock_fetch_holdings_v2)
+
+    service.refresh_holdings_snapshot(etf)
+    assert fetch_called == 2
+    assert len(storage.load_active_etf_holdings(etf)) == 2
+
+
+def test_service_sweep_all_logic(tmp_path, monkeypatch):
+    """Verify sweep_all skipping, cache behavior, and skip_code logic."""
+    storage = ParquetStorage(data_dir=tmp_path)
+    service = ActiveEtfService(storage=storage)
+
+    # Setup mock list containing two ETFs
+    mock_etfs = [
+        {"code": "00981A", "name": "ETF1"},
+        {"code": "00982A", "name": "ETF2"}
+    ]
+    monkeypatch.setattr(ActiveEtfService, "get_list", lambda self: mock_etfs)
+
+    from src.services.active_etf_service import _HOLDINGS_CACHE, _SWEEP_CACHE
+    _HOLDINGS_CACHE.clear()
+    _SWEEP_CACHE.clear()
+
+    # Mock latest close date queries
+    close_dates = {
+        "00981A": datetime.date(2026, 6, 4),
+        "00982A": datetime.date(2026, 6, 4)
+    }
+    monkeypatch.setattr(
+        MoneyDjActiveEtfSource,
+        "fetch_latest_close_date",
+        lambda self, code: close_dates.get(code)
+    )
+
+    # Mock refresh_holdings_snapshot
+    refreshed_codes = []
+    def mock_refresh(self, code, latest_close_date=None):
+        refreshed_codes.append(code)
+    monkeypatch.setattr(ActiveEtfService, "refresh_holdings_snapshot", mock_refresh)
+
+    # 1. Sweep skipping skip_code ("00981A") -> only 00982A should be checked
+    service.sweep_all(skip_code="00981A")
+    assert refreshed_codes == ["00982A"]
+    assert "00982A" in _SWEEP_CACHE
+    assert "00981A" not in _SWEEP_CACHE  # skip_code not queried
+
+    # 2. Sweep again -> 00982A hit _SWEEP_CACHE, so no refresh called
+    refreshed_codes.clear()
+    service.sweep_all()
+    assert refreshed_codes == ["00981A"]  # only 00981A refreshed since 00982A is cached
+    assert "00981A" in _SWEEP_CACHE
+
+    # 3. Simulate close date fetch failure for 00981A -> should skip and NOT write _SWEEP_CACHE
+    _SWEEP_CACHE.clear()
+    refreshed_codes.clear()
+    close_dates["00981A"] = None
+
+    service.sweep_all()
+    assert refreshed_codes == ["00982A"]
+    assert "00981A" not in _SWEEP_CACHE
