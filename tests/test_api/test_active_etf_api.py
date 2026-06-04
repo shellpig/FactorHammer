@@ -144,6 +144,7 @@ def test_get_active_etf_holdings_on_view_dedup(tmp_path, monkeypatch) -> None:
 
     mock_fetch = lambda self, code: (snapshot_date, df_data)
     monkeypatch.setattr("src.data.fetcher.MoneyDjActiveEtfSource.fetch_holdings", mock_fetch)
+    monkeypatch.setattr("src.data.fetcher.TwseEtfNavSource.fetch_premium", lambda self, code: None)
 
     mock_list = lambda self: pd.DataFrame([{"etf_code": etf, "etf_name": "主動統一台股增長"}])
     monkeypatch.setattr("src.data.fetcher.MoneyDjActiveEtfSource.fetch_list", mock_list)
@@ -166,6 +167,54 @@ def test_get_active_etf_holdings_on_view_dedup(tmp_path, monkeypatch) -> None:
 
     loaded2 = storage.load_active_etf_holdings(etf)
     assert len(loaded2) == 1
+
+
+def test_get_active_etf_holdings_premium_twse_failure_degrades(tmp_path, monkeypatch) -> None:
+    """When TWSE MIS fetch_premium raises, API must still return 200 with premium=null."""
+    _reset_manager()
+    monkeypatch.setattr("src.data.storage.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("src.core.config.get_data_dir", lambda: tmp_path)
+
+    from src.data.storage import ParquetStorage
+    from src.services.active_etf_service import _HOLDINGS_CACHE, _PREMIUM_CACHE
+    import pandas as pd
+    from datetime import date
+
+    etf = "00981A"
+    snapshot_date = date(2026, 6, 4)
+    df_data = pd.DataFrame([
+        {"holding_code": "2330.TW", "holding_name": "TSMC", "shares": 100, "weight_pct": 10.0}
+    ])
+
+    # Pre-populate storage with holdings
+    storage = ParquetStorage(data_dir=tmp_path)
+    storage.save_active_etf_holdings(etf, snapshot_date, df_data)
+
+    # Mock fetch_holdings to return existing data (for on-view TTL check)
+    mock_fetch = lambda self, code: (snapshot_date, df_data)
+    monkeypatch.setattr("src.data.fetcher.MoneyDjActiveEtfSource.fetch_holdings", mock_fetch)
+
+    mock_list = lambda self: pd.DataFrame([{"etf_code": etf, "etf_name": "主動統一台股增長"}])
+    monkeypatch.setattr("src.data.fetcher.MoneyDjActiveEtfSource.fetch_list", mock_list)
+
+    # Make TWSE premium fetch RAISE FetcherError
+    def mock_premium_raises(self, code):
+        raise FetcherError("TWSE MIS network timeout")
+    monkeypatch.setattr("src.data.fetcher.TwseEtfNavSource.fetch_premium", mock_premium_raises)
+
+    # Clear caches to force fresh fetch
+    if etf in _HOLDINGS_CACHE:
+        del _HOLDINGS_CACHE[etf]
+    _PREMIUM_CACHE.clear()
+
+    resp = client.get(f"/api/active-etf/{etf}/holdings")
+    assert resp.status_code == 200
+    body = resp.json()
+    # premium must be null (degraded), not an error
+    assert body["premium"] is None
+    # holdings should still be returned
+    assert len(body["holdings"]) == 1
+    assert body["holdings"][0]["holding_code"] == "2330.TW"
 
 
 def test_trigger_sweep_api(monkeypatch) -> None:

@@ -54,6 +54,17 @@ describe("ActiveEtfPageClient", () => {
     const mockHoldings = {
       etf_code: "00981A",
       etf_name: "主動統一台股增長",
+      premium: {
+        etf_code: "00981A",
+        etf_name: "主動統一台股增長",
+        market_price: 31.36,
+        estimated_nav: 31.25,
+        premium_discount_pct: 0.35,
+        previous_nav: 31.97,
+        data_date: "2026-06-04",
+        data_time: "16:59:55",
+        source: "twse_mis",
+      },
       latest_date: "2026-06-04",
       previous_date: "2026-06-03",
       has_previous: true,
@@ -93,6 +104,12 @@ describe("ActiveEtfPageClient", () => {
 
     // Content should show up
     expect(screen.getByTestId("active-etf-content")).toBeInTheDocument();
+    expect(screen.getByTestId("active-etf-title")).toHaveClass("text-lg");
+    expect(screen.getByTestId("active-etf-title")).toHaveTextContent("00981A 主動統一台股增長");
+    expect(screen.getByTestId("active-etf-premium-metrics")).toHaveTextContent("成交價 31.36");
+    expect(screen.getByTestId("active-etf-premium-metrics")).toHaveTextContent("預估淨值 31.25");
+    expect(screen.getByTestId("active-etf-premium-metrics")).toHaveTextContent("預估折溢價 0.35%");
+    expect(screen.getByTestId("active-etf-data-date")).toHaveTextContent("資料日期：2026-06-04");
     expect(screen.getByTestId("active-etf-panel-grid")).toHaveClass("xl:grid-cols-[minmax(320px,0.88fr)_minmax(560px,1.12fr)]");
     expect(screen.getByTestId("changes-panel-title")).toHaveTextContent("持股變動");
     expect(screen.getByTestId("changes-panel-subtitle")).toHaveTextContent("比較區間：2026-06-03 → 2026-06-04");
@@ -101,6 +118,98 @@ describe("ActiveEtfPageClient", () => {
     expect(screen.getAllByText("台積電").length).toBeGreaterThan(0);
     expect(screen.getAllByText("2330.TW").length).toBeGreaterThan(0);
     expect(screen.getByText("15.50%")).toBeInTheDocument();
+  });
+
+  it("shows -- for all premium metrics when premium is null", () => {
+    vi.mocked(hooks.useActiveEtfList).mockReturnValue({
+      etfs: [{ code: "00981A", name: "主動統一台股增長" }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const mockHoldings = {
+      etf_code: "00981A",
+      etf_name: "主動統一台股增長",
+      premium: null,
+      latest_date: "2026-06-04",
+      previous_date: null,
+      has_previous: false,
+      holdings: [],
+      changes: {
+        buys: [],
+        sells: [],
+        entries: [],
+        exits: [],
+      },
+    };
+
+    vi.mocked(hooks.useActiveEtfHoldings).mockReturnValue({
+      holdings: mockHoldings,
+      isLoading: false,
+      isError: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    render(<ActiveEtfPageClient />);
+
+    const premiumMetrics = screen.getByTestId("active-etf-premium-metrics");
+    expect(premiumMetrics).toHaveTextContent("成交價 --");
+    expect(premiumMetrics).toHaveTextContent("預估淨值 --");
+    expect(premiumMetrics).toHaveTextContent("預估折溢價 --");
+  });
+
+  it("shows -- for individual null premium fields while rendering valid ones", () => {
+    vi.mocked(hooks.useActiveEtfList).mockReturnValue({
+      etfs: [{ code: "00981A", name: "主動統一台股增長" }],
+      isLoading: false,
+      isError: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const mockHoldings = {
+      etf_code: "00981A",
+      etf_name: "主動統一台股增長",
+      premium: {
+        etf_code: "00981A",
+        etf_name: "主動統一台股增長",
+        market_price: null,
+        estimated_nav: 31.25,
+        premium_discount_pct: null,
+        previous_nav: null,
+        data_date: "2026-06-04",
+        data_time: "16:59:55",
+        source: "twse_mis",
+      },
+      latest_date: "2026-06-04",
+      previous_date: null,
+      has_previous: false,
+      holdings: [],
+      changes: {
+        buys: [],
+        sells: [],
+        entries: [],
+        exits: [],
+      },
+    };
+
+    vi.mocked(hooks.useActiveEtfHoldings).mockReturnValue({
+      holdings: mockHoldings,
+      isLoading: false,
+      isError: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    render(<ActiveEtfPageClient />);
+
+    const premiumMetrics = screen.getByTestId("active-etf-premium-metrics");
+    expect(premiumMetrics).toHaveTextContent("成交價 --");
+    expect(premiumMetrics).toHaveTextContent("預估淨值 31.25");
+    expect(premiumMetrics).toHaveTextContent("預估折溢價 --");
   });
 
   it("handles loading and error states for holdings", () => {

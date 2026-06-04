@@ -21,7 +21,7 @@
 - Phase 14 14-A 已完成並通過驗證：LAN / Tailscale 多裝置存取，採 proxy 同源方案（Next.js `rewrites()` 反代 `/api/*` 至 `127.0.0.1:8000`、uvicorn / `pnpm dev` 綁 `0.0.0.0`、api-client `BASE_URL` 預設空字串走相對路徑、CORS 不動、`NEXT_PUBLIC_API_URL` 保留 escape hatch）；順手把 Next.js dev indicator 搬到右上角避免遮 Mobile Tab Bar。
 - Phase 14 14-B 已完成並通過驗證：手機端 UI 收尾，資料管理頁 mobile 隱藏「區間」「K 棒數」次要欄 + 名稱欄 truncate，toolbar 改為 mobile-only 兩列避免按鈕文字直排，Mobile Tab Bar / StockSelector / AI ChatInput `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value；不補 `@theme`、不動 API。
 - Phase 15 15-A-1 / 15-A-2 / 15-B / 15-C / 15-D / 15-E 已完成並通過驗證：DeepSeek provider、per-provider secrets validate、AI chat SSE streaming、前端接 SSE + 停止串流 + 思考中 placeholder、tool use、本機資料自動補抓 / 更新、AI 問答含息總報酬試算工具 `calculate_total_return` 已上線。
-- Phase 16 16-A / 16-B / 16-C 已全部完成並通過驗證：16-A 資料層含 MoneyDJ `Basic0007B` 全量持股 parser、`stock_info_tw.parquet` cache-first 名單、forward-only 快照累積、`holding_code` 保留完整 ticker（含 `.TW` / `.US`）、snapshot dedup、相鄰快照 diff；16-B 上線 `/api/active-etf` FastAPI router + Next.js `/active-etf` 頁（持股表、買賣增減 diff 面板、ETF 選擇器）+ hooks / types + sidebar「主動ETF」入口，並修正 MoneyDJ 抓取兩處可靠性問題（TLS `VERIFY_X509_STRICT` 放寬保留完整憑證鏈驗證、UTF-8 無 charset header 解碼 fallback），使用者實機驗證通過；16-C 整合驗證與文件收尾已完成，全專案測試通過且規格文件同步更新完畢。
+- Phase 16 16-A / 16-B / 16-C / 16-D 已全部完成並通過驗證；16-E 已實作並通過自動化測試、待使用者手動驗證。16-A 資料層含 MoneyDJ `Basic0007B` 全量持股 parser、`stock_info_tw.parquet` cache-first 名單、forward-only 快照累積、`holding_code` 保留完整 ticker（含 `.TW` / `.US`）、snapshot dedup、相鄰快照 diff；16-B 上線 `/api/active-etf` FastAPI router + Next.js `/active-etf` 頁（持股表、買賣增減 diff 面板、ETF 選擇器）+ hooks / types + sidebar「主動ETF」入口，並修正 MoneyDJ 抓取兩處可靠性問題（TLS `VERIFY_X509_STRICT` 放寬保留完整憑證鏈驗證、UTF-8 無 charset header 解碼 fallback），使用者實機驗證通過；16-C 整合驗證與文件收尾已完成；16-D 每日全量 sweep 已完成，進主動ETF頁背景觸發 `POST /api/active-etf/sweep?skip_code=`，採 per-ETF lock、收盤日 gating、`_SWEEP_CACHE` / `_HOLDINGS_CACHE` 雙 cache，且已通過自動化與使用者手動驗證；16-E 在主動ETF標題列新增 TWSE MIS 的 `成交價`、`預估淨值`、`預估折溢價幅度` optional `premium` payload，資料源失敗降級為 `null` 不影響持股頁，ETF 標題字級放大。
 - Phase 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成。
 
 ## 技術棧
@@ -262,13 +262,14 @@ risk:
 | 16-A | ✅ 完成 | 主動式 ETF 持股追蹤資料層已完成並通過驗證：MoneyDJ `Basic0007B` 全量持股頁 parser（不是前 10 大 `basic0007`）、ETF 名單重用 `stock_info_tw.parquet` cache-first + `^\d{5}A$` filter、持股快照 forward-only append + `snapshot_date` dedup、`holding_code` 保留完整 ticker（如 `2330.TW` / `TSLA.US`）、diff 以相鄰快照股數變化計算買進 / 賣出 / 新進 / 剔除 |
 | 16-B | ✅ 完成 | 主動式 ETF API + 前端頁已完成並通過實機驗證：`/api/active-etf` FastAPI router（名單、單檔持股 + diff、on-view lazy fetch、holdings 60s TTL、`/list` unique tmp + atomic replace）+ Next.js `/active-etf` 新頁（ETF 選擇器 + ① 持股變動買賣增減 diff 面板 + ② 目前總體持股 table、雙日期標示、響應式）+ `use-active-etf` hook / `active-etf` types + sidebar「主動ETF」入口。MoneyDJ 抓取修正兩處可靠性問題：(1) TLS 掛 `_RelaxedStrictHTTPAdapter` 清掉 OpenSSL 3.x `VERIFY_X509_STRICT`（保留完整憑證鏈驗證，僅放寬 MoneyDJ CA 缺 Subject Key Identifier 的 strict 拒絕，scope 限 `www.moneydj.com`）；(2) UTF-8 回應無 charset header 時 `requests` 預設 ISO-8859-1 解碼導致中文亂碼 → parser 找不到表格，改在偵測到 latin-1 預設時用 `apparent_encoding` fallback。新增 3 條 fetcher regression（adapter scope、injected session 不動、charsetless UTF-8 解碼）；targeted pytest `test_active_etf.py + test_active_etf_api.py + test_fetcher.py` 59 passed |
 | 16-C | ✅ 完成 | 整合驗證 + 文件收束：手動驗收 16-B-M1 ~ M7 順利通過、全專案自動化測試（pytest / vitest）無 regression、規格書 / 設計方針 / 測試指南 / `PROJECT_BRIEF` 同步完成。 |
-| 16-D | ⏳ 待實作 | 每日全量 sweep：進主動ETF頁背景觸發 `POST /api/active-etf/sweep?skip_code=`，依「ETF 自身收盤日 > 持股最新快照日」per-ETF gating 自動補齊落後檔快照。設計拍板（2026-06-04 grill + codex 二審 5 findings）：M2 輕量背景 task、**active-etf 專用 per-ETF lock**（不碰 job_manager 全域鎖、on-view append 一併遷移）、收盤日來源 B（即時查價源、不落地日 K / 不進 data_meta）、`_SWEEP_CACHE` / `_HOLDINGS_CACHE` 雙 cache、精簡 `refresh_holdings_snapshot()`（只 fetch+dedup、不算 diff）、跳過當前選中檔、重疊 no-op。本質 best-effort。規格 / 設計方針 / 測試指南已收，**待實作** |
+| 16-D | ✅ 完成 | 每日全量 sweep 已完成並通過驗證：進主動ETF頁背景觸發 `POST /api/active-etf/sweep?skip_code=`，依「ETF 自身收盤日 > 持股最新快照日」per-ETF gating 自動補齊落後檔快照；active-etf 專用 per-ETF `threading.Lock` 取代 job_manager 全域鎖，on-view append 與 sweep 共用同檔 lock；收盤日來源 B 只即時查價源、不落地日 K / 不進 data_meta；`_SWEEP_CACHE` / `_HOLDINGS_CACHE` 雙 cache 分離；`refresh_holdings_snapshot()` 只 fetch + dedup save、不算 diff；跳過當前選中檔、重疊 sweep no-op。Gate：targeted pytest 23 passed、`test_fetcher.py` 32 passed / 8 deselected、全 pytest 753 passed / 12 deselected、`npx tsc --noEmit` 0 errors、vitest 65 files / 474 tests passed；使用者手動確認 16-D 驗證完成。 |
+| 16-E | ✅ 完成 | 主動ETF折溢價資訊列已完成並通過驗證：新增 TWSE MIS ETF 預估淨值資料源（`etf_nav.jsp` referer + `stock/data/all_etf.txt`，解析 `a1[*].msgArray[*]` 的成交價 / 預估淨值 / 預估折溢價幅度 / 資料日期時間）；`GET /api/active-etf/{code}/holdings` 補 optional `premium` object，TWSE 失敗或缺值降級 `premium=null` / `--`，不影響 holdings / diff；前端標題列順序為 `ETF 代碼+名稱` → `成交價` → `預估淨值` → `預估折溢價` → `資料日期`，且 ETF 標題字級大於「持股變動」。Code review 通過（規格合規 14/14、無 critical issue）；補齊 6 條測試缺口（前端 premium null / partial-null 降級、API 層 TWSE 失敗降級、fetcher ETF not found / `_to_optional_float` / `_format_yyyymmdd` 邊界）。Gate：targeted pytest 28 passed、`npx tsc --noEmit` 0 errors、Vitest 9 passed。 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–14-B + 15-A-1 + 15-A-2 + 15-B + 15-C + 15-D + 15-E 全部完成並通過驗證；Phase 16 16-A / 16-B / 16-C 已完成並通過驗證，16-D（每日全量 sweep）規格已收束、待實作。** 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成；AI 問答支援 SSE streaming、停止串流、tool use、tool chip、日線資料自動補抓 / 更新與含息總報酬試算。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–14-B + 15-A-1 + 15-A-2 + 15-B + 15-C + 15-D + 15-E 全部完成並通過驗證；Phase 16 16-A / 16-B / 16-C / 16-D / 16-E 全部完成並通過驗證。** 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成；AI 問答支援 SSE streaming、停止串流、tool use、tool chip、日線資料自動補抓 / 更新與含息總報酬試算。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
 2026-05-24 狀態（資料管理頁 P11 toast / 個股 rebuild 行為改版）：
 - **入口語意重整**：資料管理頁按鈕「更新」→「更新日K」；個股動作欄新增「重建」按鈕（彈單檔確認 Dialog，含「請留意：重建會消耗較大量額度」警語）；「+ 新增標的」改走 `data_rebuild`，新標的一次拿到日K + P11；工具列下方新增黃色說明列。
@@ -338,11 +339,11 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~6201 行）
+### 量化交易系統規格書_shellpig版.md（~6270 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-33 | 查版本變更，最新為 `V3.5`（新增 Phase 15-E AI 問答投資試算工具 `calculate_total_return`；含台股含息總報酬、raw daily + cash dividends、dividends 受控刷新、日期對齊與錯誤隔離規格） |
+| 修訂歷史 | 3-36 | 查版本變更，最新為 `V3.8`（新增 Phase 16-E 主動 ETF 折溢價資訊列；TWSE MIS `etf_nav.jsp` + `stock/data/all_etf.txt`、optional `premium` payload、成交價 / 預估淨值 / 預估折溢價幅度、失敗降級 `null`） |
 | 專案願景與目標 | 47-62 | 理解定位 |
 | 技術語言與套件選型 | 64-91 | 技術決策參考 |
 | 系統架構（四層架構圖） | 93-177 | 理解整體結構 |
@@ -365,7 +366,7 @@ risk:
 | **Phase 13 Dashboard 現有功能調整（13-A~13-B）** | **4596-4731** | **Dashboard 分析入口與日線定位整理、同代碼 Enter 強制重跑 payload、隱藏無效分K、壓力 / 支撐來源說明、成交量日K股數語意統一時必讀** |
 | **Phase 14 區網與遠端存取與手機 UI 收尾（14-A / 14-B）** | **4735-4901** | **14-A LAN / Tailscale 多裝置存取規格、proxy 同源 vs 環境變數 A/B 對照、`run_factorhammer.bat` host 改動、Next.js `rewrites()`、`api-client.ts` `BASE_URL` 預設值、CORS 不動的原因、安全模型、Tailscale 行為；14-B 手機端 UI 收尾規格、資料管理頁 mobile A4 隱藏次要欄、Mobile Tab Bar `bg-background` 改 arbitrary value 修 Tailwind v4 utility 失效、不補 `@theme` 的理由時必讀** |
 | **Phase 15 AI Provider 擴充與問答頁接 LLM（15-A-1 / 15-A-2 / 15-B / 15-C / 15-D / 15-E）** | **4903-5873** | **DeepSeek Provider 接入 + AI 設定區重寫、`/api/config/secrets/validate` 重構為 per-provider results map + 移除 Google API Key alias、AI 問答後端 streaming（純對話）、AI 問答前端接 SSE、Chat 啟用 tool use、AI 問答投資試算工具；OpenAIAdapter 抽 `base_url`、DeepSeekAdapter 對齊官方 endpoint（無 `/v1`）、`sse-starlette>=2.0` 依賴、FinMind 必填 + 其他 provider validate-if-present 安全模型、ChatRequest schema 嚴謹化、多輪 tool 迴圈 + tool_call delta accumulator + `toApiMessages()` UI-only entries 過濾規則、`calculate_total_return` schema / 日期對齊 / raw daily + cash dividends / dividends refresh fallback / output schema 時必讀** |
-| **Phase 16 主動式 ETF 持股追蹤** | **5876-6122** | **主動式 ETF 持股追蹤規格：MoneyDJ `Basic0007B` 全量持股頁、ETF 名單 `stock_info_tw.parquet` cache-first + `^\d{5}A$` filter、持股快照 forward-only append + `snapshot_date` dedup、`holding_code` 完整 ticker（`.TW` / `.US`）、持股變動 diff、`/api/active-etf` API、`/active-etf` UI、holdings 寫入鎖（16-B 全域 → **16-D 改 per-ETF lock**）、`/list` unique tmp + atomic replace；**16-D 每日全量 sweep**（`POST /sweep?skip_code=`、收盤日 gating、雙 cache、`refresh_holdings_snapshot`、M2 背景 task）時必讀** |
+| **Phase 16 主動式 ETF 持股追蹤** | **5877-6191** | **主動式 ETF 持股追蹤規格：MoneyDJ `Basic0007B` 全量持股頁、ETF 名單 `stock_info_tw.parquet` cache-first + `^\d{5}A$` filter、持股快照 forward-only append + `snapshot_date` dedup、`holding_code` 完整 ticker（`.TW` / `.US`）、持股變動 diff、`/api/active-etf` API、`/active-etf` UI、holdings 寫入鎖（16-B 全域 → **16-D 改 per-ETF lock**）、`/list` unique tmp + atomic replace；**16-D 每日全量 sweep**（`POST /sweep?skip_code=`、收盤日 gating、雙 cache、`refresh_holdings_snapshot`、M2 背景 task）；**16-E 折溢價資訊列**（TWSE MIS `all_etf.txt`、`premium` payload、成交價 / 預估淨值 / 預估折溢價、標題列位置與字級）時必讀** |
 | 子階段總覽 | 2666-2680 | Phase 總覽（含 Phase 11） |
 | 費用估算 | 2685-2703 | API / yfinance / TWSE / TPEx / Next.js / US-2 資料源成本 |
 | 10-E：回測研究工作台 | 2942-3387 | 實作 10-E-1~4、Job lifecycle、SSE、取消、CSV、toast/skeleton/error boundary/command palette 整合時必讀 |
@@ -387,11 +388,11 @@ risk:
 | 15-C：AI 問答前端接 SSE | 5192-5250 | `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send` / `abort` / `messages` / `streaming`）、移除 `use-mock-chat.ts`、chat-page-client 加取消按鈕、markdown 部分閉合直接交給 `react-markdown` 即時 render、移除 sidebar「後續開放」徽章、訊息歷史不持久化、三處版本同步 `0.7.0` 時必讀 |
 | 15-D：Chat 啟用 tool use（手動驗收只跑 DeepSeek） | 5251-5316 | `stream_chat` 多輪 tool 迴圈（最多 6 輪）、4 adapter tool_call delta accumulator、SSE `tool_call` / `tool_result` event、前端 tool chip、`use-ai-chat.ts` 必須以 `toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送入 `/api/ai/chat`、日線工具同輪 chat 同一 `symbol+market` 最多自動補抓 / 更新一次且走 write lock、手動驗收只在 DeepSeek 上跑時必讀 |
 | 15-E：AI 問答投資試算工具（含息總報酬） | 5317-5859 | `calculate_total_return` tool schema、台股多檔含息總報酬、起訖日期交易日對齊、每檔投入金額、raw daily + cash dividends、fractional shares、現金股利持有、不含稅費、不支援股利再投入與美股、dividends refresh / lock busy / local fallback / missing error、股票股利 warning、output rounding、AI 回答規則、範例四檔 ETF 驗收資料、測試計畫與完成定義時必讀 |
-| 16：主動式 ETF 持股追蹤 | 5874-6072 | MoneyDJ `Basic0007B` 全量持股、ETF 名單 cache-first、forward-only 快照、完整 ticker、diff / API / UI / lock / atomic replace 規格時必讀 |
-| 附錄 A：免責聲明全文 | 6074-6093 | 免責聲明文案 |
-| 附錄 B：架構決策補充 | 6095-6151 | 美股邊界與 AI provider 抽象 |
+| 16：主動式 ETF 持股追蹤 | 5877-6191 | MoneyDJ `Basic0007B` 全量持股、ETF 名單 cache-first、forward-only 快照、完整 ticker、diff / API / UI / lock / atomic replace、16-D sweep、16-E TWSE MIS 折溢價資訊列規格時必讀 |
+| 附錄 A：免責聲明全文 | 6193-6212 | 免責聲明文案 |
+| 附錄 B：架構決策補充 | 6214-6270 | 美股邊界與 AI provider 抽象 |
 
-### 開發設計方針.md（~11985 行）
+### 開發設計方針.md（~12007 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -435,9 +436,9 @@ risk:
 | 15-C：AI 問答前端接 SSE | 11162-11347 | `use-ai-chat.ts` 完整 hook（fetch + ReadableStream + AbortController + SSE 解析）、chat-page-client 整合與取消按鈕、sidebar 移除「後續開放」徽章、訊息歷史不持久化規則時必讀 |
 | 15-D：Chat 啟用 tool use | 11348-11541 | `stream_chat` 多輪 tool 迴圈程式碼（最多 6 輪）、4 adapter tool_call delta accumulator、SSE `tool_call` / `tool_result` event 結構、前端 tool chip 樣式、`toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）的位置與規則、日線工具同輪 chat 同一 `symbol+market` 最多自動補抓 / 更新一次且走 write lock 時必讀 |
 | 15-E：AI 問答投資試算工具 | 11537-11821 | `calculate_total_return` tool schema、`get_price_data` 60 筆限制導流文案、`_handle_calculate_total_return` signature、`updated_dividend_symbols` 注入、輸入驗證、`_ensure_dividends_updated()` once-per-chat + write lock、raw daily 讀取、dividends refresh fallback/error、日期對齊 helper、純計算 helper、股票股利 warning、rounding、`_summarize_tool_output()` summary、SYSTEM_PROMPT 報酬試算規則時必讀 |
-| 16：主動式 ETF 持股追蹤 | 11838-11985 | `ActiveEtfSource` / MoneyDJ `Basic0007B` parser、stock_info cache list source、`holding_code` 完整 ticker、storage append + dedup、`/active-etf` 前端檔案清單、`/list` unique tmp atomic replace；**16-D 每日全量 sweep**（`refresh_holdings_snapshot` / `sweep_all(skip_code)` / active-etf 專用 per-ETF `threading.Lock`（取代全域鎖、on-view 一併遷移）/ `_SWEEP_CACHE` vs `_HOLDINGS_CACHE` / 收盤日 helper 來源 B / `POST /sweep` router）時必讀 |
+| 16：主動式 ETF 持股追蹤 | 11838-12007 | `ActiveEtfSource` / MoneyDJ `Basic0007B` parser、stock_info cache list source、`holding_code` 完整 ticker、storage append + dedup、`/active-etf` 前端檔案清單、`/list` unique tmp atomic replace；**16-D 每日全量 sweep**（`refresh_holdings_snapshot` / `sweep_all(skip_code)` / active-etf 專用 per-ETF `threading.Lock`（取代全域鎖、on-view 一併遷移）/ `_SWEEP_CACHE` vs `_HOLDINGS_CACHE` / 收盤日 helper 來源 B / `POST /sweep` router）；**16-E 折溢價資訊列**（`TwseEtfNavSource.fetch_premium` / `ActiveEtfPremiumSnapshot` / `_PREMIUM_CACHE` / `premium` payload / 前端標題列 chips / 測試 mock TWSE）時必讀 |
 
-### 測試指南.md（~5093 行）
+### 測試指南.md（~5122 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -462,7 +463,7 @@ risk:
 | **Phase 13 測試（13-A~13-B）** | **4027-4141** | **Dashboard 現有功能調整測試；含移除按鈕、Enter 提示、新 / 同代碼 Enter 重新請求、分K tab 條件顯示、壓力 / 支撐來源、成交量日K股數語意** |
 | **Phase 14 測試（14-A / 14-B）** | **4143-4320** | **14-A LAN / Tailscale 多裝置存取測試（vitest `api-client BASE_URL` 兩條新案、`tests/test_api` regression、Playwright 不動、6 個手動驗收 14-A-M1 ~ M6、Phase 14 完成 Gate）；14-B 手機端 UI 收尾測試（vitest DataTable 兩條 + Sidebar 一條新案、4 個手動驗收 14-B-M1 ~ M4、Playwright mobile 建議補測、Phase 14-B 完成 Gate）** |
 | **Phase 15 測試（15-A-1 / 15-A-2 / 15-B / 15-C / 15-D / 15-E）** | **4321-4874** | **15-A-1 pytest 12 條（含 P0 鬼影 bug 保護網兩條：`test_get_config_secrets_includes_deepseek_api_key` / `test_deepseek_adapter_reads_key_from_env_via_config`）+ vitest 12 條；15-A-2 per-provider validate router/service tests + FinMind 必填整包不寫 + Google API Key 移除手動驗收；15-B `stream_chat` / `sse-starlette` / `EventSourceResponse` / `ChatRequest` schema 嚴謹化 tests + curl 驗 SSE；15-C `use-ai-chat` hook + AbortController + sidebar 徽章移除 + `use-mock-chat` 5 條移除；15-D 多輪 tool 迴圈 + tool_call delta accumulator + `toApiMessages` helper tests + DeepSeek 手動驗收 only；15-E `calculate_total_return` pytest 26+ 條、API SSE 3 條、tool chip / `toApiMessages` vitest、DeepSeek 手動驗收 M1~M9** |
-| **Phase 16 測試** | **4876-4990** | **主動式 ETF 持股追蹤測試；含 MoneyDJ `Basic0007B` parser fixture、00981A 全量 row 數、00983A `.US` 海外持股、stock_info cache-first 名單降級、snapshot dedup、diff 四情況、API shape / 422 / write lock、前端兩塊渲染、手動驗收 16-B-M1 ~ M7；**16-D sweep gate**（gating / skip_code / 雙 cache / per-ETF lock 不取全域鎖 / 前端 mount 觸發 Vitest / 手動 M1~M4）** |
+| **Phase 16 測試** | **4876-5019** | **主動式 ETF 持股追蹤測試；含 MoneyDJ `Basic0007B` parser fixture、00981A 全量 row 數、00983A `.US` 海外持股、stock_info cache-first 名單降級、snapshot dedup、diff 四情況、API shape / 422 / write lock、前端兩塊渲染、手動驗收 16-B-M1 ~ M7；**16-D sweep gate**（gating / skip_code / 雙 cache / per-ETF lock 不取全域鎖 / 前端 mount 觸發 Vitest / 手動 M1~M4）；**16-E 折溢價資訊列 gate**（TWSE MIS source mapping / `premium` payload / source 失敗降級 / 標題列順序與字級 / 手動 M1~M3）** |
 | 10-E 回測工作台測試 | 2786-2939 | 驗 10-E-1~4：backtest jobs、cancelled partial result、CSV、toast/skeleton/error panel |
 | 10-G 設定頁 + 全局整合測試 | 3005-3092 | 驗 10-G-1 toast/error boundary/skeleton/command palette 與 10-G-2 settings |
 | 11-E UI/UX 收尾調整測試 | 3696-3740 | 驗 11-E：sidebar 名稱 + 版號、警示文字字色、quote header 一排、K 線「前收」標籤、編輯按鈕位置、placeholder 移除 |
@@ -479,9 +480,9 @@ risk:
 | 15-C 測試（AI 問答前端接 SSE） | 4603-4666 | 驗 15-C：`use-ai-chat` hook tests（mock fetch + ReadableStream + AbortController）+ chat-page-client 取消按鈕互動 + sidebar 徽章移除 regression + `use-mock-chat` 5 條測試移除 + 手動驗收 SSE token 逐字顯示 / Stop 中斷 / 跳頁清訊息 |
 | 15-D 測試（Chat 啟用 tool use） | 4667-4757 | 驗 15-D：`stream_chat` 多輪 tool 迴圈 tests（最多 6 輪、超出 raise）+ 4 adapter tool_call delta accumulator tests + SSE `tool_call` / `tool_result` event 結構 tests + `toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）tests + 日線自動補抓 / 更新 once-per-chat tests + DeepSeek 手動驗收 M1 ~ M4 |
 | 15-E 測試（AI 問答投資試算工具） | 4741-4858 | 驗 15-E：`calculate_total_return` 單檔 / 多檔 / 日期對齊 / dividends refresh / local fallback / missing error / stock_dividend warning / rounding / annualized return / daily update once-per-chat / `stream_chat` tool_result tests；API SSE `tool_call` / `tool_result` / partial error tests；前端 tool chip 與 `toApiMessages` regression；DeepSeek 手動驗收 M1 ~ M9 |
-| 16 測試（主動式 ETF 持股追蹤） | 4876-4955 | 驗 16：Basic0007B parser、全量 row 數、海外持股 `.US` ticker、cache-first 名單降級、dedup、diff、API / UI / lock / manual M1~M7 |
-| 全專案最終回歸 | 4957-4998 | Phase 完成後 |
-| 測試數量統計總覽 | 4999-5058 | 測試統計（含 Phase 11 估算；P12 屬腳本 + onboarding 類、P14 屬部署面，未計入測試數量總覽表） |
+| 16 測試（主動式 ETF 持股追蹤） | 4876-5019 | 驗 16：Basic0007B parser、全量 row 數、海外持股 `.US` ticker、cache-first 名單降級、dedup、diff、API / UI / lock / manual M1~M7、16-D sweep、16-E TWSE MIS premium / 標題列 |
+| 全專案最終回歸 | 5021-5062 | Phase 完成後 |
+| 測試數量統計總覽 | 5063-5122 | 測試統計（含 Phase 11 估算；P12 屬腳本 + onboarding 類、P14 屬部署面，未計入測試數量總覽表） |
 
 ### web/_design/ — 10-C 視覺設計稿（Phase 10-C 實作必讀）
 

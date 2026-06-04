@@ -9,9 +9,16 @@ import pytest
 import pandas as pd
 
 from src.core.exceptions import FetcherError
-from src.data.fetcher import MoneyDjActiveEtfSource, _RelaxedStrictHTTPAdapter
+from src.data.fetcher import (
+    ActiveEtfPremiumSnapshot,
+    MoneyDjActiveEtfSource,
+    TwseEtfNavSource,
+    _RelaxedStrictHTTPAdapter,
+    _to_optional_float,
+    _format_yyyymmdd,
+)
 from src.data.storage import ParquetStorage, StorageError
-from src.services.active_etf_service import ActiveEtfService, _HOLDINGS_CACHE
+from src.services.active_etf_service import ActiveEtfService, _HOLDINGS_CACHE, _PREMIUM_CACHE
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +156,150 @@ def test_moneydj_injected_session_left_untouched():
     assert not isinstance(adapter, _RelaxedStrictHTTPAdapter)
 
 
+def test_twse_etf_nav_source_fetch_premium():
+    """Verify that TWSE ETF NAV source maps official a/b/e/f/g/h/i/j fields."""
+
+    class MockResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class MockSession:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if url.endswith("all_etf.txt"):
+                return MockResponse({
+                    "a1": [
+                        {
+                            "msgArray": [
+                                {
+                                    "a": "00981A",
+                                    "b": "主動統一台股增長",
+                                    "e": "31.36",
+                                    "f": "31.25",
+                                    "g": "0.35",
+                                    "h": "31.97",
+                                    "i": "20260604",
+                                    "j": "16:59:55",
+                                }
+                            ]
+                        }
+                    ]
+                })
+            return MockResponse({})
+
+    session = MockSession()
+    source = TwseEtfNavSource(session=session)
+    snapshot = source.fetch_premium("00981a")
+
+    assert snapshot is not None
+    assert snapshot.etf_code == "00981A"
+    assert snapshot.etf_name == "主動統一台股增長"
+    assert snapshot.market_price == 31.36
+    assert snapshot.estimated_nav == 31.25
+    assert snapshot.premium_discount_pct == 0.35
+    assert snapshot.previous_nav == 31.97
+    assert snapshot.data_date == "2026-06-04"
+    assert snapshot.data_time == "16:59:55"
+    assert len(session.calls) == 2
+    assert session.calls[1][1]["headers"]["Referer"] == TwseEtfNavSource.PAGE_URL
+
+
+def test_twse_etf_nav_source_etf_not_found_in_payload():
+    """When the target ETF code is absent from TWSE a1.msgArray, fetch_premium must return None."""
+
+    class MockResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class MockSession:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if url.endswith("all_etf.txt"):
+                return MockResponse({
+                    "a1": [
+                        {
+                            "msgArray": [
+                                {
+                                    "a": "00982A",
+                                    "b": "其他ETF",
+                                    "e": "10.00",
+                                    "f": "10.05",
+                                    "g": "-0.50",
+                                    "h": "10.10",
+                                    "i": "20260604",
+                                    "j": "15:00:00",
+                                }
+                            ]
+                        }
+                    ]
+                })
+            return MockResponse({})
+
+    session = MockSession()
+    source = TwseEtfNavSource(session=session)
+    # Query 00981A but payload only has 00982A
+    result = source.fetch_premium("00981A")
+    assert result is None
+    # Both page hit and data hit should still have been made
+    assert len(session.calls) == 2
+
+
+def test_to_optional_float_edge_cases():
+    """_to_optional_float must handle commas, empty, '未結出', and invalid text."""
+    # Normal float
+    assert _to_optional_float("31.36") == 31.36
+    # Comma-separated number
+    assert _to_optional_float("1,234.56") == 1234.56
+    # '未結出' (pending settlement)
+    assert _to_optional_float("未結出") is None
+    # Empty string
+    assert _to_optional_float("") is None
+    # None value
+    assert _to_optional_float(None) is None
+    # Whitespace only
+    assert _to_optional_float("   ") is None
+    # Non-numeric text
+    assert _to_optional_float("N/A") is None
+    # Negative number
+    assert _to_optional_float("-0.35") == -0.35
+    # Zero
+    assert _to_optional_float("0") == 0.0
+
+
+def test_format_yyyymmdd_edge_cases():
+    """_format_yyyymmdd must format 8-digit dates and pass through others."""
+    # Normal 8-digit date
+    assert _format_yyyymmdd("20260604") == "2026-06-04"
+    # Non-8-digit input passes through
+    assert _format_yyyymmdd("2026-06-04") == "2026-06-04"
+    # Short input passes through
+    assert _format_yyyymmdd("20260") == "20260"
+    # Empty string
+    assert _format_yyyymmdd("") == ""
+    # None value
+    assert _format_yyyymmdd(None) == ""
+    # 8-digit but has letters
+    assert _format_yyyymmdd("2026060X") == "2026060X"
+
+
 # ---------------------------------------------------------------------------
 # ParquetStorage Test Cases
 # ---------------------------------------------------------------------------
@@ -249,10 +400,13 @@ def test_service_get_holdings_with_diff_no_previous(tmp_path, monkeypatch):
 
     # Disable mock fetch to prevent TTL fetch trigger
     monkeypatch.setitem(_HOLDINGS_CACHE, etf, time.time())
+    _PREMIUM_CACHE.clear()
+    monkeypatch.setattr(TwseEtfNavSource, "fetch_premium", lambda self, code: None)
 
     result = service.get_holdings_with_diff(etf)
 
     assert result["etf_code"] == "00981A"
+    assert result["premium"] is None
     assert result["latest_date"] == "2026-06-03"
     assert result["previous_date"] is None
     assert result["has_previous"] is False
@@ -312,10 +466,36 @@ def test_service_get_holdings_with_diff_calculation(tmp_path, monkeypatch):
 
     # Lock TTL cache so it doesn't trigger mock fetch
     monkeypatch.setitem(_HOLDINGS_CACHE, etf, time.time())
+    _PREMIUM_CACHE.clear()
+    monkeypatch.setattr(
+        TwseEtfNavSource,
+        "fetch_premium",
+        lambda self, code: ActiveEtfPremiumSnapshot(
+            etf_code="00981A",
+            etf_name="主動統一台股增長",
+            market_price=31.36,
+            estimated_nav=31.25,
+            premium_discount_pct=0.35,
+            previous_nav=31.97,
+            data_date="2026-06-04",
+            data_time="16:59:55",
+        ),
+    )
 
     result = service.get_holdings_with_diff(etf)
 
     assert result["etf_code"] == "00981A"
+    assert result["premium"] == {
+        "etf_code": "00981A",
+        "etf_name": "主動統一台股增長",
+        "market_price": 31.36,
+        "estimated_nav": 31.25,
+        "premium_discount_pct": 0.35,
+        "previous_nav": 31.97,
+        "data_date": "2026-06-04",
+        "data_time": "16:59:55",
+        "source": "twse_mis",
+    }
     assert result["latest_date"] == "2026-06-04"
     assert result["previous_date"] == "2026-06-03"
     assert result["has_previous"] is True
