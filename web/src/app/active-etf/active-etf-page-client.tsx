@@ -127,14 +127,18 @@ export function ActiveEtfPageClient() {
             </span>
           </div>
 
-          {/* ── Panel 1: 持股變動 ── */}
-          <BuySellPanel data={data} />
+          <div
+            className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(320px,0.88fr)_minmax(560px,1.12fr)] xl:items-start"
+            data-testid="active-etf-panel-grid"
+          >
+            {/* ── Panel 1: 持股變動 ── */}
+            <BuySellPanel data={data} />
 
-          {/* ── Panel 2: 目前總體持股 ── */}
-          <HoldingsTable data={data} />
+            {/* ── Panel 2: 目前總體持股 ── */}
+            <HoldingsTable data={data} />
+          </div>
         </div>
       )}
     </div>
   );
 }
-

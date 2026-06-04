@@ -21,7 +21,10 @@ export function BuySellPanel({ data }: BuySellPanelProps) {
     : [];
 
   return (
-    <div className="rounded-lg border border-border bg-card text-card-foreground shadow-sm overflow-hidden">
+    <div
+      className="rounded-lg border border-border bg-card text-card-foreground shadow-sm overflow-hidden"
+      data-testid="changes-panel"
+    >
       <div className="border-b border-border bg-muted/30 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
         <div>
           <h2 className="font-semibold text-foreground" data-testid="changes-panel-title">
@@ -45,10 +48,13 @@ export function BuySellPanel({ data }: BuySellPanelProps) {
             本期持股無變化。
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-6">
             {/* Buy / Entry list */}
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-emerald-500 flex items-center gap-1.5 border-b border-border pb-1.5">
+              <h3
+                className="text-sm font-semibold text-red-500 flex items-center gap-1.5 border-b border-border pb-1.5"
+                data-testid="buy-section-title"
+              >
                 <TrendingUp className="h-4 w-4" />
                 買進 / 新進
               </h3>
@@ -59,7 +65,7 @@ export function BuySellPanel({ data }: BuySellPanelProps) {
                   {buysAndEntries.map((row) => (
                     <div
                       key={row.holding_code || row.holding_name}
-                      className="flex items-center justify-between p-2 rounded-lg bg-muted/20 border border-border/30 hover:border-emerald-500/20 transition-all text-xs"
+                      className="flex items-center justify-between p-2 rounded-lg bg-muted/20 border border-border/30 hover:border-red-500/20 transition-all text-xs"
                       data-testid="buy-row"
                     >
                       <div className="flex flex-col gap-0.5">
@@ -70,11 +76,11 @@ export function BuySellPanel({ data }: BuySellPanelProps) {
                       </div>
                       <div className="flex items-center gap-2">
                         {row.type === "entry" && (
-                          <span className="rounded bg-emerald-500/10 px-1 py-0.5 text-[10px] font-medium text-emerald-500">
+                          <span className="rounded bg-red-500/10 px-1 py-0.5 text-[10px] font-medium text-red-500">
                             新進
                           </span>
                         )}
-                        <span className="font-mono font-semibold text-emerald-500">
+                        <span className="font-mono font-semibold text-red-500" data-testid="buy-delta">
                           +{row.delta_shares.toLocaleString()} 股
                         </span>
                       </div>
@@ -86,7 +92,10 @@ export function BuySellPanel({ data }: BuySellPanelProps) {
 
             {/* Sell / Exit list */}
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-red-500 flex items-center gap-1.5 border-b border-border pb-1.5">
+              <h3
+                className="text-sm font-semibold text-emerald-500 flex items-center gap-1.5 border-b border-border pb-1.5"
+                data-testid="sell-section-title"
+              >
                 <TrendingDown className="h-4 w-4" />
                 賣出 / 剔除
               </h3>
@@ -97,7 +106,7 @@ export function BuySellPanel({ data }: BuySellPanelProps) {
                   {sellsAndExits.map((row) => (
                     <div
                       key={row.holding_code || row.holding_name}
-                      className="flex items-center justify-between p-2 rounded-lg bg-muted/20 border border-border/30 hover:border-red-500/20 transition-all text-xs"
+                      className="flex items-center justify-between p-2 rounded-lg bg-muted/20 border border-border/30 hover:border-emerald-500/20 transition-all text-xs"
                       data-testid="sell-row"
                     >
                       <div className="flex flex-col gap-0.5">
@@ -108,11 +117,11 @@ export function BuySellPanel({ data }: BuySellPanelProps) {
                       </div>
                       <div className="flex items-center gap-2">
                         {row.type === "exit" && (
-                          <span className="rounded bg-red-500/10 px-1 py-0.5 text-[10px] font-medium text-red-500">
+                          <span className="rounded bg-emerald-500/10 px-1 py-0.5 text-[10px] font-medium text-emerald-500">
                             剔除
                           </span>
                         )}
-                        <span className="font-mono font-semibold text-red-500">
+                        <span className="font-mono font-semibold text-emerald-500" data-testid="sell-delta">
                           {row.delta_shares.toLocaleString()} 股
                         </span>
                       </div>

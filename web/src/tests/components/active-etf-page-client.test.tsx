@@ -93,6 +93,7 @@ describe("ActiveEtfPageClient", () => {
 
     // Content should show up
     expect(screen.getByTestId("active-etf-content")).toBeInTheDocument();
+    expect(screen.getByTestId("active-etf-panel-grid")).toHaveClass("xl:grid-cols-[minmax(320px,0.88fr)_minmax(560px,1.12fr)]");
     expect(screen.getByTestId("changes-panel-title")).toHaveTextContent("持股變動");
     expect(screen.getByTestId("changes-panel-subtitle")).toHaveTextContent("比較區間：2026-06-03 → 2026-06-04");
 
@@ -219,6 +220,10 @@ describe("ActiveEtfPageClient", () => {
     expect(screen.getByText("剔除")).toBeInTheDocument();
     expect(screen.getByText("+500 股")).toBeInTheDocument();
     expect(screen.getByText("-200 股")).toBeInTheDocument();
+    expect(screen.getByTestId("buy-section-title")).toHaveClass("text-red-500");
+    expect(screen.getByTestId("sell-section-title")).toHaveClass("text-emerald-500");
+    expect(screen.getByTestId("buy-delta")).toHaveClass("text-red-500");
+    expect(screen.getByTestId("sell-delta")).toHaveClass("text-emerald-500");
   });
 
   it("renders has_previous=false fallback text on first capture", () => {
@@ -261,4 +266,3 @@ describe("ActiveEtfPageClient", () => {
     expect(screen.getByText("比較區間：首次擷取快照")).toBeInTheDocument();
   });
 });
-
