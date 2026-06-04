@@ -32,6 +32,7 @@
 | **V3.4** | 2026/05/23 | 新增 **Phase 15 AI Provider 擴充與問答頁接 LLM** 規格，並把延後中的 10-F-2 重編搬遷至 15-B/15-C/15-D。經 codex 規格審核後修正：DeepSeek endpoint URL 對齊官方文件（`https://api.deepseek.com/chat/completions` 與 `/user/balance`，無 `/v1` 前綴）；`sse-starlette` 為 15-B 新增依賴（pyproject.toml 未裝）；DeepSeek `no_quota` 來源只認 402（移除 405 推測）；implementer 不直接動「驗證後已知問題.md」（改為回報、verifier 補檔）；version bump 三處同步（`pyproject.toml` / `web/package.json` / `api/main.py`）。**15-A-1**：DeepSeek Provider 接入 + AI 設定區重寫。Adapter：`OpenAIAdapter` 抽出 `base_url`，新增 `DeepSeekAdapter`（base URL `https://api.deepseek.com/chat/completions`），`DEFAULT_MODELS` 加 `deepseek-v4-flash`，`_resolve_api_key` 加 `deepseek_api_key`，dashboard 路徑啟用 `response_format={'type':'json_object'}` 並對 DeepSeek 預設 `thinking: {"type":"disabled"}` 穩定 JSON + 降成本。Config：`_SECRET_ENV_KEYS` 加 `DEEPSEEK_API_KEY`；DeepSeek key 寫入走既有 `PUT /api/config/secrets` 通用 dict 路徑（**不**動 `/secrets/validate`，留待 15-A-2 整體重構）。前端：[ai-toggle-section.tsx](web/src/components/settings/ai-toggle-section.tsx) 重寫，移除「永久停用」、加 enable toggle + Provider 下拉（anthropic / openai / gemini / deepseek 4 選 1）+ Model input + `PUT /api/config` whitelist 整合 `ai.enabled` / `ai.provider` / `ai.model`；[secrets-section.tsx](web/src/components/settings/secrets-section.tsx) `PROVIDERS` 陣列加一行 `{ key: "deepseek", label: "DeepSeek API Key" }`（其餘 5 欄欄位、儲存按鈕、status 顯示既有）。**15-A-2**：`/api/config/secrets/validate` 重構為 per-provider results map，**FinMind 必填 + 其他 provider 選填 validate-if-present**（沿用現有 onboarding 安全模型）。Status 列舉：`ok` / `invalid_key` / `no_quota`（DeepSeek 402）/ `unreachable` / `skipped`；`ok` 與 `no_quota` 寫入 `.env`，`invalid_key` / `unreachable` 不寫入；FinMind 空白 / 失敗時整包不寫；新增 `validate_deepseek_token`（打 `GET https://api.deepseek.com/user/balance`，無 `/v1`）/ `validate_anthropic_token` / `validate_openai_token` / `validate_gemini_token`；Token Setup Dialog 同步解析新 response shape；設定頁「驗證並儲存」按鈕後 per-provider inline ✅/⚠️/❌。**15-B**：AI 問答後端 streaming（純對話）— pyproject.toml **新增 `sse-starlette>=2.0` 依賴**；`/api/ai/status` 改動態（依 `ai.enabled` + provider key 狀態）；`/api/ai/chat` 改 async + `EventSourceResponse`、events `token`/`done`/`error`、`ChatRequest.messages` schema 嚴謹為 `role: user\|assistant`；`AIAdvisor.stream_chat()` + 4 adapter `stream_complete()` async generator；chat / dashboard 對 DeepSeek 預設 `thinking: {"type":"disabled"}`。**15-C**：AI 問答前端接 SSE — `use-mock-chat.ts` 移除、新增 `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send / abort / messages / streaming`）、chat-page-client 加取消按鈕、markdown 部分閉合直接交給 `react-markdown` 即時 render、移除 sidebar「後續開放」徽章、訊息歷史不持久化、`pyproject.toml` / `web/package.json` / `api/main.py` 三處 version 同步 `0.7.0`。**15-D**：Chat 啟用 tool use — `stream_chat` 加多輪 tool 迴圈（最多 6 輪）、4 adapter 加 tool_call delta accumulator、SSE 加 `tool_call` / `tool_result` 兩種 event、前端可顯示 tool chip；**`use-ai-chat.ts` 必須以 `toApiMessages()` helper 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送入 `/api/ai/chat`，避免污染 `ChatRequest.messages` schema**；**手動驗收只在 DeepSeek 上跑**，其他 3 個 provider 的 streaming + tool calls 由 implementer 完成後回報、verifier 統一更新「驗證後已知問題.md」。15-A-2 為 15-A-1 後續可並行；15-B 不接前端（curl 驗 SSE）後出 15-C；15-D 屬 chat 功能延伸。 |
 | **V3.5** | 2026/05/24 | 新增 **Phase 15-E AI 問答投資試算工具** 規格。15-D tool use 完成後，AI 問答需能處理「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題，不得再用 `get_price_data` 最近 60 筆 K 線推算長區間報酬或誤稱本機無完整資料。新增 `calculate_total_return` tool：初版僅支援台股、raw daily + cash dividends、fractional shares、現金股利持有、不含稅費、不支援股利再投入與美股。規格定義 tool schema、日期對齊、日線與 dividends 自動更新 / fallback / error 規則、股利篩選區間、股票股利 warning、output schema、AI 回答規則、pytest / API / vitest / DeepSeek 手動驗收與完成定義。 |
 | **V3.6** | 2026/06/04 | 新增 **Phase 16 主動式 ETF 持股追蹤** 規格並完成收尾。實作 MoneyDJ `Basic0007B` 全量持股 parser 與本機快照儲存、相鄰快照 `delta_shares` diff；新增 `/api/active-etf` API 與前端「主動ETF」新頁（ETF 選擇器、持股變動 diff 面板、總體持股 table）。16-C 整合驗證通過：全套 pytest / tsc / vitest 全綠、16-B-M1 ~ M7 手動驗收完成、四份文件同步，三處版本號（`pyproject.toml` / `web/package.json` / `api/main.py`）bump 至 `0.8.0`。 |
+| **V3.7** | 2026/06/04 | 新增 **Phase 16-D 每日全量 sweep** 規格。進入主動ETF頁時 `POST /api/active-etf/sweep` 觸發背景 sweep，依「ETF 自身收盤日 > 持股最新快照日」per-ETF gating 自動補齊落後檔快照。設計拍板：觸發=進頁背景；機制 M2（輕量 `asyncio` 背景 task、**不取全域 write lock**、無 SSE、檔間禮貌延遲、單檔失敗不中斷、跳過當前選中檔、重疊 no-op）；收盤日來源 B（即時查價源拿日期、不落地日 K / 不進 data_meta）；節流 T1。本質 best-effort（本機不常駐，無法保證每交易日有快照）。**2026-06-04 codex 二審修訂（5 findings）**：(P1-1) `POST /sweep?skip_code=` 補 query schema、前端等 selectedCode resolved 才觸發；(P1-2，拍板 A) active-etf 改 **專用 per-ETF lock、不碰 job_manager 全域鎖**，on-view 與 sweep 共用同一把（16-B append 鎖一併遷移）；(P1-3) 拆 `_SWEEP_CACHE` / `_HOLDINGS_CACHE` 兩個 60s cache，避免 sweep TTL 誤擋 on-view 強抓；(P2-1) sweep 改呼叫精簡的 `refresh_holdings_snapshot()`（只 fetch + dedup、不算 diff）；(P2-2) 補前端 mount 觸發 + skip_code Vitest。16-D 待實作。 |
 | **V2.7** | 2026/05/16 | **10-E 規格審查補丁**（12 項）：(1) `JobManager.finish_cancelled_job()` 新增（含 `cancel_job()` race condition 修正——只設 status、不關 queue）；(2) `GET /api/jobs/{id}/result` 擴充允許 cancelled + partial result；(3) 取消 `api/routers/backtest.py` 冗餘端點，前端直接用 `GET /api/config` 取 preset 清單；(4) `initial_capital` 預設 `1000000`，需新增為 `run_backtest_job()` 參數並注入引擎；(5) DCA 序列化映射補充（equity_curve / trades / metrics null 欄位）；(6) `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表；(7) WFA 特化 `WfaProgress` interface 補充；(8) CSV blob 函式位置指定 `src/services/backtest_service.py`；(9) E2E Playwright 統一在 10-E-4 後撰寫；(10) **交易數量單位統一顯示「股」（shares），不做 1000 股→1 張轉換**（與舊 Streamlit 回測頁一致；「張」僅用於 10-D 儀表板的日成交量與籌碼顯示）；(11) 切換市場時 reset state（清空回測結果）；(12) DCA 批次比較 error message 明確定義為「DCA 不支援批次比較（請至單次回測使用）」。 |
 
 ---
@@ -5872,7 +5873,7 @@ M9. 模擬 dividends 補抓失敗且本機無 dividends：AI 不得回價格報�
 
 ---
 
-## Phase 16：主動式 ETF 持股追蹤 [✅ 已完成]
+## Phase 16：主動式 ETF 持股追蹤 [16-A~C ✅ · 16-D 待實作]
 
 > 目標：追蹤台股**主動式 ETF**每日持股變化。畫面一次看一檔，提供兩塊資訊：①持股變動、②目前總體持股。
 > **持股資料**源為 MoneyDJ 靜態 HTML 持股頁；**持股不接 FinMind、不算金額、不碰股價、不接實盤**。純粹「抓快照 → 落地 → 相鄰兩快照 diff 股數」。
@@ -5887,6 +5888,7 @@ M9. 模擬 dividends 補抓失敗且本機無 dividends：AI 不得回價格報�
 | **16-A 資料層** | MoneyDJ 持股 parser + 主動 ETF 名單 cache/filter（`stock_info_tw.parquet` cache-first + `^\d{5}A$`）+ 快照儲存（per-ETF parquet append、依 `資料日期` dedup）+ diff 計算（相鄰兩快照 Δ股數、新進/剔除） | `src/data/`、`src/services/` |
 | **16-B API + 前端頁** | FastAPI router（名單、單檔持股+diff、on-view lazy fetch）+ Next.js `主動ETF` 新頁（ETF 選擇器 + ①持股變動 + ②總體持股、雙日期標示、響應式） | `api/`、`web/` |
 | **16-C 整合驗證 + 文件** | 手動驗收 + 規格書 / 設計方針 / 測試指南 / PROJECT_BRIEF 收束 | 文件 / 回歸 |
+| **16-D 每日全量 sweep** | 進頁觸發背景 sweep，依「ETF 自身收盤日 > 持股最新快照日」per-ETF gating 自動補齊落後檔快照（M2 背景 task、不取全域寫鎖、60s sweep TTL、跳過當前檔） | `api/`、`src/services/`、`web/` |
 
 backend-first：16-A 純 Python 可獨立 pytest 完成，diff 語意為核心風險先釘死；16-B 才碰 API/UI；16-C 走 verifier 角色收文件。
 
@@ -5971,6 +5973,7 @@ data/raw/tw_active_etf/
 |:---|:---|
 | `GET /api/active-etf/list` | `{ "etfs": [{ "code": "00981A", "name": "主動統一台股增長" }, ...] }`（cache-first 唯讀；見下方落地說明） |
 | `GET /api/active-etf/{code}/holdings` | 取該檔（on-view lazy fetch + dedup + diff），見下方 shape |
+| `POST /api/active-etf/sweep?skip_code={code}` | 觸發背景全量 sweep（補齊落後檔快照，16-D）；`skip_code`（query，選填）= 前端當前選中檔，sweep 跳過它（on-view 已即時處理）。立刻回 `202 {"status":"started"\|"already_running"}`，不等待完成、不取 job_manager 全域 write lock |
 
 `GET /api/active-etf/{code}/holdings` 回傳：
 
@@ -5996,7 +5999,8 @@ data/raw/tw_active_etf/
 
 - `has_previous=false`（首次擷取）時：`previous_date=null`、`changes` 各陣列為空、`holdings[].delta_shares=null`。
 - **ETF code 正規化與防護（2026-06-04 codex 審核補強）**：API / service / storage 只接受 `^\d{5}A$`，一律轉大寫；不符回 `422`。storage 寫檔前 path 必須 `resolve()` 後確認仍位於 `data/raw/tw_active_etf/` 之下（沿用 Phase 9-A symbol 路徑穿越防護），拒絕任何穿越。
-- **write lock 責任層（2026-06-04 codex 審核更正）**：`{code}/holdings` 的 **append 落地** write lock 由 **API router 層**取得 / 釋放，沿用 `api/routers/data.py` 模式（`if manager.is_write_locked(): 409` → `await manager.acquire_write_lock()` → `finally: release_write_lock()`）。`ActiveEtfService` 維持 **sync**、**不得 import `api.job_manager`**；`acquire_write_lock()` 為 async，不可在 sync service 內呼叫。
+- **write lock 責任層（2026-06-04 codex 審核更正；16-D 修訂見下）**：`{code}/holdings` 的 **append 落地** write lock 由 **API router 層**取得 / 釋放，沿用 `api/routers/data.py` 模式（`if manager.is_write_locked(): 409` → `await manager.acquire_write_lock()` → `finally: release_write_lock()`）。`ActiveEtfService` 維持 **sync**、**不得 import `api.job_manager`**；`acquire_write_lock()` 為 async，不可在 sync service 內呼叫。
+  - **⚠️ 16-D 改寫（2026-06-04 codex 二審拍板 A）**：因 16-D 背景 sweep 不可與 `data_update` / `backtest` 互卡，active-etf 的 holdings append 保護**從 job_manager 全域 write lock 改為 active-etf 專用 per-ETF lock**（`holdings.parquet` 為各檔獨立小檔，與主資料管線寫的檔完全不重疊，本就不該共用全域鎖）。**on-view (`GET /{code}/holdings`) 與 sweep 共用同一把 per-ETF lock**（同 `etf_code` 才互斥，否則防不了雙寫）；詳見「16-D：每日全量 sweep 設計」。
 - **`/list` 落地不走 write lock（2026-06-04 codex 二審補強）**：名單為 cache-first 唯讀；當 cache miss / stale 需刷新 `active_etf_list.parquet` + `.meta.json` 時，採 **atomic replace（write unique tmp + `os.replace`）整檔覆寫**（非 append，無多寫者競爭 race）。tmp 檔名需包含 pid / uuid / timestamp 等唯一片段，避免兩個 `/list` 同時刷新共用同一 `.tmp` 互踩；沿用既有 `_write_env` 的 atomic 寫法精神，因此不需 router write lock。`{code}/holdings` 才是 append、需 lock。
 
 ### 16 UI 合約
@@ -6031,6 +6035,42 @@ data/raw/tw_active_etf/
 | data_meta | 主動 ETF 資料不進 `data_meta`，不影響資料管理頁狀態 |
 | 持股股價 / FinMind | 持股資料完全不依賴股價 / FinMind（名單除外） |
 
+### 16-D：每日全量 sweep 設計（2026-06-04 拍板）
+
+> 拍板日：2026-06-04（grill 規格討論，使用者逐題確認）。
+> **動機**：16-A~C 的快照是「開到哪檔才抓哪檔」（on-view lazy），且 `snapshot_date` 為 MoneyDJ **揭露日**（各檔延遲不一、非抓取日）。因此只有被反覆開啟、剛好橫跨 MoneyDJ 更新點的 ETF（如 16-C 期間的 00981A）才湊巧累積到相鄰兩快照、能顯示 diff；其餘檔多半只有單一快照、無從比較。16-D 讓「進主動ETF頁」時自動把落後的檔補抓一次，使各檔得以累積可比較的快照。
+> **本質為 best-effort**：本機工具不常駐，無法保證每個交易日都有快照；某檔某揭露日若當天完全沒開工具則永久漏失（MoneyDJ 不給歷史）。
+
+**觸發**
+- 進入 `/active-etf` 頁時，前端**等當前選中檔 `selectedCode` resolved 後**呼叫 `POST /api/active-etf/sweep?skip_code={selectedCode}`（fire-and-forget，忽略回應、失敗不影響頁面），後端立刻回 `202`；頁面照常先載入該選中檔（走既有 `GET /{code}/holdings`）。
+
+**執行機制（M2：輕量背景 async task）**
+- 後端以 `asyncio` 背景 task 執行，**不取得 `job_manager` 全域 write lock**（避免卡住 `data_update` / `data_rebuild` / `backtest_*`），無 SSE、靜默補快照。
+- 逐檔循序處理，**檔間加 1–2 秒禮貌延遲**；**單檔失敗不中斷整批**（記 log，續下一檔）。
+- **跳過 `skip_code`（前端當前選中檔）**（on-view 已即時處理，避免雙寫同一 `holdings.parquet`）。
+- **避免重疊 sweep**：模組級「sweep 進行中」旗標；已在執行時新的 `POST /sweep` 直接 no-op 回 `202 {"status":"already_running"}`。
+- **active-etf 專用 per-ETF lock（拍板 A）**：各檔 `holdings.parquet` 的 append 落地由 active-etf 自己的 per-ETF lock（`dict[etf_code] → lock`）序列化，**完全不碰 `job_manager` 全域 write lock**；**on-view 與 sweep 共用同一把** per-ETF lock（同 `etf_code` 互斥）。因此 sweep 與主資料管線（`data_update` / `backtest`）完全不互卡。
+- **sweep 只「補快照」**：背景 sweep 對落後檔呼叫 `refresh_holdings_snapshot(etf_code)`（只做 gating 後的 MoneyDJ fetch + dedup save，**不算 diff、不查名單、不組 UI payload**），縮小鎖窗口；diff 與 payload 仍由 `GET /{code}/holdings` 的 `get_holdings_with_diff()` 負責。
+
+**每檔 gating（per-ETF，避免重複抓）**
+1. 取該 ETF **自身**最新收盤日 —— **來源 B：即時查價源拿最後一筆日 K 的日期，不落地日 K、不進 `data_meta`、不出現在資料管理頁**（這些 ETF 使用者不在資料管理維護）。
+   - 代碼格式：FinMind 用純碼 `00981A`、yfinance 用 `00981A.TW`；實作須先驗證價源接受該格式。
+2. 讀本機該檔持股最新 `snapshot_date`。
+3. **若 收盤日 > 持股最新 `snapshot_date` → 抓一次 MoneyDJ 持股頁**（走既有 dedup）；相等、或收盤日無法取得 → **不抓**。
+   - 理由：ETF 自身收盤日 = 「最近一個真的已收盤的交易日」，比交易日曆 + 揭露延遲假設更可靠；盤中收盤價未出時最新收盤日仍為前一交易日，自然不會去追當天尚未揭露的持股。
+   - 最壞情況：若某檔 MoneyDJ 揭露結構性永遠落後收盤日一天 → 每次都判定落後、退化為「每次 sweep 都抓一次」，**無害**（僅未省到請求）。
+
+**節流（T1，兩個獨立 cache —— codex 二審拆分）**
+- **`_HOLDINGS_CACHE`（既有，60s）**：只管 **MoneyDJ 持股抓取**節流，**on-view 與 sweep 共用**（避免重打 MoneyDJ）；僅在 MoneyDJ fetch 成功後更新。
+- **`_SWEEP_CACHE`（新增，60s）**：只管 **sweep 整輪節流**——某檔 60 秒內已 sweep 過（含查收盤日 gating）即整檔跳過；**on-view 不碰此 cache**，故使用者手動選檔強抓不被 sweep TTL 擋。
+- **收盤日查詢失敗 → 不寫 `_SWEEP_CACHE`**（下次進頁重試，不被鎖 60 秒）。
+- 兩 cache 分離理由：若把 sweep 節流塞進 `_HOLDINGS_CACHE`，會誤擋 on-view 手動強抓；分開後「on-view 隨選即抓（仍尊重 MoneyDJ 60s）」與「sweep 60s 內整檔跳過」可並存。
+
+**邊界**
+- 查收盤日失敗（價源掛 / 該檔查無）→ 該檔本輪跳過、不盲抓、不寫 `_SWEEP_CACHE`；使用者仍可 on-view 手動強抓。
+- sweep 只負責「補快照」，不回傳資料給前端；前端仍以 `GET /{code}/holdings` 取數。因 sweep 跳過當前選中檔，不需 sweep 完成後刷新當前檔。
+- **不引入排程（cron / Task Scheduler）** —— 本機工具常關機，排程不可靠且違背零伺服器原則。
+
 ### 16 各階段驗收標準
 
 **16-A（資料層）**
@@ -6051,6 +6091,15 @@ data/raw/tw_active_etf/
 1. 全套 pytest 不低於 Phase 15 baseline。
 2. 手動驗收清單（見測試指南 16）通過。
 3. 規格書 / 設計方針 / 測試指南 / PROJECT_BRIEF 同步。
+
+**16-D（每日全量 sweep）**
+1. `POST /sweep` 立刻回 `202`、不阻塞；背景循序補抓；`refresh_holdings_snapshot()` 只 fetch + dedup save、不算 diff。
+2. 某檔本機持股最新日 < 該 ETF 收盤日 → 背景抓一次；相等 → 跳過（可驗 parquet 列數不增 / 未打 MoneyDJ）。
+3. **active-etf per-ETF lock、不取 job_manager 全域鎖**：sweep 背景進行中，仍可取得全域 write lock 跑 `data_update` / `backtest`（不被卡、不吃 409）；同 `etf_code` 的 on-view 與 sweep 互斥（不雙寫）。
+4. sweep 跳過 `skip_code`（前端送出的當前選中檔）；單檔失敗不中斷整批；重疊觸發 no-op（`already_running`）。
+5. 兩 cache 分離：60 秒內重複進頁 sweep 整檔跳過（`_SWEEP_CACHE`）；但 on-view 手動選檔強抓**不被** sweep TTL 擋（只受 `_HOLDINGS_CACHE` 的 MoneyDJ 節流）。
+6. 查收盤日失敗的檔本輪跳過、不盲抓、不寫 `_SWEEP_CACHE`。
+7. 前端：頁面 mount 在 `selectedCode` resolved 後 fire-and-forget `POST /sweep?skip_code=...`，該呼叫失敗不影響 `GET /list` / `GET /{code}/holdings`。
 
 ### 16 完成定義
 
