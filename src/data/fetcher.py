@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 import time
 from typing import Any
 
@@ -1302,3 +1302,195 @@ class TWSEFetcher:
             if col not in out.columns:
                 out[col] = pd.NA
         return out[["symbol", "date", "meeting_type"]].copy()
+
+
+class ActiveEtfSource(ABC):
+    """Abstract base class for Active ETF holding data sources."""
+
+    @abstractmethod
+    def fetch_list(self) -> pd.DataFrame:
+        """Fetch active ETF list.
+
+        Returns:
+            pd.DataFrame: Columns ['etf_code', 'etf_name']
+        """
+
+    @abstractmethod
+    def fetch_holdings(self, etf_code: str) -> tuple[date, pd.DataFrame]:
+        """Fetch holdings for a given ETF.
+
+        Returns:
+            tuple[date, pd.DataFrame]: (snapshot_date, holdings_df)
+                holdings_df has columns: ['holding_code', 'holding_name', 'shares', 'weight_pct']
+        """
+
+
+class MoneyDjActiveEtfSource(ActiveEtfSource):
+    """MoneyDJ active ETF holding source."""
+
+    HOLDINGS_URL = "https://www.moneydj.com/ETF/X/Basic/Basic0007B.xdjhtm?etfid={CODE}.TW"
+
+    def __init__(self, session: requests.Session | None = None, timeout_seconds: int = 20):
+        self._session = session or requests.Session()
+        self._timeout_seconds = timeout_seconds
+
+    def fetch_list(self) -> pd.DataFrame:
+        """Fetch active ETF list from stock info cache with fallback."""
+        from src.core.config import get_data_dir
+        import datetime
+
+        cache_path = get_data_dir() / "stock_info_tw.parquet"
+        df = pd.DataFrame(columns=["etf_code", "etf_name"])
+
+        # Try warm cache first
+        loaded_from_cache = False
+        if cache_path.exists():
+            try:
+                mtime = datetime.datetime.fromtimestamp(cache_path.stat().st_mtime)
+                age_days = (datetime.datetime.now() - mtime).days
+                if age_days < 7:
+                    cache_df = pd.read_parquet(cache_path)
+                    if {"symbol", "name"}.issubset(cache_df.columns):
+                        filtered = cache_df[cache_df["symbol"].astype(str).str.match(r"^\d{5}A$", na=False)].copy()
+                        df = filtered.rename(columns={"symbol": "etf_code", "name": "etf_name"})[["etf_code", "etf_name"]].reset_index(drop=True)
+                        loaded_from_cache = True
+            except Exception:  # noqa: BLE001
+                pass
+
+        if not loaded_from_cache:
+            try:
+                fetcher = FinMindFetcher()
+                raw_df = fetcher.fetch_stock_info()
+                if not raw_df.empty:
+                    raw_df[["symbol", "name"]].to_parquet(cache_path, index=False)
+                    filtered = raw_df[raw_df["symbol"].astype(str).str.match(r"^\d{5}A$", na=False)].copy()
+                    df = filtered.rename(columns={"symbol": "etf_code", "name": "etf_name"})[["etf_code", "etf_name"]].reset_index(drop=True)
+            except Exception:  # noqa: BLE001
+                # Swallowing token missing / network exceptions
+                # Fallback to loading stale cache if it exists as last resort
+                if cache_path.exists():
+                    try:
+                        cache_df = pd.read_parquet(cache_path)
+                        if {"symbol", "name"}.issubset(cache_df.columns):
+                            filtered = cache_df[cache_df["symbol"].astype(str).str.match(r"^\d{5}A$", na=False)].copy()
+                            df = filtered.rename(columns={"symbol": "etf_code", "name": "etf_name"})[["etf_code", "etf_name"]].reset_index(drop=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        # Ensure code is uppercase and cleaned
+        if not df.empty:
+            df["etf_code"] = df["etf_code"].astype(str).str.strip().str.upper()
+            df["etf_name"] = df["etf_name"].astype(str).str.strip()
+            df = df.drop_duplicates(subset=["etf_code"]).reset_index(drop=True)
+        return df
+
+    def fetch_holdings(self, etf_code: str) -> tuple[date, pd.DataFrame]:
+        """Fetch active ETF holdings from MoneyDJ URL."""
+        import re
+
+        # Ensure code is normalized to 5 digits + A (uppercase)
+        normalized_code = str(etf_code).strip().upper()
+        if not re.match(r"^\d{5}A$", normalized_code):
+            raise FetcherError(f"Invalid ETF code format: {etf_code}")
+
+        url = self.HOLDINGS_URL.format(CODE=normalized_code)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+        try:
+            response = self._session.get(url, headers=headers, timeout=self._timeout_seconds)
+            response.raise_for_status()
+            html_content = response.text
+        except Exception as exc:  # noqa: BLE001
+            raise FetcherError(f"Failed to fetch holdings for {normalized_code} from MoneyDJ: {exc}") from exc
+
+        return self.parse_holdings_html(html_content, normalized_code)
+
+    def parse_holdings_html(self, html_content: str, etf_code: str) -> tuple[date, pd.DataFrame]:
+        """Parse MoneyDJ Holdings Basic0007B.xdjhtm raw HTML."""
+        import re
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        # 1. Parse date from ctl00_ctl00_MainContent_MainContent_sdate3 div
+        date_div = soup.find("div", id="ctl00_ctl00_MainContent_MainContent_sdate3")
+        date_str = ""
+        if date_div:
+            date_str = date_div.get_text(strip=True)
+
+        # Fallback to finding the first date in form of YYYY/MM/DD
+        if not date_str or not re.match(r"^\d{4}/\d{2}/\d{2}$", date_str):
+            date_match = re.search(r"(\d{4}/\d{2}/\d{2})", html_content)
+            if date_match:
+                date_str = date_match.group(1)
+
+        if not date_str:
+            raise FetcherError(f"Cannot parse snapshot date for ETF {etf_code} from HTML content.")
+
+        try:
+            snapshot_date = datetime.strptime(date_str, "%Y/%m/%d").date()
+        except Exception as exc:  # noqa: BLE001
+            raise FetcherError(f"Invalid date format parsed: {date_str} for ETF {etf_code}") from exc
+
+        # 2. Parse holdings table
+        holdings_table = None
+        for table in soup.find_all("table"):
+            first_row = table.find("tr")
+            if not first_row:
+                continue
+            cells = [c.get_text(strip=True) for c in first_row.find_all(["th", "td"])]
+            # Match table headers containing "個股名稱" or "成分股" and "比例", "權重", "%"
+            is_match = any("個股名稱" in cell or "成分股" in cell for cell in cells) and any("比例" in cell or "權重" in cell or "%" in cell for cell in cells)
+            if is_match:
+                holdings_table = table
+                break
+
+        if holdings_table is None:
+            raise FetcherError(f"Cannot find holdings table for ETF {etf_code} in HTML.")
+
+        rows = holdings_table.find_all("tr")
+        holding_rows = []
+        for row in rows[1:]:
+            cells = row.find_all(["td", "th"])
+            if len(cells) < 3:
+                continue
+            name_text = cells[0].get_text(strip=True)
+            weight_text = cells[1].get_text(strip=True)
+            shares_text = cells[2].get_text(strip=True)
+
+            if "個股名稱" in name_text or "成分股" in name_text or not name_text:
+                continue
+
+            try:
+                weight_pct = float(weight_text.replace("%", "").replace(",", "").strip())
+            except ValueError:
+                weight_pct = 0.0
+
+            try:
+                shares = int(re.sub(r"[^\d]", "", shares_text))
+            except ValueError:
+                shares = 0
+
+            # Extract ticker inside parentheses at the end of name_text
+            match = re.search(r"\(([^)]+)\)$", name_text)
+            if match:
+                holding_code = match.group(1).strip()
+                holding_name = name_text[:match.start()].strip()
+            else:
+                holding_code = ""
+                holding_name = name_text
+
+            holding_rows.append({
+                "holding_code": holding_code,
+                "holding_name": holding_name,
+                "shares": shares,
+                "weight_pct": weight_pct
+            })
+
+        df = pd.DataFrame(holding_rows)
+        if df.empty:
+            df = pd.DataFrame(columns=["holding_code", "holding_name", "shares", "weight_pct"])
+        else:
+            df = df[["holding_code", "holding_name", "shares", "weight_pct"]]
+
+        return snapshot_date, df

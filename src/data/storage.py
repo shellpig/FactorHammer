@@ -632,6 +632,34 @@ class ParquetStorage:
             raise StorageError(f"Resolved path escapes data_dir: {path}") from exc
         return path
 
+    def _active_etf_list_path(self) -> Path:
+        path = (self.data_dir / "raw" / "tw_active_etf" / "active_etf_list.parquet").resolve(strict=False)
+        try:
+            path.relative_to(self.data_dir)
+        except ValueError as exc:
+            raise StorageError(f"Resolved path escapes data_dir: {path}") from exc
+        return path
+
+    def _active_etf_list_meta_path(self) -> Path:
+        path = (self.data_dir / "raw" / "tw_active_etf" / "active_etf_list.meta.json").resolve(strict=False)
+        try:
+            path.relative_to(self.data_dir)
+        except ValueError as exc:
+            raise StorageError(f"Resolved path escapes data_dir: {path}") from exc
+        return path
+
+    def _active_etf_holdings_path(self, etf_code: str) -> Path:
+        normalized_code = str(etf_code).strip().upper()
+        import re
+        if not re.match(r"^\d{5}A$", normalized_code):
+            raise StorageError(f"Invalid active ETF code: {etf_code}")
+        path = (self.data_dir / "raw" / "tw_active_etf" / normalized_code / "holdings.parquet").resolve(strict=False)
+        try:
+            path.relative_to(self.data_dir)
+        except ValueError as exc:
+            raise StorageError(f"Resolved path escapes data_dir: {path}") from exc
+        return path
+
     def _save_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame, timezone: str) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         incoming = _normalize_market_df(df, symbol, timezone=timezone)
@@ -1123,6 +1151,128 @@ class ParquetStorage:
             tmp_path.replace(path)
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"Failed to write override csv: {path}") from exc
+
+    def save_active_etf_list(self, df: pd.DataFrame) -> None:
+        path = self._active_etf_list_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        out = pd.DataFrame(columns=["etf_code", "etf_name"])
+        if not df.empty and "etf_code" in df.columns and "etf_name" in df.columns:
+            out = df[["etf_code", "etf_name"]].copy()
+            out["etf_code"] = out["etf_code"].astype(str).str.strip().str.upper()
+            out["etf_name"] = out["etf_name"].astype(str).str.strip()
+
+        import uuid
+        tmp_name = f"active_etf_list_{uuid.uuid4().hex}.tmp"
+        tmp_path = path.parent / tmp_name
+        try:
+            out.to_parquet(tmp_path, index=False)
+            tmp_path.replace(path)
+        except Exception as exc:  # noqa: BLE001
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+            raise StorageError(f"Failed to write active ETF list: {path}") from exc
+
+    def load_active_etf_list(self) -> pd.DataFrame:
+        path = self._active_etf_list_path()
+        if not path.exists():
+            return pd.DataFrame(columns=["etf_code", "etf_name"])
+        try:
+            df = pd.read_parquet(path)
+            if not {"etf_code", "etf_name"}.issubset(df.columns):
+                return pd.DataFrame(columns=["etf_code", "etf_name"])
+            df["etf_code"] = df["etf_code"].astype(str).str.strip().str.upper()
+            df["etf_name"] = df["etf_name"].astype(str).str.strip()
+            return df[["etf_code", "etf_name"]].reset_index(drop=True)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read active ETF list: {path}") from exc
+
+    def save_active_etf_list_meta(self, meta: dict[str, Any]) -> None:
+        path = self._active_etf_list_meta_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        try:
+            tmp_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp_path.replace(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write active ETF list meta: {path}") from exc
+
+    def load_active_etf_list_meta(self) -> dict[str, Any]:
+        path = self._active_etf_list_meta_path()
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read active ETF list meta: {path}") from exc
+
+    def save_active_etf_holdings(self, etf_code: str, snapshot_date: date, df: pd.DataFrame) -> None:
+        import datetime
+        from datetime import date as dt_date
+
+        if isinstance(snapshot_date, datetime.datetime):
+            snapshot_d = snapshot_date.date()
+        elif isinstance(snapshot_date, dt_date):
+            snapshot_d = snapshot_date
+        else:
+            snapshot_d = pd.Timestamp(snapshot_date).date()
+
+        path = self._active_etf_holdings_path(etf_code)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        incoming = pd.DataFrame(columns=["snapshot_date", "holding_code", "holding_name", "shares", "weight_pct"])
+        if not df.empty:
+            incoming = df.copy()
+            for col in ["holding_code", "holding_name", "shares", "weight_pct"]:
+                if col not in incoming.columns:
+                    incoming[col] = pd.NA
+
+            incoming["snapshot_date"] = snapshot_d
+            incoming["holding_code"] = incoming["holding_code"].fillna("").astype(str).str.strip()
+            incoming["holding_name"] = incoming["holding_name"].fillna("").astype(str).str.strip()
+            incoming["shares"] = pd.to_numeric(incoming["shares"], errors="coerce").fillna(0).astype("int64")
+            incoming["weight_pct"] = pd.to_numeric(incoming["weight_pct"], errors="coerce").fillna(0.0).astype("float64")
+            incoming = incoming[["snapshot_date", "holding_code", "holding_name", "shares", "weight_pct"]]
+
+        if path.exists():
+            existing = self.load_active_etf_holdings(etf_code)
+            existing_dates = set(pd.to_datetime(existing["snapshot_date"]).dt.date)
+            if snapshot_d in existing_dates:
+                return  # Skip appending
+            combined = pd.concat([existing, incoming], ignore_index=True)
+        else:
+            combined = incoming
+
+        try:
+            combined.to_parquet(path, index=False)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write active ETF holdings for {etf_code}: {path}") from exc
+
+    def load_active_etf_holdings(self, etf_code: str) -> pd.DataFrame:
+        path = self._active_etf_holdings_path(etf_code)
+        if not path.exists():
+            return pd.DataFrame(columns=["snapshot_date", "holding_code", "holding_name", "shares", "weight_pct"])
+        try:
+            loaded = pd.read_parquet(path)
+            if loaded.empty:
+                return pd.DataFrame(columns=["snapshot_date", "holding_code", "holding_name", "shares", "weight_pct"])
+            loaded["snapshot_date"] = pd.to_datetime(loaded["snapshot_date"]).dt.date
+            loaded["holding_code"] = loaded["holding_code"].fillna("").astype(str).str.strip()
+            loaded["holding_name"] = loaded["holding_name"].fillna("").astype(str).str.strip()
+            loaded["shares"] = pd.to_numeric(loaded["shares"], errors="coerce").fillna(0).astype("int64")
+            loaded["weight_pct"] = pd.to_numeric(loaded["weight_pct"], errors="coerce").fillna(0.0).astype("float64")
+            return loaded[["snapshot_date", "holding_code", "holding_name", "shares", "weight_pct"]].reset_index(drop=True)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read active ETF holdings for {etf_code}: {path}") from exc
+
+    def load_active_etf_holdings_dates(self, etf_code: str) -> list[date]:
+        df = self.load_active_etf_holdings(etf_code)
+        if df.empty:
+            return []
+        dates = sorted(list(set(df["snapshot_date"])))
+        return dates
 
     def clear_p11_parquets(
         self,

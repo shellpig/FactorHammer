@@ -21,7 +21,7 @@
 - Phase 14 14-A 已完成並通過驗證：LAN / Tailscale 多裝置存取，採 proxy 同源方案（Next.js `rewrites()` 反代 `/api/*` 至 `127.0.0.1:8000`、uvicorn / `pnpm dev` 綁 `0.0.0.0`、api-client `BASE_URL` 預設空字串走相對路徑、CORS 不動、`NEXT_PUBLIC_API_URL` 保留 escape hatch）；順手把 Next.js dev indicator 搬到右上角避免遮 Mobile Tab Bar。
 - Phase 14 14-B 已完成並通過驗證：手機端 UI 收尾，資料管理頁 mobile 隱藏「區間」「K 棒數」次要欄 + 名稱欄 truncate，toolbar 改為 mobile-only 兩列避免按鈕文字直排，Mobile Tab Bar / StockSelector / AI ChatInput `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value；不補 `@theme`、不動 API。
 - Phase 15 15-A-1 / 15-A-2 / 15-B / 15-C / 15-D / 15-E 已完成並通過驗證：DeepSeek provider、per-provider secrets validate、AI chat SSE streaming、前端接 SSE + 停止串流 + 思考中 placeholder、tool use、本機資料自動補抓 / 更新、AI 問答含息總報酬試算工具 `calculate_total_return` 已上線。
-- Phase 16 規格已新增並完成審核，尚未實作：主動式 ETF 持股追蹤，採 MoneyDJ `Basic0007B` 全量持股快照、`stock_info_tw.parquet` cache-first 名單、forward-only 快照累積、`holding_code` 保留完整 ticker（含 `.TW` / `.US`）、router write lock 保護 holdings append。
+- Phase 16 16-A 已完成並通過驗證：主動式 ETF 持股追蹤資料層，包含 MoneyDJ `Basic0007B` 全量持股 parser、`stock_info_tw.parquet` cache-first 名單、forward-only 快照累積、`holding_code` 保留完整 ticker（含 `.TW` / `.US`）、snapshot dedup、相鄰快照 diff。16-B / 16-C 尚未實作。
 - Phase 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成。
 
 ## 技術棧
@@ -259,13 +259,13 @@ risk:
 | 15-C | ✅ 完成 | AI 問答前端接 SSE：新增 `use-ai-chat.ts`（fetch + ReadableStream 解 SSE、`send` / `abort` / `messages` / `streaming`、`AbortController` 中止、`toApiMessages()` 過濾 greeting / 空訊息 / UI-only 欄位）、移除 `use-mock-chat.ts`；chat-page-client 加取消按鈕；逐 token 後以 `requestAnimationFrame` 讓出 paint，避免 React batching 造成整段跳出；空 assistant 泡泡顯示 `思考中...` 輕微閃爍；移除 sidebar「後續開放」徽章；訊息歷史不持久化；版號維持 `0.5.3`（取消誤 bump `0.7.0`）。Gate：`npx tsc --noEmit` 0 errors、vitest 64 files / 450 tests pass；使用者人工驗證 15-C-M1 ~ M5 完成 |
 | 15-D | ✅ 完成 | Chat 啟用 tool use：`AIAdvisor.stream_chat()` 多輪 tool 迴圈（最多 6 輪）+ 4 adapter tool_call delta accumulator；SSE 加 `tool_call` / `tool_result` event；前端顯示 tool chip，`use-ai-chat.ts` 以 `toApiMessages()` 過濾 UI-only entries（tool_call / tool_result / error-only / greeting）後才送 `/api/ai/chat`；日線工具在同一輪 chat 內對同一 `symbol+market` 最多自動補抓 / 更新一次，會先走 `api.job_manager` write lock，成功後續分析，失敗且本機有資料則 warning 後沿用既有資料，失敗且無資料則回結構化錯誤；DeepSeek 人工驗收 M1 ~ M4 已完成。Gate：targeted pytest 56 passed / 1 skipped、全套 pytest 690 passed / 12 deselected、`npx tsc --noEmit` 0 errors、vitest 64 files / 454 tests passed |
 | 15-E | ✅ 完成 | AI 問答投資試算工具 `calculate_total_return` 已完成並通過驗證：處理「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題；初版僅支援台股、raw daily + cash dividends、fractional shares、現金股利持有、不含稅費、不支援股利再投入與美股；含息模式受控刷新 dividends，失敗且無本機 dividends 不得以價格報酬冒充；AI 不得用 `get_price_data` 最近 60 筆 K 線自行推算長區間報酬 |
-| 16 | 📝 規格已定 | 主動式 ETF 持股追蹤規格已新增並完成審核，尚未實作：MoneyDJ `Basic0007B` 全量持股頁（不是前 10 大 `basic0007`）、ETF 名單重用 `stock_info_tw.parquet` cache-first + `^\d{5}A$` filter、持股快照 forward-only append + `snapshot_date` dedup、`holding_code` 保留完整 ticker（如 `2330.TW` / `TSLA.US`）、diff 以相鄰快照股數變化計算買進 / 賣出 / 新進 / 剔除；`/active-etf` 新頁規劃包含 ETF 選擇器、持股變動、目前總體持股；holdings append 由 API router 取得 write lock，`/list` cache 落地採 unique tmp + atomic replace |
+| 16 | 🚧 16-A 完成 | 16-A 資料層已完成並通過驗證：MoneyDJ `Basic0007B` 全量持股頁 parser（不是前 10 大 `basic0007`）、ETF 名單重用 `stock_info_tw.parquet` cache-first + `^\d{5}A$` filter、持股快照 forward-only append + `snapshot_date` dedup、`holding_code` 保留完整 ticker（如 `2330.TW` / `TSLA.US`）、diff 以相鄰快照股數變化計算買進 / 賣出 / 新進 / 剔除。16-B API + 前端頁與 16-C 整合驗證 / 文件尚未實作 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–14-B + 15-A-1 + 15-A-2 + 15-B + 15-C + 15-D + 15-E 全部完成並通過驗證；Phase 16 規格已定、尚未實作。** 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成；AI 問答支援 SSE streaming、停止串流、tool use、tool chip、日線資料自動補抓 / 更新與含息總報酬試算。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–14-B + 15-A-1 + 15-A-2 + 15-B + 15-C + 15-D + 15-E 全部完成並通過驗證；Phase 16 16-A 已完成並通過驗證，16-B / 16-C 尚未實作。** 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成；AI 問答支援 SSE streaming、停止串流、tool use、tool chip、日線資料自動補抓 / 更新與含息總報酬試算。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
 2026-05-24 狀態（資料管理頁 P11 toast / 個股 rebuild 行為改版）：
 - **入口語意重整**：資料管理頁按鈕「更新」→「更新日K」；個股動作欄新增「重建」按鈕（彈單檔確認 Dialog，含「請留意：重建會消耗較大量額度」警語）；「+ 新增標的」改走 `data_rebuild`，新標的一次拿到日K + P11；工具列下方新增黃色說明列。
