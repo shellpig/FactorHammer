@@ -61,7 +61,7 @@ export function BuySellPanel({ data }: BuySellPanelProps) {
               {buysAndEntries.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-2">無買進標的</p>
               ) : (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                <div className="space-y-2" data-testid="buy-list">
                   {buysAndEntries.map((row) => (
                     <div
                       key={row.holding_code || row.holding_name}
@@ -102,7 +102,7 @@ export function BuySellPanel({ data }: BuySellPanelProps) {
               {sellsAndExits.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-2">無賣出標的</p>
               ) : (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                <div className="space-y-2" data-testid="sell-list">
                   {sellsAndExits.map((row) => (
                     <div
                       key={row.holding_code || row.holding_name}

@@ -14,15 +14,23 @@ export function HoldingsTable({ data }: HoldingsTableProps) {
         <h2 className="font-semibold text-foreground">目前總體持股</h2>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] text-xs sm:text-sm border-collapse text-left" data-testid="holdings-table">
+        <table className="w-max min-w-[640px] max-w-full table-fixed text-xs sm:text-sm border-collapse text-left" data-testid="holdings-table">
+          <colgroup>
+            <col className="w-12" />
+            <col className="w-28" />
+            <col className="w-[30ch]" />
+            <col className="w-28" />
+            <col className="w-20" />
+            <col className="w-32" />
+          </colgroup>
           <thead>
             <tr className="border-b border-border bg-muted/10 text-muted-foreground font-medium text-xs">
-              <th className="p-2.5 w-14 text-center">排名</th>
-              <th className="p-2.5 w-28">代碼</th>
+              <th className="p-2.5 text-center">排名</th>
+              <th className="p-2.5">代碼</th>
               <th className="p-2.5">名稱</th>
               <th className="p-2.5 text-right">股數 (股)</th>
               <th className="p-2.5 text-right">權重 %</th>
-              <th className="p-2.5 text-right w-36">Δ 股數 (較前次)</th>
+              <th className="p-2.5 text-right">Δ 股數 (較前次)</th>
             </tr>
           </thead>
           <tbody>
@@ -36,7 +44,15 @@ export function HoldingsTable({ data }: HoldingsTableProps) {
                 <td className="p-2.5 font-mono font-medium text-foreground">
                   {row.holding_code || <span className="text-muted-foreground/40 font-sans">—</span>}
                 </td>
-                <td className="p-2.5 font-medium text-foreground">{row.holding_name}</td>
+                <td className="p-2.5 font-medium text-foreground">
+                  <span
+                    className="block max-w-[30ch] truncate"
+                    title={row.holding_name}
+                    data-testid="holding-name-cell"
+                  >
+                    {row.holding_name}
+                  </span>
+                </td>
                 <td className="p-2.5 text-right font-mono">{row.shares.toLocaleString()}</td>
                 <td className="p-2.5 text-right font-mono">{row.weight_pct.toFixed(2)}%</td>
                 <td className="p-2.5 text-right font-mono">

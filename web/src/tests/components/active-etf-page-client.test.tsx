@@ -118,6 +118,9 @@ describe("ActiveEtfPageClient", () => {
     expect(screen.getAllByText("台積電").length).toBeGreaterThan(0);
     expect(screen.getAllByText("2330.TW").length).toBeGreaterThan(0);
     expect(screen.getByText("15.50%")).toBeInTheDocument();
+    expect(screen.getByTestId("holdings-table")).toHaveClass("min-w-[640px]");
+    expect(screen.getByTestId("holding-name-cell")).toHaveClass("max-w-[30ch]", "truncate");
+    expect(screen.getByTestId("holding-name-cell")).toHaveAttribute("title", "台積電");
   });
 
   it("shows -- for all premium metrics when premium is null", () => {
@@ -331,6 +334,8 @@ describe("ActiveEtfPageClient", () => {
     expect(screen.getByText("-200 股")).toBeInTheDocument();
     expect(screen.getByTestId("buy-section-title")).toHaveClass("text-red-500");
     expect(screen.getByTestId("sell-section-title")).toHaveClass("text-emerald-500");
+    expect(screen.getByTestId("buy-list")).not.toHaveClass("max-h-[300px]", "overflow-y-auto");
+    expect(screen.getByTestId("sell-list")).not.toHaveClass("max-h-[300px]", "overflow-y-auto");
     expect(screen.getByTestId("buy-delta")).toHaveClass("text-red-500");
     expect(screen.getByTestId("sell-delta")).toHaveClass("text-emerald-500");
   });
