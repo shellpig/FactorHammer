@@ -10,6 +10,20 @@ import { FileText, AlertTriangle } from "lucide-react";
 
 const LOCAL_STORAGE_KEY = "qt-last-active-etf";
 
+function formatPremiumValue(value: number | null | undefined, suffix = "") {
+  if (value === null || value === undefined || Number.isNaN(value)) return "--";
+  return `${value.toFixed(2)}${suffix}`;
+}
+
+function premiumClassName(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "text-muted-foreground";
+  }
+  if (value > 0) return "text-red-400";
+  if (value < 0) return "text-emerald-400";
+  return "text-muted-foreground";
+}
+
 export function ActiveEtfPageClient() {
   const { etfs, isLoading: isListLoading, isError: isListError } = useActiveEtfList();
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
@@ -60,6 +74,8 @@ export function ActiveEtfPageClient() {
   const etfDisplayName = selectedEtfInfo
     ? `${selectedEtfInfo.code} ${selectedEtfInfo.name}`
     : selectedCode || "";
+  const premium = data?.premium;
+  const displayDate = premium?.data_date || data?.latest_date || "無";
 
   return (
     <div className="space-y-6 pb-16">
@@ -130,12 +146,32 @@ export function ActiveEtfPageClient() {
       ) : (
         <div className="space-y-6" data-testid="active-etf-content">
           {/* ETF Title Badge */}
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-md bg-primary/10 px-2.5 py-0.5 text-sm font-semibold text-primary">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="text-lg font-bold text-foreground" data-testid="active-etf-title">
               {etfDisplayName}
             </span>
-            <span className="text-xs text-muted-foreground">
-              資料日期：{data?.latest_date || "無"}
+            <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="active-etf-premium-metrics">
+              <span className="rounded-md border border-border bg-muted/25 px-2 py-1 text-muted-foreground">
+                成交價{" "}
+                <span className="font-mono font-semibold text-foreground">
+                  {formatPremiumValue(premium?.market_price)}
+                </span>
+              </span>
+              <span className="rounded-md border border-border bg-muted/25 px-2 py-1 text-muted-foreground">
+                預估淨值{" "}
+                <span className="font-mono font-semibold text-foreground">
+                  {formatPremiumValue(premium?.estimated_nav)}
+                </span>
+              </span>
+              <span className="rounded-md border border-border bg-muted/25 px-2 py-1 text-muted-foreground">
+                預估折溢價{" "}
+                <span className={`font-mono font-semibold ${premiumClassName(premium?.premium_discount_pct)}`}>
+                  {formatPremiumValue(premium?.premium_discount_pct, "%")}
+                </span>
+              </span>
+            </div>
+            <span className="text-xs text-muted-foreground" data-testid="active-etf-data-date">
+              資料日期：{displayDate}
             </span>
           </div>
 

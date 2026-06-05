@@ -1336,6 +1336,94 @@ class ActiveEtfSource(ABC):
         """
 
 
+@dataclass(frozen=True)
+class ActiveEtfPremiumSnapshot:
+    """TWSE ETF NAV / premium-discount snapshot."""
+
+    etf_code: str
+    etf_name: str
+    market_price: float | None
+    estimated_nav: float | None
+    premium_discount_pct: float | None
+    previous_nav: float | None
+    data_date: str
+    data_time: str
+    source: str = "twse_mis"
+
+
+class TwseEtfNavSource:
+    """TWSE MIS ETF NAV and premium/discount source."""
+
+    PAGE_URL = "https://mis.twse.com.tw/stock/etf_nav.jsp?ex=tse"
+    DATA_URL = "https://mis.twse.com.tw/stock/data/all_etf.txt"
+
+    def __init__(self, session: requests.Session | None = None, timeout_seconds: int = 20):
+        self._session = session or requests.Session()
+        self._timeout_seconds = timeout_seconds
+
+    def fetch_premium(self, etf_code: str) -> ActiveEtfPremiumSnapshot | None:
+        """Fetch a single ETF premium/discount row from TWSE MIS."""
+        import re
+
+        normalized_code = str(etf_code).strip().upper()
+        if not re.match(r"^\d{5}A$", normalized_code):
+            return None
+
+        try:
+            self._session.get(self.PAGE_URL, timeout=self._timeout_seconds)
+            response = self._session.get(
+                self.DATA_URL,
+                params={"_": str(int(time.time() * 1000))},
+                headers={
+                    "Referer": self.PAGE_URL,
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                },
+                timeout=self._timeout_seconds,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:  # noqa: BLE001
+            raise FetcherError(f"Failed to fetch ETF NAV data from TWSE MIS: {exc}") from exc
+
+        for group in payload.get("a1", []):
+            if not isinstance(group, dict):
+                continue
+            for row in group.get("msgArray", []):
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("a", "")).strip().upper() == normalized_code:
+                    return ActiveEtfPremiumSnapshot(
+                        etf_code=normalized_code,
+                        etf_name=str(row.get("b", "")).strip(),
+                        market_price=_to_optional_float(row.get("e")),
+                        estimated_nav=_to_optional_float(row.get("f")),
+                        premium_discount_pct=_to_optional_float(row.get("g")),
+                        previous_nav=_to_optional_float(row.get("h")),
+                        data_date=_format_yyyymmdd(row.get("i")),
+                        data_time=str(row.get("j", "")).strip(),
+                    )
+
+        return None
+
+
+def _to_optional_float(value: Any) -> float | None:
+    text = str(value or "").strip().replace(",", "")
+    if text == "" or "未結出" in text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _format_yyyymmdd(value: Any) -> str:
+    text = str(value or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    return text
+
+
 
 class _RelaxedStrictHTTPAdapter(HTTPAdapter):
     """Keeps full TLS chain verification but disables OpenSSL 3.x strict mode.

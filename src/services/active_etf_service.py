@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 
 from src.core.exceptions import FetcherError
-from src.data.fetcher import MoneyDjActiveEtfSource
+from src.data.fetcher import ActiveEtfPremiumSnapshot, MoneyDjActiveEtfSource, TwseEtfNavSource
 from src.data.storage import ParquetStorage, StorageError
 
 import threading
@@ -22,6 +22,7 @@ _CACHE_TTL_SECONDS = 60
 # Phase 16-D sweep cache and per-ETF locks
 _SWEEP_CACHE: dict[str, float] = {}
 _ETF_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)
+_PREMIUM_CACHE: dict[str, tuple[float, ActiveEtfPremiumSnapshot | None]] = {}
 
 
 
@@ -94,6 +95,7 @@ class ActiveEtfService:
         This method is sync and coordinates fetching, storage, and diff calculation.
         """
         normalized_code = str(etf_code).strip().upper()
+        premium = self.get_premium_snapshot(normalized_code)
 
         # Check process-level cache TTL
         now = time.time()
@@ -129,6 +131,7 @@ class ActiveEtfService:
             return {
                 "etf_code": normalized_code,
                 "etf_name": etf_name,
+                "premium": premium,
                 "latest_date": None,
                 "previous_date": None,
                 "has_previous": False,
@@ -160,6 +163,7 @@ class ActiveEtfService:
             return {
                 "etf_code": normalized_code,
                 "etf_name": etf_name,
+                "premium": premium,
                 "latest_date": latest_date.strftime("%Y-%m-%d"),
                 "previous_date": previous_date.strftime("%Y-%m-%d") if previous_date else None,
                 "has_previous": has_previous,
@@ -280,6 +284,7 @@ class ActiveEtfService:
         return {
             "etf_code": normalized_code,
             "etf_name": etf_name,
+            "premium": premium,
             "latest_date": latest_date.strftime("%Y-%m-%d"),
             "previous_date": previous_date.strftime("%Y-%m-%d") if previous_date else None,
             "has_previous": has_previous,
@@ -290,6 +295,38 @@ class ActiveEtfService:
                 "entries": entries,
                 "exits": exits,
             },
+        }
+
+    def get_premium_snapshot(self, etf_code: str) -> dict[str, Any] | None:
+        """Return TWSE NAV / premium-discount data for a single active ETF."""
+        normalized_code = str(etf_code).strip().upper()
+        now = time.time()
+        cached = _PREMIUM_CACHE.get(normalized_code)
+        if cached and now - cached[0] < _CACHE_TTL_SECONDS:
+            return self._premium_to_dict(cached[1])
+
+        try:
+            snapshot = TwseEtfNavSource().fetch_premium(normalized_code)
+        except Exception:  # noqa: BLE001
+            snapshot = None
+
+        _PREMIUM_CACHE[normalized_code] = (time.time(), snapshot)
+        return self._premium_to_dict(snapshot)
+
+    @staticmethod
+    def _premium_to_dict(snapshot: ActiveEtfPremiumSnapshot | None) -> dict[str, Any] | None:
+        if snapshot is None:
+            return None
+        return {
+            "etf_code": snapshot.etf_code,
+            "etf_name": snapshot.etf_name,
+            "market_price": snapshot.market_price,
+            "estimated_nav": snapshot.estimated_nav,
+            "premium_discount_pct": snapshot.premium_discount_pct,
+            "previous_nav": snapshot.previous_nav,
+            "data_date": snapshot.data_date,
+            "data_time": snapshot.data_time,
+            "source": snapshot.source,
         }
 
     def refresh_holdings_snapshot(self, etf_code: str, latest_close_date: datetime.date | None = None) -> None:

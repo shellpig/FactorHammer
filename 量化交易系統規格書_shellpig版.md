@@ -33,6 +33,7 @@
 | **V3.5** | 2026/05/24 | 新增 **Phase 15-E AI 問答投資試算工具** 規格。15-D tool use 完成後，AI 問答需能處理「指定期間投入金額、含股利 / 含息 / 總報酬 / 年化報酬」問題，不得再用 `get_price_data` 最近 60 筆 K 線推算長區間報酬或誤稱本機無完整資料。新增 `calculate_total_return` tool：初版僅支援台股、raw daily + cash dividends、fractional shares、現金股利持有、不含稅費、不支援股利再投入與美股。規格定義 tool schema、日期對齊、日線與 dividends 自動更新 / fallback / error 規則、股利篩選區間、股票股利 warning、output schema、AI 回答規則、pytest / API / vitest / DeepSeek 手動驗收與完成定義。 |
 | **V3.6** | 2026/06/04 | 新增 **Phase 16 主動式 ETF 持股追蹤** 規格並完成收尾。實作 MoneyDJ `Basic0007B` 全量持股 parser 與本機快照儲存、相鄰快照 `delta_shares` diff；新增 `/api/active-etf` API 與前端「主動ETF」新頁（ETF 選擇器、持股變動 diff 面板、總體持股 table）。16-C 整合驗證通過：全套 pytest / tsc / vitest 全綠、16-B-M1 ~ M7 手動驗收完成、四份文件同步，三處版本號（`pyproject.toml` / `web/package.json` / `api/main.py`）bump 至 `0.8.0`。 |
 | **V3.7** | 2026/06/04 | 新增 **Phase 16-D 每日全量 sweep** 規格。進入主動ETF頁時 `POST /api/active-etf/sweep` 觸發背景 sweep，依「ETF 自身收盤日 > 持股最新快照日」per-ETF gating 自動補齊落後檔快照。設計拍板：觸發=進頁背景；機制 M2（輕量 `asyncio` 背景 task、**不取全域 write lock**、無 SSE、檔間禮貌延遲、單檔失敗不中斷、跳過當前選中檔、重疊 no-op）；收盤日來源 B（即時查價源拿日期、不落地日 K / 不進 data_meta）；節流 T1。本質 best-effort（本機不常駐，無法保證每交易日有快照）。**2026-06-04 codex 二審修訂（5 findings）**：(P1-1) `POST /sweep?skip_code=` 補 query schema、前端等 selectedCode resolved 才觸發；(P1-2，拍板 A) active-etf 改 **專用 per-ETF lock、不碰 job_manager 全域鎖**，on-view 與 sweep 共用同一把（16-B append 鎖一併遷移）；(P1-3) 拆 `_SWEEP_CACHE` / `_HOLDINGS_CACHE` 兩個 60s cache，避免 sweep TTL 誤擋 on-view 強抓；(P2-1) sweep 改呼叫精簡的 `refresh_holdings_snapshot()`（只 fetch + dedup、不算 diff）；(P2-2) 補前端 mount 觸發 + skip_code Vitest。16-D 待實作。 |
+| **V3.8** | 2026/06/04 | 新增 **Phase 16-E 主動 ETF 折溢價資訊列** 規格。主動ETF頁在標的名稱與資料日期中間顯示 `成交價`、`預估淨值`、`預估折溢價幅度`；ETF 標題字級需大於下方卡片標題「持股變動」。資料來源採 TWSE MIS ETF 預估淨值端點（`etf_nav.jsp` → `stock/data/all_etf.txt`），只取 ETF 層級欄位，不自行以持股估算、不落地、不進 `data_meta`；API 在 `GET /api/active-etf/{code}/holdings` 回傳 optional `premium` object，TWSE 失敗時降級為 `null` 不影響持股頁。 |
 | **V2.7** | 2026/05/16 | **10-E 規格審查補丁**（12 項）：(1) `JobManager.finish_cancelled_job()` 新增（含 `cancel_job()` race condition 修正——只設 status、不關 queue）；(2) `GET /api/jobs/{id}/result` 擴充允許 cancelled + partial result；(3) 取消 `api/routers/backtest.py` 冗餘端點，前端直接用 `GET /api/config` 取 preset 清單；(4) `initial_capital` 預設 `1000000`，需新增為 `run_backtest_job()` 參數並注入引擎；(5) DCA 序列化映射補充（equity_curve / trades / metrics null 欄位）；(6) `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表；(7) WFA 特化 `WfaProgress` interface 補充；(8) CSV blob 函式位置指定 `src/services/backtest_service.py`；(9) E2E Playwright 統一在 10-E-4 後撰寫；(10) **交易數量單位統一顯示「股」（shares），不做 1000 股→1 張轉換**（與舊 Streamlit 回測頁一致；「張」僅用於 10-D 儀表板的日成交量與籌碼顯示）；(11) 切換市場時 reset state（清空回測結果）；(12) DCA 批次比較 error message 明確定義為「DCA 不支援批次比較（請至單次回測使用）」。 |
 
 ---
@@ -5873,10 +5874,11 @@ M9. 模擬 dividends 補抓失敗且本機無 dividends：AI 不得回價格報�
 
 ---
 
-## Phase 16：主動式 ETF 持股追蹤 [16-A~C ✅ · 16-D 待實作]
+## Phase 16：主動式 ETF 持股追蹤
 
 > 目標：追蹤台股**主動式 ETF**每日持股變化。畫面一次看一檔，提供兩塊資訊：①持股變動、②目前總體持股。
 > **持股資料**源為 MoneyDJ 靜態 HTML 持股頁；**持股不接 FinMind、不算金額、不碰股價、不接實盤**。純粹「抓快照 → 落地 → 相鄰兩快照 diff 股數」。
+> **ETF 層級折溢價資訊**另由 TWSE MIS 預估淨值資料取得（16-E），僅顯示成交價、預估淨值、預估折溢價幅度；不以持股自行估算。
 > （**ETF 名單**另重用既有 FinMind `TaiwanStockInfo` cache，見「名單範圍」；「不接 FinMind」僅指持股資料，不含名單。）
 > 注意：股票型主動 ETF 可持有**海外股**（如 00983A 持有 `TSLA.US` / `AMD.US`），故持股資料模型必須市場中立（見資料模型）。
 > 拍板日：2026-06-04（grill 規格討論，使用者逐題確認）；2026-06-04 codex 二審補強。
@@ -5889,6 +5891,7 @@ M9. 模擬 dividends 補抓失敗且本機無 dividends：AI 不得回價格報�
 | **16-B API + 前端頁** | FastAPI router（名單、單檔持股+diff、on-view lazy fetch）+ Next.js `主動ETF` 新頁（ETF 選擇器 + ①持股變動 + ②總體持股、雙日期標示、響應式） | `api/`、`web/` |
 | **16-C 整合驗證 + 文件** | 手動驗收 + 規格書 / 設計方針 / 測試指南 / PROJECT_BRIEF 收束 | 文件 / 回歸 |
 | **16-D 每日全量 sweep** | 進頁觸發背景 sweep，依「ETF 自身收盤日 > 持股最新快照日」per-ETF gating 自動補齊落後檔快照（M2 背景 task、不取全域寫鎖、60s sweep TTL、跳過當前檔） | `api/`、`src/services/`、`web/` |
+| **16-E 折溢價資訊列** | 在主動ETF頁標題列新增 `成交價`、`預估淨值`、`預估折溢價幅度`；資料源為 TWSE MIS ETF 預估淨值端點，後端以 optional `premium` object 回傳，失敗降級為 `null` | `src/data/`、`src/services/`、`web/` |
 
 backend-first：16-A 純 Python 可獨立 pytest 完成，diff 語意為核心風險先釘死；16-B 才碰 API/UI；16-C 走 verifier 角色收文件。
 
@@ -5911,6 +5914,30 @@ backend-first：16-A 純 Python 可獨立 pytest 完成，diff 語意為核心�
 - 優點：伺服器渲染靜態 HTML（curl 可取）、含「個股名稱（內嵌代碼，如 `台積電(2330.TW)`）/ 投資比例% / 持有股數（股）」、頁面標示「資料日期」、URL 格式統一→一支 parser 涵蓋全部主動 ETF。
 - **已知風險（必須在設計上隔離）**：MoneyDJ 為商業聚合站、**非官方**，可能落後原始揭露、有 ToS 灰色地帶、改版即壞、可能擋爬蟲。因此 fetcher 必須設計為**可抽換的資料源 seam**（介面與實作分離），未來若要改投信官方 headless 抓取，只換 fetcher 不動 service / API / UI。
 - 考量本工具為個人研究用途（個版、不商用、不接實盤），v1 接受上述風險。
+
+### 16-E ETF 折溢價資料源
+
+16-E 不自行用持股估算折溢價，改取 TWSE MIS 已提供的 ETF 預估淨值資料：
+
+| 來源 | 欄位 | 可程式化 | 判定 |
+|:---|:---|:---:|:---|
+| **TWSE MIS `stock/data/all_etf.txt`** | 成交價、預估淨值、預估折溢價幅度、資料日期 / 時間 | ✅ | **採用**。需先進入 `https://mis.twse.com.tw/stock/etf_nav.jsp?ex=tse` 建立 referer/context，再抓 `https://mis.twse.com.tw/stock/data/all_etf.txt?_=<unix_ms>` |
+
+欄位對應：
+
+| TWSE 欄位 | 內部欄位 | UI 文字 |
+|:---|:---|:---|
+| `a` | `etf_code` | ETF 代碼 |
+| `b` | `etf_name` | ETF 名稱 |
+| `e` | `market_price` | 成交價 |
+| `f` | `estimated_nav` | 預估淨值 |
+| `g` | `premium_discount_pct` | 預估折溢價幅度 |
+| `i` | `data_date` | 資料日期 |
+| `j` | `data_time` | 資料時間 |
+
+- 16-E 僅抓 ETF 自身的即時 / 估算欄位；不以 `holdings.parquet`、成分股價格或權重自行估算 NAV。
+- 此資料不落地、不進 `data_meta`、不影響資料管理頁；每次 `GET /api/active-etf/{code}/holdings` 可用短 TTL 取最新 snapshot。
+- TWSE MIS 失敗、缺欄位、該 ETF 無 row、數值為空或 `未結出` 時，後端回 `premium=null` 或欄位值為 `null`；持股與 diff 仍照常顯示。
 
 ### 16 名單範圍（universe）
 
@@ -5984,6 +6011,17 @@ data/raw/tw_active_etf/
   "latest_date": "2026-06-04",
   "previous_date": "2026-06-03",
   "has_previous": true,
+  "premium": {
+    "etf_code": "00981A",
+    "etf_name": "主動統一台股增長",
+    "market_price": 31.36,
+    "estimated_nav": 31.25,
+    "premium_discount_pct": 0.35,
+    "previous_nav": 31.08,
+    "data_date": "2026-06-04",
+    "data_time": "16:59:55",
+    "source": "twse_mis"
+  },
   "holdings": [
     { "rank": 1, "holding_code": "2330.TW", "holding_name": "台積電", "shares": 1234000, "weight_pct": 23.5, "delta_shares": 12000 },
     { "rank": 2, "holding_code": "TSLA.US", "holding_name": "Tesla",  "shares": 16131,   "weight_pct": 9.08,  "delta_shares": -500 }
@@ -5998,6 +6036,7 @@ data/raw/tw_active_etf/
 ```
 
 - `has_previous=false`（首次擷取）時：`previous_date=null`、`changes` 各陣列為空、`holdings[].delta_shares=null`。
+- `premium` 為 16-E optional object；TWSE MIS 失敗、缺資料或該欄位未結出時回 `null`，不得讓 `holdings` 端點失敗。`market_price`、`estimated_nav`、`premium_discount_pct`、`previous_nav` 允許為 `null`。
 - **ETF code 正規化與防護（2026-06-04 codex 審核補強）**：API / service / storage 只接受 `^\d{5}A$`，一律轉大寫；不符回 `422`。storage 寫檔前 path 必須 `resolve()` 後確認仍位於 `data/raw/tw_active_etf/` 之下（沿用 Phase 9-A symbol 路徑穿越防護），拒絕任何穿越。
 - **write lock 責任層（2026-06-04 codex 審核更正；16-D 修訂見下）**：`{code}/holdings` 的 **append 落地** write lock 由 **API router 層**取得 / 釋放，沿用 `api/routers/data.py` 模式（`if manager.is_write_locked(): 409` → `await manager.acquire_write_lock()` → `finally: release_write_lock()`）。`ActiveEtfService` 維持 **sync**、**不得 import `api.job_manager`**；`acquire_write_lock()` 為 async，不可在 sync service 內呼叫。
   - **⚠️ 16-D 改寫（2026-06-04 codex 二審拍板 A）**：因 16-D 背景 sweep 不可與 `data_update` / `backtest` 互卡，active-etf 的 holdings append 保護**從 job_manager 全域 write lock 改為 active-etf 專用 per-ETF lock**（`holdings.parquet` 為各檔獨立小檔，與主資料管線寫的檔完全不重疊，本就不該共用全域鎖）。**on-view (`GET /{code}/holdings`) 與 sweep 共用同一把 per-ETF lock**（同 `etf_code` 才互斥，否則防不了雙寫）；詳見「16-D：每日全量 sweep 設計」。
@@ -6009,16 +6048,21 @@ data/raw/tw_active_etf/
 
 頁面組成：
 
-1. **ETF 選擇器**：列出 `GET /list` 全部主動 ETF（代碼 + 名稱），可搜尋；選定後一次只呈現該檔。預設可記憶上次選擇（localStorage）。
-2. **①持股變動**（區塊一）：
+1. **標的資訊列（16-E）**：
+   - 位置：`{etf_code} {etf_name}` 後方、`資料日期：{date}` 前方，顯示三個 inline 指標：`成交價 {market_price}`、`預估淨值 {estimated_nav}`、`預估折溢價 {premium_discount_pct}%`。
+   - ETF 標題（例如 `00403A 主動統一升級50`）字級需大於下方卡片標題「持股變動」，但仍維持工具頁資訊列，不做 hero。
+   - `資料日期` 優先使用 `premium.data_date`；若 `premium=null`，fallback `latest_date`。
+   - `premium=null` 或單一數值為 `null` 時顯示 `--`，不顯示錯誤卡；折溢價幅度正值可用紅色、負值可用綠色、零或缺值用 muted。
+2. **ETF 選擇器**：列出 `GET /list` 全部主動 ETF（代碼 + 名稱），可搜尋；選定後一次只呈現該檔。預設可記憶上次選擇（localStorage）。
+3. **①持股變動**（區塊一）：
    - **UI 主標題為「持股變動」**（不用「前一日買賣」，避免快照非相鄰交易日時誤導）；**副標為日期區間**，標示實際比較的兩個快照「`{previous_date}` → `{latest_date}`」。
    - **全部**有變動的個股（不限 top10），分「買進」「賣出」兩區，各依 `|delta_shares|` 由大到小；新進標「新進」、剔除標「剔除」徽章。
    - `delta_shares` 顯示單位為**股**（不除以 1000）。
    - `has_previous=false`：顯示「首次擷取，尚無前次資料可比較」。
-3. **②目前總體持股**（區塊二）：
+4. **②目前總體持股**（區塊二）：
    - **全部**持股表，欄位：`排名 / 個股名稱 / 股數(股) / 權重% / Δ股數(較前次)`，依權重由大到小。
    - `delta_shares` 與區塊一同源；`has_previous=false` 時 Δ欄留白。
-4. **響應式**：沿用全站 layout 慣例支援桌機 + 手機。
+5. **響應式**：沿用全站 layout 慣例支援桌機 + 手機。
 
 ### 16 邊界與限制
 
@@ -6034,6 +6078,7 @@ data/raw/tw_active_etf/
 | ETF 名單來源 | 重用 FinMind `TaiwanStockInfo` cache（cache-first、失敗回空）；「持股不接 FinMind」僅指持股，名單可用 cache |
 | data_meta | 主動 ETF 資料不進 `data_meta`，不影響資料管理頁狀態 |
 | 持股股價 / FinMind | 持股資料完全不依賴股價 / FinMind（名單除外） |
+| 折溢價資訊 | 16-E 只取 TWSE MIS ETF 預估淨值欄位；不自行用持股 / 股價計算 NAV 或折溢價，不落地、不進 `data_meta` |
 
 ### 16-D：每日全量 sweep 設計（2026-06-04 拍板）
 
@@ -6071,6 +6116,22 @@ data/raw/tw_active_etf/
 - sweep 只負責「補快照」，不回傳資料給前端；前端仍以 `GET /{code}/holdings` 取數。因 sweep 跳過當前選中檔，不需 sweep 完成後刷新當前檔。
 - **不引入排程（cron / Task Scheduler）** —— 本機工具常關機，排程不可靠且違背零伺服器原則。
 
+### 16-E：折溢價資訊列（2026-06-04）
+
+> 需求：主動ETF頁標題列需在 `00403A 主動統一升級50` 與 `資料日期：2026-06-04` 中間新增 `成交價`、`預估淨值`、`預估折溢價幅度`，且 ETF 標題文字要比下方「持股變動」卡片標題更大。
+
+**後端**
+- 新增 TWSE MIS ETF NAV source：先 GET `https://mis.twse.com.tw/stock/etf_nav.jsp?ex=tse`，再以該頁作 referer GET `https://mis.twse.com.tw/stock/data/all_etf.txt?_=<unix_ms>`。
+- 解析 top-level `a1[*].msgArray[*]`，以 `a == etf_code` 找出目標 ETF；欄位 mapping 依「16-E ETF 折溢價資料源」。
+- `ActiveEtfService.get_holdings_with_diff()` 在既有持股 / diff payload 之外補 `premium`；TWSE source exception 必須被 service 捕捉並降級為 `None`，不得讓持股頁 500。
+- 可加 process 內短 TTL（沿用 60s）避免同檔反覆打 TWSE MIS；cache key 為 ETF code，允許 cache `None`。
+
+**前端**
+- `ActiveEtfHoldingsResponse` 加 optional `premium?: ActiveEtfPremium | null`。
+- `ActiveEtfPageClient` 標題列 layout 順序固定為：`{etf_code} {etf_name}` → 三個折溢價指標 → `資料日期：{displayDate}`。
+- ETF 標題需使用比「持股變動」更大的字級；資訊列需支援窄寬度 wrapping，不能擠壓或重疊。
+- 三個指標缺值顯示 `--`；折溢價幅度格式為百分點數值加 `%`，不可再除以 100。
+
 ### 16 各階段驗收標準
 
 **16-A（資料層）**
@@ -6101,6 +6162,13 @@ data/raw/tw_active_etf/
 6. 查收盤日失敗的檔本輪跳過、不盲抓、不寫 `_SWEEP_CACHE`。
 7. 前端：頁面 mount 在 `selectedCode` resolved 後 fire-and-forget `POST /sweep?skip_code=...`，該呼叫失敗不影響 `GET /list` / `GET /{code}/holdings`。
 
+**16-E（折溢價資訊列）**
+1. TWSE MIS source 以 fixture / mock 驗證：先打 referer page，再打 `stock/data/all_etf.txt`；能從 `a1[*].msgArray[*]` 找到指定 ETF 並 mapping `成交價 / 預估淨值 / 預估折溢價幅度 / 資料日期 / 時間`。
+2. service payload 在既有 `holdings` / `changes` 之外回 `premium`；TWSE 失敗時 `premium=null`，`GET /holdings` 仍成功。
+3. 前端標題列順序符合需求：`ETF 代碼+名稱` → `成交價` → `預估淨值` → `預估折溢價幅度` → `資料日期`。
+4. ETF 標題字級大於「持股變動」卡片標題；窄版 wrapping 後不得遮擋或擠壓。
+5. `premium=null` 或個別欄位缺值時顯示 `--`；折溢價幅度以百分點顯示，不做額外換算。
+
 ### 16 完成定義
 
 1. 側邊欄新增「主動ETF」入口，新頁可運作。
@@ -6110,6 +6178,7 @@ data/raw/tw_active_etf/
 5. 首次擷取有明確「尚無前次可比較」文案。
 6. 持股資料不依賴股價 / FinMind；fetcher 為可抽換 seam。
 7. 自動測試覆蓋 parser、dedup、diff 四情況、API shape、前端兩塊渲染。
+8. 16-E 標題列顯示 TWSE MIS 的成交價、預估淨值、預估折溢價幅度；資料源失敗可降級，不影響持股頁。
 
 ### 16 共用注意
 

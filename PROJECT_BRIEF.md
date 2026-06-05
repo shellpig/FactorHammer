@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-06-04
+最後更新：2026-06-05
 
 ---
 
@@ -21,7 +21,7 @@
 - Phase 14 14-A 已完成並通過驗證：LAN / Tailscale 多裝置存取，採 proxy 同源方案（Next.js `rewrites()` 反代 `/api/*` 至 `127.0.0.1:8000`、uvicorn / `pnpm dev` 綁 `0.0.0.0`、api-client `BASE_URL` 預設空字串走相對路徑、CORS 不動、`NEXT_PUBLIC_API_URL` 保留 escape hatch）；順手把 Next.js dev indicator 搬到右上角避免遮 Mobile Tab Bar。
 - Phase 14 14-B 已完成並通過驗證：手機端 UI 收尾，資料管理頁 mobile 隱藏「區間」「K 棒數」次要欄 + 名稱欄 truncate，toolbar 改為 mobile-only 兩列避免按鈕文字直排，Mobile Tab Bar / StockSelector / AI ChatInput `bg-background` 改 `bg-[hsl(var(--background))]` arbitrary value；不補 `@theme`、不動 API。
 - Phase 15 15-A-1 / 15-A-2 / 15-B / 15-C / 15-D / 15-E 已完成並通過驗證：DeepSeek provider、per-provider secrets validate、AI chat SSE streaming、前端接 SSE + 停止串流 + 思考中 placeholder、tool use、本機資料自動補抓 / 更新、AI 問答含息總報酬試算工具 `calculate_total_return` 已上線。
-- Phase 16 16-A / 16-B / 16-C / 16-D 已全部完成並通過驗證；16-E 已實作並通過自動化測試、待使用者手動驗證。16-A 資料層含 MoneyDJ `Basic0007B` 全量持股 parser、`stock_info_tw.parquet` cache-first 名單、forward-only 快照累積、`holding_code` 保留完整 ticker（含 `.TW` / `.US`）、snapshot dedup、相鄰快照 diff；16-B 上線 `/api/active-etf` FastAPI router + Next.js `/active-etf` 頁（持股表、買賣增減 diff 面板、ETF 選擇器）+ hooks / types + sidebar「主動ETF」入口，並修正 MoneyDJ 抓取兩處可靠性問題（TLS `VERIFY_X509_STRICT` 放寬保留完整憑證鏈驗證、UTF-8 無 charset header 解碼 fallback），使用者實機驗證通過；16-C 整合驗證與文件收尾已完成；16-D 每日全量 sweep 已完成，進主動ETF頁背景觸發 `POST /api/active-etf/sweep?skip_code=`，採 per-ETF lock、收盤日 gating、`_SWEEP_CACHE` / `_HOLDINGS_CACHE` 雙 cache，且已通過自動化與使用者手動驗證；16-E 在主動ETF標題列新增 TWSE MIS 的 `成交價`、`預估淨值`、`預估折溢價幅度` optional `premium` payload，資料源失敗降級為 `null` 不影響持股頁，ETF 標題字級放大。
+- Phase 16 16-A / 16-B / 16-C / 16-D / 16-E 已全部完成並通過驗證。16-A 資料層含 MoneyDJ `Basic0007B` 全量持股 parser、`stock_info_tw.parquet` cache-first 名單、forward-only 快照累積、`holding_code` 保留完整 ticker（含 `.TW` / `.US`）、snapshot dedup、相鄰快照 diff；16-B 上線 `/api/active-etf` FastAPI router + Next.js `/active-etf` 頁（持股表、買賣增減 diff 面板、ETF 選擇器）+ hooks / types + sidebar「主動ETF」入口，並修正 MoneyDJ 抓取兩處可靠性問題（TLS `VERIFY_X509_STRICT` 放寬保留完整憑證鏈驗證、UTF-8 無 charset header 解碼 fallback），使用者實機驗證通過；16-C 整合驗證與文件收尾已完成；16-D 每日全量 sweep 已完成，進主動ETF頁背景觸發 `POST /api/active-etf/sweep?skip_code=`，採 per-ETF lock、收盤日 gating、`_SWEEP_CACHE` / `_HOLDINGS_CACHE` 雙 cache，且已通過自動化與使用者手動驗證；16-E 在主動ETF標題列新增 TWSE MIS 的 `成交價`、`預估淨值`、`預估折溢價幅度` optional `premium` payload，資料源失敗降級為 `null` 不影響持股頁，ETF 標題字級放大，且已於 2026-06-05 通過使用者手動驗證。
 - Phase 10-F-2（AI 問答接 LLM）已由 Phase 15-B / 15-C / 15-D 接手完成。
 
 ## 技術棧
@@ -263,7 +263,7 @@ risk:
 | 16-B | ✅ 完成 | 主動式 ETF API + 前端頁已完成並通過實機驗證：`/api/active-etf` FastAPI router（名單、單檔持股 + diff、on-view lazy fetch、holdings 60s TTL、`/list` unique tmp + atomic replace）+ Next.js `/active-etf` 新頁（ETF 選擇器 + ① 持股變動買賣增減 diff 面板 + ② 目前總體持股 table、雙日期標示、響應式）+ `use-active-etf` hook / `active-etf` types + sidebar「主動ETF」入口。MoneyDJ 抓取修正兩處可靠性問題：(1) TLS 掛 `_RelaxedStrictHTTPAdapter` 清掉 OpenSSL 3.x `VERIFY_X509_STRICT`（保留完整憑證鏈驗證，僅放寬 MoneyDJ CA 缺 Subject Key Identifier 的 strict 拒絕，scope 限 `www.moneydj.com`）；(2) UTF-8 回應無 charset header 時 `requests` 預設 ISO-8859-1 解碼導致中文亂碼 → parser 找不到表格，改在偵測到 latin-1 預設時用 `apparent_encoding` fallback。新增 3 條 fetcher regression（adapter scope、injected session 不動、charsetless UTF-8 解碼）；targeted pytest `test_active_etf.py + test_active_etf_api.py + test_fetcher.py` 59 passed |
 | 16-C | ✅ 完成 | 整合驗證 + 文件收束：手動驗收 16-B-M1 ~ M7 順利通過、全專案自動化測試（pytest / vitest）無 regression、規格書 / 設計方針 / 測試指南 / `PROJECT_BRIEF` 同步完成。 |
 | 16-D | ✅ 完成 | 每日全量 sweep 已完成並通過驗證：進主動ETF頁背景觸發 `POST /api/active-etf/sweep?skip_code=`，依「ETF 自身收盤日 > 持股最新快照日」per-ETF gating 自動補齊落後檔快照；active-etf 專用 per-ETF `threading.Lock` 取代 job_manager 全域鎖，on-view append 與 sweep 共用同檔 lock；收盤日來源 B 只即時查價源、不落地日 K / 不進 data_meta；`_SWEEP_CACHE` / `_HOLDINGS_CACHE` 雙 cache 分離；`refresh_holdings_snapshot()` 只 fetch + dedup save、不算 diff；跳過當前選中檔、重疊 sweep no-op。Gate：targeted pytest 23 passed、`test_fetcher.py` 32 passed / 8 deselected、全 pytest 753 passed / 12 deselected、`npx tsc --noEmit` 0 errors、vitest 65 files / 474 tests passed；使用者手動確認 16-D 驗證完成。 |
-| 16-E | ✅ 完成 | 主動ETF折溢價資訊列已完成並通過驗證：新增 TWSE MIS ETF 預估淨值資料源（`etf_nav.jsp` referer + `stock/data/all_etf.txt`，解析 `a1[*].msgArray[*]` 的成交價 / 預估淨值 / 預估折溢價幅度 / 資料日期時間）；`GET /api/active-etf/{code}/holdings` 補 optional `premium` object，TWSE 失敗或缺值降級 `premium=null` / `--`，不影響 holdings / diff；前端標題列順序為 `ETF 代碼+名稱` → `成交價` → `預估淨值` → `預估折溢價` → `資料日期`，且 ETF 標題字級大於「持股變動」。Code review 通過（規格合規 14/14、無 critical issue）；補齊 6 條測試缺口（前端 premium null / partial-null 降級、API 層 TWSE 失敗降級、fetcher ETF not found / `_to_optional_float` / `_format_yyyymmdd` 邊界）。Gate：targeted pytest 28 passed、`npx tsc --noEmit` 0 errors、Vitest 9 passed。 |
+| 16-E | ✅ 完成 | 主動ETF折溢價資訊列已完成並通過驗證：新增 TWSE MIS ETF 預估淨值資料源（`etf_nav.jsp` referer + `stock/data/all_etf.txt`，解析 `a1[*].msgArray[*]` 的成交價 / 預估淨值 / 預估折溢價幅度 / 資料日期時間）；`GET /api/active-etf/{code}/holdings` 補 optional `premium` object，TWSE 失敗或缺值降級 `premium=null` / `--`，不影響 holdings / diff；前端標題列順序為 `ETF 代碼+名稱` → `成交價` → `預估淨值` → `預估折溢價` → `資料日期`，且 ETF 標題字級大於「持股變動」。Code review 通過（規格合規 14/14、無 critical issue）；補齊 6 條測試缺口（前端 premium null / partial-null 降級、API 層 TWSE 失敗降級、fetcher ETF not found / `_to_optional_float` / `_format_yyyymmdd` 邊界）。Gate：targeted pytest 28 passed、`npx tsc --noEmit` 0 errors、active ETF Vitest 9 passed、全前端 Vitest 65 files / 476 tests passed、`py_compile` 通過；2026-06-05 使用者手動確認 16-E 驗證完成。 |
 
 ## 當前待辦
 
