@@ -400,6 +400,8 @@ describe("Dashboard token onboarding integration", () => {
     render(<DashboardPageClient />);
 
     expect(await screen.findByTestId("startup-overlay")).toBeInTheDocument();
+    expect(screen.getByText(/系統初始化中/)).toBeInTheDocument();
+    expect(screen.getByText("正在啟動後端服務")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "設定 API Token" })).not.toBeInTheDocument();
     expect(apiGetMock).toHaveBeenCalledWith("/api/health");
     expect(apiGetMock).not.toHaveBeenCalledWith("/api/config/secrets/status");
@@ -432,7 +434,7 @@ describe("Dashboard token onboarding integration", () => {
       vi.useRealTimers();
     });
 
-    it("shows timeout message after backend health retries are exhausted", async () => {
+    it("keeps polling and shows elapsed startup warning after 60 seconds", async () => {
       apiGetMock.mockImplementation((path: string) => {
         if (path === "/api/health") {
           return Promise.reject(new Error("network"));
@@ -443,8 +445,25 @@ describe("Dashboard token onboarding integration", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
-      expect(screen.getByText("後端啟動逾時，請確認 FactorHammer-Backend-8000 視窗是否有錯誤。")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "重新檢查" })).toBeInTheDocument();
+      expect(screen.getByText(/系統初始化中/)).toBeInTheDocument();
+      expect(screen.getByText("正在載入資料分析模組")).toBeInTheDocument();
+      expect(screen.getByText("已等待 60 秒，仍在初始化中。")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "設定 API Token" })).not.toBeInTheDocument();
+      expect(apiGetMock.mock.calls.filter(([path]) => path === "/api/health").length).toBeGreaterThan(1);
+    });
+
+    it("shows backend window hint after 120 seconds", async () => {
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/health") {
+          return Promise.reject(new Error("network"));
+        }
+        return Promise.reject(new Error(`unexpected path: ${path}`));
+      });
+      render(<DashboardPageClient />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(screen.getByText("若長時間停留，請確認 FactorHammer-Backend-8000 視窗是否有錯誤。")).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "設定 API Token" })).not.toBeInTheDocument();
     });
 

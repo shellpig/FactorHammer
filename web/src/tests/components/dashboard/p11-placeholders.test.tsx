@@ -345,6 +345,8 @@ describe("P11 panels", () => {
     render(<DashboardPageClient />);
     const skel = await screen.findByTestId("dashboard-chart-skeleton");
     expect(skel).toHaveClass("h-[300px]");
+    expect(skel).toHaveTextContent("個股資料分析中...");
+    expect(skel).toHaveTextContent("正在同步資料並計算技術指標，首次分析可能需要數秒。");
   });
 
   it("renders compact inline rows in chip panel", async () => {

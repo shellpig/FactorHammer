@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
+import { LoaderCircle, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { mutate as mutateGlobal } from "swr";
 import { MarketSwitcher } from "@/components/market-switcher";
@@ -70,7 +70,9 @@ function normalizeSymbol(raw: string): string {
 const LS_SYMBOL = "qt-last-symbol";
 const LS_MARKET = "qt-last-market";
 const BACKEND_HEALTH_RETRY_INTERVAL_MS = 1000;
-const BACKEND_HEALTH_TIMEOUT_MS = 60_000;
+const BACKEND_STARTUP_STAGE_SWITCH_SECONDS = 10;
+const BACKEND_STARTUP_WARN_SECONDS = 60;
+const BACKEND_STARTUP_ERROR_HINT_SECONDS = 120;
 
 function readLastSymbol(): string {
   try {
@@ -94,11 +96,11 @@ function renderRatio(ratio: number): string {
 }
 
 function StartupOverlay({
-  timedOut,
-  onRetry,
+  elapsedSeconds,
+  status,
 }: {
-  timedOut: boolean;
-  onRetry: () => void;
+  elapsedSeconds: number;
+  status: string;
 }) {
   return (
     <div
@@ -106,25 +108,29 @@ function StartupOverlay({
       data-testid="startup-overlay"
     >
       <section className="w-full max-w-xl rounded-xl border border-slate-700 bg-slate-900/90 p-6 text-center">
-        <h2 className="text-lg font-semibold text-slate-100">工具初始化中...</h2>
-        {!timedOut ? (
-          <p className="mt-3 text-sm text-slate-300">
-            正在啟動後端服務，完成後會自動進入分析頁面。
+        <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-950">
+          <LoaderCircle className="h-5 w-5 animate-spin text-slate-200" aria-hidden="true" />
+        </div>
+        <h2 className="text-lg font-semibold text-slate-100">
+          系統初始化中...{" "}
+          <span className="[font-family:var(--font-mono)] text-slate-300">
+            {elapsedSeconds} 秒
+          </span>
+        </h2>
+        <p className="mt-3 text-sm text-slate-300">{status}</p>
+        <p className="mt-1 text-xs text-slate-500">
+          首次啟動或套件載入較慢時可能需要較久時間。
+        </p>
+        {elapsedSeconds >= BACKEND_STARTUP_WARN_SECONDS ? (
+          <p className="mt-4 text-sm text-amber-200">
+            已等待 {BACKEND_STARTUP_WARN_SECONDS} 秒，仍在初始化中。
           </p>
-        ) : (
-          <>
-            <p className="mt-3 text-sm text-amber-200">
-              後端啟動逾時，請確認 FactorHammer-Backend-8000 視窗是否有錯誤。
-            </p>
-            <button
-              type="button"
-              onClick={onRetry}
-              className="mt-4 inline-flex items-center rounded-md border border-slate-600 px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-800"
-            >
-              重新檢查
-            </button>
-          </>
-        )}
+        ) : null}
+        {elapsedSeconds >= BACKEND_STARTUP_ERROR_HINT_SECONDS ? (
+          <p className="mt-1 text-sm text-amber-200">
+            若長時間停留，請確認 FactorHammer-Backend-8000 視窗是否有錯誤。
+          </p>
+        ) : null}
       </section>
     </div>
   );
@@ -776,45 +782,53 @@ export default function DashboardPageClient() {
   const [shareholderDialogOpen, setShareholderDialogOpen] = useState(false);
   const [tokenSetupOpen, setTokenSetupOpen] = useState(false);
   const [backendReady, setBackendReady] = useState(false);
-  const [backendTimedOut, setBackendTimedOut] = useState(false);
-  const [backendProbeSeed, setBackendProbeSeed] = useState(0);
+  const [startupElapsedSeconds, setStartupElapsedSeconds] = useState(0);
   // Gate dashboard fetch on secrets/status: do not fire useDashboard until we know
   // FinMind is configured (or user completed token setup).
   // Without this, the dashboard fetch races the modal and the user briefly sees
   // a fetch error before the forced token-setup modal appears.
   const [secretsChecked, setSecretsChecked] = useState(false);
   const [finmindReady, setFinmindReady] = useState(false);
+  const startupOverlayVisible = !backendReady || !secretsChecked;
+  const startupStatus =
+    backendReady && !secretsChecked
+      ? "正在檢查系統設定"
+      : startupElapsedSeconds < BACKEND_STARTUP_STAGE_SWITCH_SECONDS
+        ? "正在啟動後端服務"
+        : "正在載入資料分析模組";
 
   useEffect(() => {
     if (backendReady) return;
     let cancelled = false;
-    const maxAttempts = Math.max(
-      1,
-      Math.ceil(BACKEND_HEALTH_TIMEOUT_MS / BACKEND_HEALTH_RETRY_INTERVAL_MS),
-    );
     void (async () => {
-      for (let i = 0; i < maxAttempts; i++) {
+      while (!cancelled) {
         try {
           await apiGet<{ status: string }>("/api/health");
           if (cancelled) return;
-          setBackendTimedOut(false);
           setBackendReady(true);
           return;
         } catch {
           if (cancelled) return;
-          if (i < maxAttempts - 1) {
-            await new Promise<void>((resolve) =>
-              setTimeout(resolve, BACKEND_HEALTH_RETRY_INTERVAL_MS),
-            );
-          }
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, BACKEND_HEALTH_RETRY_INTERVAL_MS),
+          );
         }
       }
-      if (!cancelled) setBackendTimedOut(true);
     })();
     return () => {
       cancelled = true;
     };
-  }, [backendReady, backendProbeSeed]);
+  }, [backendReady]);
+
+  useEffect(() => {
+    if (!startupOverlayVisible) return;
+    const startedAt = Date.now();
+    setStartupElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setStartupElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [startupOverlayVisible]);
 
   useEffect(() => {
     if (!backendReady || secretsChecked) return;
@@ -917,11 +931,6 @@ export default function DashboardPageClient() {
     setSymbol(nextSymbol);
   }
 
-  function handleRetryBackendStartup() {
-    setBackendTimedOut(false);
-    setBackendProbeSeed((prev) => prev + 1);
-  }
-
   return (
     <div className="-mx-4 -my-6 px-4 py-6 xl:px-6">
       <div className="mx-auto max-w-[2400px]">
@@ -989,9 +998,19 @@ export default function DashboardPageClient() {
 
             {isLoading ? (
               <div
-                className="h-[300px] animate-pulse rounded-xl bg-slate-900/80"
+                className="flex h-[300px] items-center justify-center rounded-xl border border-slate-800 bg-slate-900/80"
                 data-testid="dashboard-chart-skeleton"
-              />
+              >
+                <div className="text-center">
+                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-950">
+                    <LoaderCircle className="h-5 w-5 animate-spin text-slate-200" aria-hidden="true" />
+                  </div>
+                  <p className="text-sm font-medium text-slate-100">個股資料分析中...</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    正在同步資料並計算技術指標，首次分析可能需要數秒。
+                  </p>
+                </div>
+              </div>
             ) : null}
 
             {error ? (
@@ -1099,8 +1118,8 @@ export default function DashboardPageClient() {
           router.refresh();
         }}
       />
-      {!backendReady ? (
-        <StartupOverlay timedOut={backendTimedOut} onRetry={handleRetryBackendStartup} />
+      {startupOverlayVisible ? (
+        <StartupOverlay elapsedSeconds={startupElapsedSeconds} status={startupStatus} />
       ) : null}
     </div>
   );
