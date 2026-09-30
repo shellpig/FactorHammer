@@ -37,3 +37,8 @@ tools/
 # playwright
 web/test-results/
 web/playwright-report/
+
+# intraday watch board outputs
+scripts/watch/watch.html
+scripts/watch/last_data.json
+scripts/watch/cache/

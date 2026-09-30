@@ -1,0 +1,518 @@
+<title>盤中看盤板</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: sticky status bar → one-line summary rows → one card per stock (quote head, chips, chart, events, folded detail) */
+:root {
+  --bg: #f3f4f6;
+  --panel: #ffffff;
+  --ink: #16191f;
+  --muted: #5f6673;
+  --line: #dde1e7;
+  --soft: #eef0f3;
+  --up: #d23232;
+  --up-soft: rgba(210, 50, 50, .12);
+  --down: #0e8a4f;
+  --down-soft: rgba(14, 138, 79, .12);
+  --vwap: #c77c00;
+  --vol: #9aa2ae;
+  --band: rgba(60, 90, 160, .08);
+  --focus: #2f5bd3;
+  --f-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --f-num: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216; --panel: #171b21; --ink: #e8eaee; --muted: #9098a5; --line: #2a3039; --soft: #1f242c;
+    --up: #ff5a5a; --up-soft: rgba(255, 90, 90, .14); --down: #2fc27a; --down-soft: rgba(47, 194, 122, .14);
+    --vwap: #f0a830; --vol: #56606d; --band: rgba(120, 150, 230, .10); --focus: #7aa2ff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1216; --panel: #171b21; --ink: #e8eaee; --muted: #9098a5; --line: #2a3039; --soft: #1f242c;
+  --up: #ff5a5a; --up-soft: rgba(255, 90, 90, .14); --down: #2fc27a; --down-soft: rgba(47, 194, 122, .14);
+  --vwap: #f0a830; --vol: #56606d; --band: rgba(120, 150, 230, .10); --focus: #7aa2ff;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px; line-height: 1.5; }
+.num { font-family: var(--f-num); font-variant-numeric: tabular-nums; }
+.up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--muted); }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.bar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+  padding: 10px 16px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.bar h1 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: .02em; }
+.bar .meta { color: var(--muted); font-size: 12px; }
+.bar-r { display: flex; align-items: center; gap: 10px; }
+.cfg-btn { font: inherit; font-size: 13px; font-weight: 500; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+.cfg-btn[aria-expanded="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.cfg { margin: 12px 16px 0; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 10px; max-width: 728px; }
+@media (min-width: 792px) { .cfg { margin-inline: auto; } }
+.cfg-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; }
+.cfg-head span { color: var(--muted); font-size: 12px; }
+.cfg-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.cfg-list li { display: inline-flex; align-items: center; gap: 6px; background: var(--soft); border-radius: 999px; padding: 3px 4px 3px 12px; font-size: 13px; }
+.cfg-list li small { color: var(--muted); }
+.cfg-list button { font: inherit; width: 24px; height: 24px; border-radius: 50%; border: 0; background: transparent; color: var(--muted); cursor: pointer; line-height: 1; font-size: 15px; }
+.cfg-list button:hover { background: var(--line); color: var(--ink); }
+.cfg-form { display: flex; gap: 8px; }
+.cfg-form input { flex: 1; min-width: 0; font: inherit; font-family: var(--f-num); font-size: 15px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.cfg-form button { font: inherit; font-weight: 500; padding: 7px 16px; border-radius: 8px; border: 0; background: var(--ink); color: var(--panel); cursor: pointer; }
+.cfg-form button:disabled, .cfg-form input:disabled { opacity: .5; cursor: not-allowed; }
+.cfg-msg { margin: 0; font-size: 12px; color: var(--muted); }
+.cfg-msg.err { color: var(--up); }
+.note { margin: 12px 16px 0; padding: 8px 12px; border-radius: 8px; background: var(--soft); color: var(--muted); font-size: 12px; }
+
+main { max-width: 760px; margin: 0 auto; padding-block: 12px 40px; padding-inline: 16px; display: grid; gap: 14px; }
+
+.summary { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.srow {
+  display: grid; grid-template-columns: minmax(0, 1.3fr) auto auto; gap: 4px 10px; align-items: center;
+  padding: 9px 12px; border-top: 1px solid var(--line); text-decoration: none;
+}
+.srow:first-child { border-top: 0; }
+.srow .nm { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .nm small { color: var(--muted); font-weight: 400; margin-left: 4px; }
+.srow .px { text-align: right; font-size: 15px; font-weight: 600; }
+.srow .pc { text-align: right; min-width: 64px; font-size: 13px; }
+.srow .ln { grid-column: 1 / -1; display: flex; gap: 10px; color: var(--muted); font-size: 12px; min-width: 0; }
+.srow .ln .ev { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.srow .al { grid-column: 1 / -1; font-size: 12px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .pj { grid-column: 1 / -1; font-size: 12px; color: var(--vwap); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow.alert-up { background: var(--up-soft); box-shadow: inset 4px 0 0 var(--up); }
+.srow.alert-down { background: var(--down-soft); box-shadow: inset 4px 0 0 var(--down); }
+.srow.alert-vol { background: var(--soft); box-shadow: inset 4px 0 0 var(--vwap); }
+.srow .al.vol { color: var(--vwap); }
+.srow.alert-vol.fresh { animation: pulse-vol 1.2s ease-in-out infinite; }
+@keyframes pulse-vol { 0%, 100% { box-shadow: inset 4px 0 0 var(--vwap), inset 0 0 0 2px var(--vwap); } 50% { box-shadow: inset 4px 0 0 var(--vwap), inset 0 0 0 2px transparent; } }
+.srow.alert-up.fresh { animation: pulse-up 1.2s ease-in-out infinite; }
+.srow.alert-down.fresh { animation: pulse-down 1.2s ease-in-out infinite; }
+@keyframes pulse-up { 0%, 100% { box-shadow: inset 4px 0 0 var(--up), inset 0 0 0 2px var(--up); } 50% { box-shadow: inset 4px 0 0 var(--up), inset 0 0 0 2px transparent; } }
+@keyframes pulse-down { 0%, 100% { box-shadow: inset 4px 0 0 var(--down), inset 0 0 0 2px var(--down); } 50% { box-shadow: inset 4px 0 0 var(--down), inset 0 0 0 2px transparent; } }
+.top-btn { font: inherit; font-size: 12px; color: var(--muted); background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; margin-left: 8px; cursor: pointer; vertical-align: middle; }
+.top-btn:hover { color: var(--ink); }
+.events li.major span:last-child { font-weight: 700; }
+.events li.major .dot { width: 10px; height: 10px; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 12px; scroll-margin-top: 60px; min-width: 0; }
+.head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.head .id h2 { margin: 0; font-size: 18px; font-weight: 700; }
+.head .id span { color: var(--muted); font-size: 12px; }
+.head .q { text-align: right; }
+.head .q .p { font-size: 26px; font-weight: 600; line-height: 1.1; }
+.head .q .c { font-size: 13px; }
+.ohlc { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12px; }
+.ohlc b { color: var(--ink); font-weight: 500; }
+
+.chips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.chip { background: var(--soft); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+.chip .k { color: var(--muted); font-size: 11px; letter-spacing: .04em; }
+.chip .v { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip .s { font-size: 11px; color: var(--muted); }
+
+.chart { width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 11px; }
+.legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+
+.events { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.events li { display: grid; grid-template-columns: 44px 10px minmax(0, 1fr); gap: 6px; align-items: baseline; font-size: 13px; }
+.events .t { color: var(--muted); font-size: 12px; }
+.events .dot { width: 8px; height: 8px; border-radius: 50%; align-self: center; }
+.dot.up { background: var(--up); } .dot.down { background: var(--down); } .dot.vol { background: var(--vwap); }
+.empty { color: var(--muted); font-size: 13px; }
+
+details { border-top: 1px solid var(--line); padding-top: 8px; }
+summary { cursor: pointer; font-weight: 500; font-size: 13px; list-style: none; display: flex; justify-content: space-between; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "展開"; color: var(--muted); font-weight: 400; font-size: 12px; }
+details[open] > summary::after { content: "收合"; }
+.dbody { padding-top: 8px; }
+
+.ladder { display: grid; gap: 2px; }
+.ladder .lv { display: grid; grid-template-columns: 76px minmax(0, 1fr) 64px; gap: 8px; padding: 4px 8px; border-radius: 6px; font-size: 13px; align-items: baseline; }
+.ladder .lv .lb { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ladder .lv .d { text-align: right; font-size: 12px; }
+.ladder .lv.now { background: var(--soft); font-weight: 600; }
+.ladder .lv.now .lb { color: var(--ink); }
+
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; color: var(--muted); font-weight: 400; }
+thead th { color: var(--muted); font-weight: 500; font-size: 12px; }
+td.chg { font-weight: 700; }
+.tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--soft); margin-left: 4px; color: var(--ink); }
+
+.book { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.book .side { display: grid; gap: 2px; }
+.book .row { position: relative; display: flex; justify-content: space-between; padding: 2px 6px; font-size: 13px; border-radius: 4px; overflow: hidden; }
+.book .row .fill { position: absolute; inset: 0 auto 0 0; z-index: 0; }
+.book .row span { position: relative; z-index: 1; }
+.book .bid .fill { background: var(--up-soft); } .book .ask .fill { background: var(--down-soft); }
+.book h4 { margin: 0 0 2px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.ratio { margin-top: 8px; height: 8px; border-radius: 4px; overflow: hidden; display: flex; background: var(--soft); }
+.ratio .b { background: var(--up); } .ratio .a { background: var(--down); }
+.ratio-l { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.warn { color: var(--vwap); font-size: 12px; }
+
+@media (max-width: 420px) {
+  .chips { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .head .q .p { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+  .srow.alert-up.fresh { animation: none; box-shadow: inset 4px 0 0 var(--up), inset 0 0 0 2px var(--up); }
+  .srow.alert-down.fresh { animation: none; box-shadow: inset 4px 0 0 var(--down), inset 0 0 0 2px var(--down); }
+}
+</style>
+
+<header class="bar">
+  <h1>盤中看盤板</h1>
+  <div class="bar-r"><span class="meta" id="meta"></span><button type="button" id="cfg-btn" class="cfg-btn" aria-expanded="false" aria-controls="cfg">追蹤設定</button></div>
+</header>
+<section id="cfg" class="cfg" hidden aria-label="追蹤設定">
+  <div class="cfg-head"><b>追蹤中的股票</b><span id="cfg-count" class="num"></span></div>
+  <ul id="cfg-list" class="cfg-list"></ul>
+  <form id="cfg-form" class="cfg-form" autocomplete="off">
+    <input id="cfg-input" name="code" type="text" inputmode="numeric" autocapitalize="characters" maxlength="7" placeholder="輸入代碼，例如 2317" aria-label="股票代碼">
+    <button type="submit" id="cfg-add">新增</button>
+  </form>
+  <p id="cfg-msg" class="cfg-msg">最多 8 檔。改動會在下一次更新（約 6 分鐘內）套用。</p>
+</section>
+<div class="note" id="note" hidden></div>
+<main>
+  <nav class="summary" id="summary" aria-label="總覽"></nav>
+</main>
+
+<script>
+const D = /*__DATA__*/null;
+
+const fmt = (v, n = 2) => (v === null || v === undefined || Number.isNaN(v)) ? "--" : Number(v).toLocaleString("zh-TW", { minimumFractionDigits: n, maximumFractionDigits: n });
+const fmtP = (v) => {
+  if (v === null || v === undefined) return "--";
+  const n = Math.abs(v) >= 1000 ? 0 : (Math.abs(v) >= 100 ? 1 : 2);
+  return fmt(v, n);
+};
+const sgn = (v, n = 2) => (v === null || v === undefined) ? "--" : (v > 0 ? "+" : "") + fmt(v, n);
+const cls = (v) => v > 0 ? "up" : v < 0 ? "down" : "flat";
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function store(key, val) {
+  try { if (val === undefined) return JSON.parse(localStorage.getItem(key) || "null"); localStorage.setItem(key, JSON.stringify(val)); } catch (e) { return null; }
+}
+
+function volState(r) {
+  if (r === null || r === undefined) return ["--", ""];
+  if (r >= 1.5) return [fmt(r, 2) + "×", "放量"];
+  if (r < 0.7) return [fmt(r, 2) + "×", "量縮"];
+  return [fmt(r, 2) + "×", "正常"];
+}
+
+/* ── chart ─────────────────────────────────────────────── */
+const T0 = 9 * 60, T1 = 13 * 60 + 30;
+const tmin = (hm) => { const [h, m] = hm.split(":").map(Number); return h * 60 + m; };
+
+function chart(s) {
+  const W = 680, H = 250, padL = 8, padR = 58, top = 10, priceH = 168, volTop = 190, volH = 44;
+  const ser = s.series, n = ser.t.length;
+  if (!n) return '<p class="empty">沒有分K資料</p>';
+  const prev = s.quote ? s.quote.prev : null;
+  let vals = ser.c.concat(ser.w).filter((v) => v !== null);
+  if (prev) vals.push(prev);
+  if (s.or && s.or.hi) vals.push(s.or.hi, s.or.lo);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const span0 = hi - lo || hi * 0.01;
+  const inRange = (s.levels || []).filter((l) => l.v >= lo - span0 * 0.25 && l.v <= hi + span0 * 0.25);
+  inRange.forEach((l) => { lo = Math.min(lo, l.v); hi = Math.max(hi, l.v); });
+  const pad = (hi - lo || hi * 0.01) * 0.08; lo -= pad; hi += pad;
+  const x = (hm) => padL + (tmin(hm) - T0) / (T1 - T0) * (W - padL - padR);
+  const y = (v) => top + (hi - v) / (hi - lo) * priceH;
+  const vmax = Math.max(...ser.v, 1);
+  let g = "";
+
+  // grid + time axis
+  ["09:00", "10:00", "11:00", "12:00", "13:00", "13:30"].forEach((hm) => {
+    g += `<line x1="${x(hm)}" x2="${x(hm)}" y1="${top}" y2="${volTop + volH}" stroke="var(--line)" stroke-width="1"/>`;
+    g += `<text x="${x(hm)}" y="${H - 2}" font-size="11" fill="var(--muted)" text-anchor="${hm === "09:00" ? "start" : hm === "13:30" ? "end" : "middle"}">${hm}</text>`;
+  });
+  // opening range band
+  if (s.or && s.or.hi) {
+    g += `<rect x="${x("09:00")}" y="${y(s.or.hi)}" width="${x("09:30") - x("09:00")}" height="${Math.max(1, y(s.or.lo) - y(s.or.hi))}" fill="var(--band)"/>`;
+  }
+  // key levels
+  inRange.forEach((l) => {
+    g += `<line x1="${padL}" x2="${W - padR}" y1="${y(l.v)}" y2="${y(l.v)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 4" opacity=".7"/>`;
+    g += `<text x="${W - padR + 4}" y="${y(l.v) + 4}" font-size="10" fill="var(--muted)">${esc(l.label.split("・")[0])}</text>`;
+  });
+  // prev close + up/down area
+  const pts = ser.t.map((t, i) => [x(t), y(ser.c[i])]);
+  if (prev) {
+    const yp = y(prev);
+    const area = `M${pts[0][0]},${yp} ` + pts.map((p) => `L${p[0]},${p[1]}`).join(" ") + ` L${pts[n - 1][0]},${yp} Z`;
+    g += `<clipPath id="ca-${s.symbol}"><rect x="0" y="0" width="${W}" height="${yp}"/></clipPath>`;
+    g += `<clipPath id="cb-${s.symbol}"><rect x="0" y="${yp}" width="${W}" height="${H}"/></clipPath>`;
+    g += `<path d="${area}" fill="var(--up-soft)" clip-path="url(#ca-${s.symbol})"/>`;
+    g += `<path d="${area}" fill="var(--down-soft)" clip-path="url(#cb-${s.symbol})"/>`;
+    g += `<line x1="${padL}" x2="${W - padR}" y1="${yp}" y2="${yp}" stroke="var(--ink)" stroke-width="1" stroke-dasharray="5 4" opacity=".55"/>`;
+    g += `<text x="${W - padR + 4}" y="${yp + 4}" font-size="10" fill="var(--ink)">昨收 ${fmtP(prev)}</text>`;
+  }
+  // vwap + price
+  g += `<polyline points="${ser.t.map((t, i) => `${x(t)},${y(ser.w[i])}`).join(" ")}" fill="none" stroke="var(--vwap)" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+  const lineCol = prev && ser.c[n - 1] >= prev ? "var(--up)" : "var(--down)";
+  g += `<polyline points="${pts.map((p) => p.join(",")).join(" ")}" fill="none" stroke="${lineCol}" stroke-width="1.8" stroke-linejoin="round"/>`;
+  // volume bars
+  const bw = Math.max(1, (W - padL - padR) / (T1 - T0) * 0.8);
+  ser.t.forEach((t, i) => {
+    const h = ser.v[i] / vmax * volH;
+    const col = i === 0 ? "var(--vol)" : ser.c[i] > ser.c[i - 1] ? "var(--up)" : ser.c[i] < ser.c[i - 1] ? "var(--down)" : "var(--vol)";
+    g += `<rect x="${x(t) - bw / 2}" y="${volTop + volH - h}" width="${bw}" height="${Math.max(0.5, h)}" fill="${col}" opacity=".6"/>`;
+  });
+  g += `<text x="${W - padR + 4}" y="${volTop + 10}" font-size="10" fill="var(--muted)">${fmt(vmax, 0)} 張</text>`;
+  // event markers
+  (s.events || []).filter((e) => e.kind !== "vol").forEach((e) => {
+    const i = ser.t.indexOf(e.t); if (i < 0) return;
+    const cx = x(e.t), cy = y(ser.c[i]);
+    g += `<circle cx="${cx}" cy="${cy}" r="3.2" fill="var(--panel)" stroke="${e.kind === "up" ? "var(--up)" : "var(--down)"}" stroke-width="1.8"/>`;
+  });
+  // last price tag
+  const lp = pts[n - 1];
+  g += `<circle cx="${lp[0]}" cy="${lp[1]}" r="3.5" fill="${lineCol}"/>`;
+  g += `<rect x="${W - padR + 2}" y="${lp[1] - 9}" width="${padR - 4}" height="18" rx="3" fill="${lineCol}"/>`;
+  g += `<text x="${W - padR / 2}" y="${lp[1] + 4}" font-size="11" font-weight="600" fill="var(--panel)" text-anchor="middle">${fmtP(ser.c[n - 1])}</text>`;
+  // y extremes
+  g += `<text x="${padL + 2}" y="${top + 10}" font-size="10" fill="var(--muted)">${fmtP(hi)}</text>`;
+  g += `<text x="${padL + 2}" y="${top + priceH - 2}" font-size="10" fill="var(--muted)">${fmtP(lo)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(s.name)} 分時走勢">${g}</svg>`;
+}
+
+/* ── sections ──────────────────────────────────────────── */
+function ladder(s) {
+  const rows = s.levels.slice();
+  rows.push({ v: s.price, label: "現價", now: true });
+  rows.sort((a, b) => b.v - a.v);
+  return '<div class="ladder">' + rows.map((l) => l.now
+    ? `<div class="lv now"><span class="num ${cls(s.quote ? s.price - s.quote.prev : 0)}">${fmtP(l.v)}</span><span class="lb">現價</span><span class="d">—</span></div>`
+    : `<div class="lv"><span class="num">${fmtP(l.v)}</span><span class="lb">${esc(l.label)}</span><span class="d num ${l.side === "above" ? "up" : "down"}">${sgn(l.dist)}%</span></div>`
+  ).join("") + "</div>";
+}
+
+function projection(s) {
+  const b = s.base, p = s.proj;
+  const row = (label, bv, pv, changed) => `<tr><td>${label}</td><td class="num">${bv}</td><td class="num ${changed ? "chg" : ""}">${pv}</td></tr>`;
+  const st = (a, c) => a !== c;
+  const kdTxt = (o) => `${fmt(o.k, 1)} / ${fmt(o.d, 1)}`;
+  const macdTxt = (o) => `${fmt(o.dif, 2)} / ${fmt(o.dea, 2)} / ${sgn(o.hist, 2)}`;
+  return `<div class="tbl-wrap"><table>
+    <thead><tr><th>項目</th><th>昨日收盤</th><th>若照現價收盤</th></tr></thead><tbody>
+    ${row("收盤價", fmtP(b.close), fmtP(p.close), false)}
+    ${row("MA5 / MA10", `${fmtP(b.ma[5])} / ${fmtP(b.ma[10])}`, `${fmtP(p.ma[5])} / ${fmtP(p.ma[10])}`, false)}
+    ${row("MA20 / MA60", `${fmtP(b.ma[20])} / ${fmtP(b.ma[60])}`, `${fmtP(p.ma[20])} / ${fmtP(p.ma[60])}`, false)}
+    ${row("均線狀態", esc(b.ma_status), esc(p.ma_status), st(b.ma_status, p.ma_status))}
+    ${row("趨勢", esc(b.trend), esc(p.trend), st(b.trend, p.trend))}
+    ${row("K / D", kdTxt(b), kdTxt(p), false)}
+    ${row("KD 狀態", esc(b.kd_status), esc(p.kd_status), st(b.kd_status, p.kd_status))}
+    ${row("DIF / DEA / 柱", macdTxt(b), macdTxt(p), false)}
+    ${row("MACD 狀態", esc(b.macd_status), esc(p.macd_status), st(b.macd_status, p.macd_status))}
+    ${row("RSI(14)", fmt(b.rsi, 1), fmt(p.rsi, 1), false)}
+    ${row("MA20 乖離", sgn(b.bias20) + "%", sgn(p.bias20) + "%", false)}
+    ${row("短線分數", `${fmt(b.score, 2)} <span class="tag">${esc(b.score_label)}</span>`, `${fmt(p.score, 2)} <span class="tag">${esc(p.score_label)}</span>`, st(b.score_label, p.score_label))}
+  </tbody></table></div><p class="empty">粗體＝狀態跟昨天不同。「若照現價收盤」是把現價當成今天收盤重算，收盤前都會變動。</p>`;
+}
+
+function book(s) {
+  const bk = s.book;
+  if (!bk || (!bk.bid.length && !bk.ask.length)) return '<p class="empty">沒有五檔資料</p>';
+  const mx = Math.max(1, ...bk.bid.map((x) => x[1]), ...bk.ask.map((x) => x[1]));
+  const rows = (arr, side) => arr.map(([p, v]) => `<div class="row ${side}"><i class="fill" style="width:${v / mx * 100}%"></i><span class="num">${fmtP(p)}</span><span class="num">${fmt(v, 0)}</span></div>`).join("") || '<p class="empty">無</p>';
+  const br = Math.round((bk.bid_ratio || 0) * 100), ar = 100 - br;
+  return `<div class="book">
+    <div class="side bid"><h4>委買（張）</h4>${rows(bk.bid, "bid")}</div>
+    <div class="side ask"><h4>委賣（張）</h4>${rows(bk.ask, "ask")}</div>
+  </div>
+  <div class="ratio"><span class="b" style="width:${br}%"></span><span class="a" style="width:${ar}%"></span></div>
+  <div class="ratio-l"><span class="up">買 ${br}%</span><span>${esc(bk.label)}</span><span class="down">賣 ${ar}%</span></div>`;
+}
+
+function events(list, limit) {
+  const arr = list.slice().reverse().slice(0, limit ?? list.length);
+  if (!arr.length) return '<p class="empty">目前沒有事件</p>';
+  return '<ul class="events">' + arr.map((e) => `<li class="${e.level === 2 ? "major" : ""}"><span class="t num">${e.t}</span><span class="dot ${e.kind}"></span><span>${e.level === 2 ? "★ " : ""}${esc(e.text)}</span></li>`).join("") + "</ul>";
+}
+
+function card(s) {
+  if (!s.series) {
+    return `<section class="card" id="s-${s.symbol}"><div class="head"><div class="id"><h2>${esc(s.name)}</h2><span>${s.symbol}</span></div></div>${(s.warnings || []).map((w) => `<p class="warn">${esc(w)}</p>`).join("")}</section>`;
+  }
+  const q = s.quote || {};
+  const ch = q.change ?? 0;
+  const [vr, vs] = volState(s.vol_ratio);
+  const kd = s.kd5 || {};
+  const open = store("open-" + s.symbol) || {};
+  const det = (key, title, body) => `<details data-k="${key}" ${open[key] ? "open" : ""}><summary>${title}</summary><div class="dbody">${body}</div></details>`;
+  return `<section class="card" id="s-${s.symbol}">
+    <div class="head">
+      <div class="id"><h2>${esc(s.name)}<button type="button" class="top-btn" data-top>↑ 回總覽</button></h2><span class="num">${s.symbol}　${esc(q.date || s.trade_date || "")} ${esc(q.time || s.last_bar || "")}</span></div>
+      <div class="q"><div class="p num ${cls(ch)}">${fmtP(s.price)}</div><div class="c num ${cls(ch)}">${sgn(ch, s.price >= 1000 ? 0 : 2)}　${sgn(q.pct)}%</div></div>
+    </div>
+    <div class="ohlc num"><span>開 <b>${fmtP(q.open)}</b></span><span>高 <b>${fmtP(q.high)}</b></span><span>低 <b>${fmtP(q.low)}</b></span><span>昨收 <b>${fmtP(q.prev)}</b></span><span>量 <b>${fmt(s.vol_lots, 0)}</b> 張</span></div>
+    <div class="chips">
+      <div class="chip"><div class="k">VWAP</div><div class="v num ${cls(s.vwap_diff)}">${fmtP(s.vwap)}</div><div class="s">現價 ${sgn(s.vwap_diff)}%，${s.vwap_diff >= 0 ? "在上方" : "在下方"}</div></div>
+      <div class="chip"><div class="k">開盤區間 30 分</div><div class="v num">${fmtP(s.or.lo)}–${fmtP(s.or.hi)}</div><div class="s ${s.or.state === "突破高點" ? "up" : s.or.state === "跌破低點" ? "down" : ""}">${esc(s.or.state)}</div></div>
+      <div class="chip"><div class="k">量比（同時段）</div><div class="v num ${s.vol_ratio >= 1.5 ? "up" : ""}">${vr}</div><div class="s">${vs}</div></div>
+      <div class="chip"><div class="k">5 分 KD</div><div class="v num">${kd.k === null || kd.k === undefined ? "--" : fmt(kd.k, 0) + " / " + fmt(kd.d, 0)}</div><div class="s">${esc(kd.state)}</div></div>
+      <div class="chip"><div class="k">5 分 RSI(14)</div><div class="v num">${fmt(s.rsi5, 1)}</div><div class="s">${s.rsi5 >= 70 ? "超買" : s.rsi5 <= 30 ? "超賣" : "中性"}</div></div>
+      <div class="chip"><div class="k">日內位置</div><div class="v num">${fmt(s.day_pos, 0)}%</div><div class="s num">${fmtP(s.day_lo)}–${fmtP(s.day_hi)}</div></div>
+    </div>
+    <div class="chart">${chart(s)}</div>
+    <div class="legend"><span><i style="border-color:var(--up)"></i>價格</span><span><i style="border-color:var(--vwap);border-top-style:dashed"></i>VWAP</span><span><i style="border-color:var(--ink);border-top-style:dashed;opacity:.55"></i>昨收</span><span><i style="border-color:var(--muted);border-top-style:dotted"></i>關鍵價位</span><span>淺藍塊＝開盤區間</span></div>
+    <div>${events(s.events, 3)}</div>
+    ${det("lv", "關鍵價位", ladder(s))}
+    ${det("pj", "若照現價收盤：日線指標" + ((s.proj_changes || []).length ? `<span class="up" style="font-weight:400;margin-left:6px">${esc(s.proj_changes.join("、"))}</span>` : ""), projection(s))}
+    ${det("bk", "五檔與買賣力道", book(s))}
+    ${det("ev", `全部事件（${s.events.length}）`, events(s.events))}
+    ${(s.warnings || []).map((w) => `<p class="warn">${esc(w)}</p>`).join("")}
+  </section>`;
+}
+
+function summaryRow(s) {
+  const q = s.quote || {};
+  const last = (s.events || [])[s.events ? s.events.length - 1 : 0];
+  const [vr] = volState(s.vol_ratio);
+  const al = s.alert;
+  const alCls = al ? ` alert-${al.kind}${al.fresh ? " fresh" : ""}` : "";
+  const alLine = al ? `<span class="al ${al.kind}">★ ${esc(al.t + " " + al.text)}</span>` : "";
+  const pjLine = (s.proj_changes || []).length ? `<span class="pj">收盤推算：${esc(s.proj_changes.join("、"))}</span>` : "";
+  return `<a class="srow${alCls}" href="#s-${s.symbol}">
+    <span class="nm">${esc(s.name)}<small class="num">${s.symbol}</small></span>
+    <span class="px num ${cls(q.change)}">${fmtP(s.price)}</span>
+    <span class="pc num ${cls(q.change)}">${sgn(q.pct)}%</span>
+    ${alLine}
+    <span class="ln"><span class="${cls(s.vwap_diff)}">VWAP ${s.vwap_diff >= 0 ? "上" : "下"}</span><span>量比 ${vr}</span><span class="ev">${last ? "最新 " + esc(last.t + " " + last.text) : ""}</span></span>
+    ${pjLine}
+  </a>`;
+}
+
+/* ── watchlist (shared db doc config/watchlist; the updater reads it before each build) ── */
+const MAX_WATCH = 8;
+const CODE_RE = /^\d{4,6}[A-Z]?$/;
+let watch = null;        // symbols from db; null = not loaded, fall back to the built list
+let dbRef = null;
+let writing = Promise.resolve();
+
+function stockList() {
+  if (!watch) return D.stocks;
+  return watch.map((sym) => D.stocks.find((s) => s.symbol === sym) || { symbol: sym, name: sym, pending: true });
+}
+
+function pendingRow(s) {
+  return `<a class="srow" href="#s-${s.symbol}"><span class="nm">${esc(s.symbol)}</span><span class="px num flat">--</span><span class="pc num flat"></span><span class="ln">等待下次更新</span></a>`;
+}
+function pendingCard(s) {
+  return `<section class="card" id="s-${s.symbol}"><div class="head"><div class="id"><h2>${esc(s.symbol)}<button type="button" class="top-btn" data-top>↑ 回總覽</button></h2><span>剛加入追蹤</span></div></div><p class="empty">下一次更新（約 6 分鐘內）會抓這檔的資料。</p></section>`;
+}
+
+function renderCfg() {
+  const list = watch || D.stocks.map((s) => s.symbol);
+  const names = Object.fromEntries(D.stocks.map((s) => [s.symbol, s.name]));
+  document.getElementById("cfg-count").textContent = `${list.length} / ${MAX_WATCH}`;
+  document.getElementById("cfg-list").innerHTML = list.map((sym) =>
+    `<li><span class="num">${esc(sym)}</span>${names[sym] && names[sym] !== sym ? `<small>${esc(names[sym])}</small>` : ""}<button type="button" data-rm="${esc(sym)}" aria-label="移除 ${esc(sym)}">✕</button></li>`
+  ).join("");
+  const full = list.length >= MAX_WATCH;
+  document.getElementById("cfg-input").disabled = !dbRef || full;
+  document.getElementById("cfg-add").disabled = !dbRef || full;
+  document.querySelectorAll("[data-rm]").forEach((b) => { b.disabled = !dbRef; });
+}
+
+function cfgMsg(text, err) {
+  const m = document.getElementById("cfg-msg");
+  m.textContent = text;
+  m.classList.toggle("err", !!err);
+}
+
+function saveWatch(next) {
+  const prevList = watch;
+  watch = next;
+  render();
+  writing = writing.then(() => dbRef.set({ symbols: next, updated_at: new Date().toISOString() }))
+    .then(() => cfgMsg("已儲存。下一次更新（約 6 分鐘內）會套用。"))
+    .catch((e) => {
+      watch = prevList;
+      render();
+      cfgMsg(e && e.code === "invalid_argument" ? "你沒有修改這份清單的權限。" : "儲存失敗，請稍後再試。", true);
+    });
+}
+
+function initCfg() {
+  const btn = document.getElementById("cfg-btn");
+  const panel = document.getElementById("cfg");
+  btn.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    btn.setAttribute("aria-expanded", String(!panel.hidden));
+    if (!panel.hidden && dbRef) document.getElementById("cfg-input").focus();
+  });
+  document.getElementById("cfg-list").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-rm]");
+    if (!b || !dbRef) return;
+    const list = watch || D.stocks.map((s) => s.symbol);
+    saveWatch(list.filter((x) => x !== b.dataset.rm));
+  });
+  document.getElementById("cfg-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!dbRef) return;
+    const input = document.getElementById("cfg-input");
+    const code = input.value.trim().toUpperCase();
+    const list = watch || D.stocks.map((s) => s.symbol);
+    if (!CODE_RE.test(code)) return cfgMsg("代碼格式不對，請輸入 4 到 6 位數字，例如 2317 或 00878。", true);
+    if (list.includes(code)) return cfgMsg(`${code} 已經在追蹤清單裡。`, true);
+    if (list.length >= MAX_WATCH) return cfgMsg(`最多追蹤 ${MAX_WATCH} 檔，請先移除一檔。`, true);
+    input.value = "";
+    saveWatch(list.concat(code));
+  });
+  renderCfg();
+  cfgMsg("連線中…");
+  window.claude?.use?.("db").then((db) => {
+    if (!db) { cfgMsg("這個畫面無法修改追蹤清單，只能檢視。", true); return; }
+    dbRef = db.doc("config/watchlist");
+    renderCfg();
+    cfgMsg(`最多 ${MAX_WATCH} 檔。改動會在下一次更新（約 6 分鐘內）套用。`);
+    dbRef.onSnapshot((snap) => {
+      const syms = snap.exists ? snap.data().symbols : null;
+      watch = Array.isArray(syms) ? syms.filter((x) => typeof x === "string" && CODE_RE.test(x)).slice(0, MAX_WATCH) : null;
+      render();
+    }, () => cfgMsg("追蹤清單連線中斷，重新整理頁面即可恢復。", true));
+  }).catch(() => cfgMsg("這個畫面無法修改追蹤清單，只能檢視。", true));
+}
+
+function render() {
+  if (!D) return;
+  document.getElementById("meta").textContent = `更新 ${D.generated}`;
+  if (D.note) { const n = document.getElementById("note"); n.textContent = D.note; n.hidden = false; }
+  const list = stockList();
+  document.getElementById("summary").innerHTML = list.map((s) => s.pending ? pendingRow(s) : summaryRow(s)).join("");
+  const main = document.querySelector("main");
+  main.querySelectorAll(".card").forEach((c) => c.remove());
+  main.insertAdjacentHTML("beforeend", list.map((s) => s.pending ? pendingCard(s) : card(s)).join(""));
+  renderCfg();
+  main.querySelectorAll("[data-top]").forEach((b) => b.addEventListener("click", () => {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+  }));
+  main.querySelectorAll("details").forEach((d) => d.addEventListener("toggle", () => {
+    const sym = d.closest(".card").id.slice(2);
+    const o = store("open-" + sym) || {};
+    o[d.dataset.k] = d.open;
+    store("open-" + sym, o);
+  }));
+}
+render();
+initCfg();
+</script>
