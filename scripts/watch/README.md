@@ -1,36 +1,65 @@
 # 盤中看盤板（Intraday Watch Board）
 
-手機上看的台股盤中技術面看板。電腦端每 5–8 分鐘跑一次腳本產生資料、重新發布 claude.ai Artifact 網頁；使用者在手機開網頁看，有問題回到 Claude 對話問。
+手機上看的台股盤中技術面看板。電腦開著 `watch_server.py`（本機 Python 伺服器），盤中每 2 分鐘自動重建資料；手機用瀏覽器開 `http://<電腦 IP>:8765`（區網或 Tailscale），頁面每 60 秒自動更新。有問題回到 Claude 對話問。
 
-- **網頁**：https://claude.ai/artifact/LR4QYReJjTELP87xex3y5d （私人，只有擁有者能開）
-- **建立日期**：2026-09-30
+- **建立日期**：2026-09-30；2026-10-01 由「Claude loop + Artifact 發布」改為本機伺服器
 - **位置**：QuantTraderV2 專案 `scripts/watch/`（使用專案 `.venv`、`src/` 模組與本機資料；不修改專案其他程式碼）
 
 ## 檔案
 
 | 檔案 | 用途 |
 |---|---|
-| `build_watch.py` | 抓資料、算指標與事件，把資料嵌進模板輸出 `watch.html`；另存 `last_data.json` |
-| `watch_template.html` | 網頁版面（純 HTML/CSS/JS，資料由 `/*__DATA__*/null` 置換） |
-| `watch.html` | 產出的網頁，發布用 |
-| `last_data.json` | 最近一次產出的完整資料（盤中回答問題時可直接讀） |
+| `watch_server.py` | 本機 HTTP 伺服器 + 背景重建迴圈（見下） |
+| `run_watch.bat` | 用專案 `.venv` 啟動 `watch_server.py` |
+| `watchlist.json` | 追蹤清單 `{"symbols": [...], "updated_at": ...}`，初始 6182、2489、1476、2492、3264、3324、6669 |
+| `premarket_note.txt` | 頁首提示文字，每次重建時讀取（可手動更新） |
+| `build_watch.py` | 抓資料、算指標與事件；`build(symbols, note)` 回傳 data dict，`render_html` / `write_outputs` 負責輸出；仍可當 CLI 用 |
+| `watch_template.html` | 網頁版面（純 HTML/CSS/JS，資料由 `/*__DATA__*/null` 置換；伺服器模式下每 60 秒 fetch `/data.json` 重繪） |
+| `watch.html` | CLI 產出的靜態網頁（伺服器模式不使用） |
+| `last_data.json` | 最近一次重建的完整資料（盤中回答問題時可直接讀；伺服器重啟時也先用它當初始畫面） |
 | `cache/daily_<代碼>_<日期>.csv` | 每檔「昨天以前」的日線快取；每天第一次執行才建立（會用到 FinMind 額度） |
 
-## 產生資料
+## 啟動（伺服器）
+
+```powershell
+C:\_work\AI_Work\Projects\QuantTraderV2\scripts\watchun_watch.bat
+```
+
+等同 `.venv\Scripts\python.exe watch_server.py [--host 0.0.0.0] [--port 8765]`。桌機開 http://127.0.0.1:8765，手機開 `http://<電腦區網或 Tailscale IP>:8765`。
+
+重建規則（背景執行緒）：
+- 啟動時先建一次（建好前先顯示 `last_data.json`）
+- 週一到週五 09:00–13:35（Asia/Taipei）每 2 分鐘重建；過 13:35 後再建最後一次（收盤資料）就停止
+- 建完若 MIS 日期（`trade_date`）不是今天（09:05 以後判斷）→ 視為休市，當天不再重建
+- 追蹤清單被修改時，不論時段立刻重建一次（新增的股票約 1–2 分鐘內出現）
+- 建置失敗只記 log，保留上一份資料
+
+### API
+
+| 端點 | 說明 |
+|---|---|
+| `GET /` | 頁面（模板 + 最新資料） |
+| `GET /data.json` | 最新 data |
+| `GET /api/watchlist` | `{"symbols": [...]}` |
+| `POST /api/watchlist` | body `{"symbols": [...]}`；最多 8 檔，每檔 `^\d{4,6}[A-Z]?$`；不合法回 400 |
+
+網頁沒有 API 時（例如直接開 `watch.html`）仍可顯示資料，「追蹤設定」變唯讀。
+
+### CLI（單次產出靜態頁）
 
 ```powershell
 cd C:\_work\AI_Work\Projects\QuantTraderV2\scripts\watch
-C:\_work\AI_Work\Projects\QuantTraderV2\.venv\Scripts\python.exe build_watch.py --symbols 6182,2489,1476,2492,0050,2330 --out C:\_work\AI_Work\Projects\QuantTraderV2\scripts\watch\watch.html
+C:\_work\AI_Work\Projects\QuantTraderV2\.venv\Scripts\python.exe build_watch.py --symbols 6182,2489,1476 --out watch.html
 ```
 
-參數：
-- `--symbols`：逗號分隔代碼（最多 8 檔，順序即畫面順序）
-- `--out`：輸出 HTML 路徑
-- `--note`：頁首提示文字（盤中正式版不用傳）
-- `--fresh-min`：重大事件閃爍分鐘數，預設 15（示範版曾用 999 讓收盤後也閃）
+參數：`--symbols`（逗號分隔，最多 8 檔）、`--out`、`--note`、`--fresh-min`（重大事件閃爍分鐘數，預設 15）。
+輸出最後一行形如：`ok 2026-10-01 10:12:03 trade_date=2026-10-01 [('6182', 133.0, 11), ...]`。每日第一次執行約 1–2 分鐘（建日線快取），之後每次約 20–40 秒。
 
-輸出最後一行形如：`ok 2026-10-01 10:12:03 trade_date=2026-10-01 [('6182', 133.0, 11), ...]`。
-`trade_date` 不是今天 → 今天休市。第一次執行約 1–2 分鐘（建日線快取），之後每次約 20–40 秒。
+### 資料行為（2026-10-01 修改）
+
+- **quote-only 模式**：MIS 報價日期不在 yfinance 分 K 的日期中（yfinance 尚無今日資料）時，只顯示即時報價與五檔，warning「yfinance 分K 尚無今日資料，暫時只顯示即時報價」，總覽顯示「僅即時報價」。
+- **估計現價**：MIS 快照 `estimated=True`（無成交價）時，現價改用最佳買價，並以昨收重算漲跌與漲跌幅。
+- **日線分割未還原警告**：日線出現單日跳空超過 ±11% 且量 > 2 倍前 20 日均量，該檔 warnings 加「日線可能有分割／減資未還原（日期 X），均線與關鍵價位可能失真」。實例：6669 緯穎 2026-09-02（7800→2610）。
 
 ## 資料來源
 
@@ -68,34 +97,10 @@ C:\_work\AI_Work\Projects\QuantTraderV2\.venv\Scripts\python.exe build_watch.py 
 - 紅 = 偏多、綠 = 偏空、橘 = 放量
 - 「收盤推算」有變化（KD 將黃金/死亡交叉、均線排列改變、MACD 柱狀體翻正/負）→ 橘字一行，不閃
 
-## 追蹤清單（Artifact 資料庫）
+## 追蹤清單
 
-- 網頁宣告 `capabilities: {db: {}}`，清單存在 `config/watchlist`：`{"symbols": [...], "updated_at": "..."}`
-- 使用者在網頁「追蹤設定」新增/刪除（最多 8 檔，格式 `^\d{4,6}[A-Z]?$`），網頁即時寫入
-- **每次更新前必須先讀這份清單**，用它當 `--symbols`
-- 刪除立即從畫面消失；新增的顯示「等待下次更新」直到下一次產生資料
-- 2026-09-30 初始值：6182、2489、1476、2492、0050、2330
-
-## 盤中定時更新（建議另開 Sonnet 5.5 medium 對話）
-
-每次更新只是固定步驟，不需要模型判斷；另開小上下文的對話最省用量，原對話保留給使用者問問題。
-
-在新對話貼上（`/loop` 間隔 6 分鐘）：
-
-```
-/loop 6m 盤中看盤板更新，完整說明在 C:\_work\AI_Work\Projects\QuantTraderV2\scripts\watch\README.md。每次照做：
-1. 現在若不是週一到週五 09:00–13:35（Asia/Taipei），不要做任何事；若已過 13:35，結束這個 loop。
-2. 用 ArtifactData get 讀 url=https://claude.ai/artifact/LR4QYReJjTELP87xex3y5d collection=config doc_id=watchlist，取 symbols（沒有就用 6182,2489,1476,2492,0050,2330）。
-3. 執行：cd C:\_work\AI_Work\Projects\QuantTraderV2\scripts\watch && C:\_work\AI_Work\Projects\QuantTraderV2\.venv\Scripts\python.exe build_watch.py --symbols <symbols 逗號分隔> --out C:\_work\AI_Work\Projects\QuantTraderV2\scripts\watch\watch.html
-4. 輸出的 trade_date 不是今天 → 今天休市，不要發布並結束 loop。
-5. 用 Artifact publish file_path=C:\_work\AI_Work\Projects\QuantTraderV2\scripts\watch\watch.html url=https://claude.ai/artifact/LR4QYReJjTELP87xex3y5d。不要傳 capabilities、不要傳 icon。
-6. 只回一行：時間、各檔現價、有沒有新的重大事件。
-```
-
-注意：
-- 新對話第一次發布前要先 `Artifact` `action: "read"` 這個網址一次（工具規定：沒讀過的 artifact 不能發布）
-- 重新發布**不要傳 `capabilities`**：省略會保留 `db`；傳 `{}` 會清掉，追蹤清單功能就壞了
-- 腳本失敗時回報錯誤就好，不要改程式
+- 存在 `watchlist.json`，由網頁「追蹤設定」透過 `POST /api/watchlist` 修改（最多 8 檔），也可直接改檔後重啟
+- 刪除立即從畫面消失；新增的顯示「等待下次更新」直到重建完成
 
 ## 盤中回答使用者問題
 
@@ -107,9 +112,12 @@ C:\_work\AI_Work\Projects\QuantTraderV2\.venv\Scripts\python.exe build_watch.py 
 - yfinance 分 K 可能延遲，且缺收盤集合競價；成交量比官方少約 3%
 - 冷門股分鐘成交稀疏，圖上有空檔（例如 1476）
 - 事件只從今天的 1 分 K 推算，沒有新聞/題材資料
-- 需要電腦開著、更新用的對話開著；不支援休市日判斷以外的特殊日（如颱風假）自動處理，靠 trade_date 檢查
+- yfinance 1 分 K 約延遲 20 分鐘（MIS 為即時）；MIS 自組分 K、盤前摘要改抓公開資料留待下一版
+- 伺服器綁 `0.0.0.0`：區網內任何裝置都能開頁面並修改追蹤清單（沒有認證）；只在信任的網路使用，或用 `--host 127.0.0.1` / Tailscale
+- 需要電腦開著、伺服器在跑；特殊休市日（如颱風假）靠 trade_date 檢查
 - 專案 FinMind 分鐘資料集（`TaiwanStockPriceMinute`）2026-09-30 試抓失敗，原因未查
 
 ## 變更紀錄
 
 - 2026-09-30：建立。示範版用 9/30 收盤資料；加入回總覽按鈕、重大事件總覽提示（閃爍/變色）、追蹤設定（db）；檔案從暫存資料夾搬到 `C:\_work\AI_Work\Tools\watch\`，當天再搬進專案 `scripts/watch/`
+- 2026-10-01：改為本機 Python 伺服器（`watch_server.py`），移除 Artifact 發布與 db 追蹤清單；新增日線分割警告、quote-only 模式、估計現價

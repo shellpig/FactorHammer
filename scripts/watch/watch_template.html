@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>盤中看盤板</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -53,6 +58,7 @@ a { color: inherit; }
 .bar-r { display: flex; align-items: center; gap: 10px; }
 .cfg-btn { font: inherit; font-size: 13px; font-weight: 500; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
 .cfg-btn[aria-expanded="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+[hidden] { display: none !important; }
 .cfg { margin: 12px 16px 0; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 10px; max-width: 728px; }
 @media (min-width: 792px) { .cfg { margin-inline: auto; } }
 .cfg-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; }
@@ -63,7 +69,7 @@ a { color: inherit; }
 .cfg-list button { font: inherit; width: 24px; height: 24px; border-radius: 50%; border: 0; background: transparent; color: var(--muted); cursor: pointer; line-height: 1; font-size: 15px; }
 .cfg-list button:hover { background: var(--line); color: var(--ink); }
 .cfg-form { display: flex; gap: 8px; }
-.cfg-form input { flex: 1; min-width: 0; font: inherit; font-family: var(--f-num); font-size: 15px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.cfg-form input { flex: 1; min-width: 0; font: inherit; font-family: var(--f-num); font-size: 16px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
 .cfg-form button { font: inherit; font-weight: 500; padding: 7px 16px; border-radius: 8px; border: 0; background: var(--ink); color: var(--panel); cursor: pointer; }
 .cfg-form button:disabled, .cfg-form input:disabled { opacity: .5; cursor: not-allowed; }
 .cfg-msg { margin: 0; font-size: 12px; color: var(--muted); }
@@ -83,6 +89,8 @@ main { max-width: 760px; margin: 0 auto; padding-block: 12px 40px; padding-inlin
 .srow .px { text-align: right; font-size: 15px; font-weight: 600; }
 .srow .pc { text-align: right; min-width: 64px; font-size: 13px; }
 .srow .ln { grid-column: 1 / -1; display: flex; gap: 10px; color: var(--muted); font-size: 12px; min-width: 0; }
+.srow .ln .strong { font-weight: 700; }
+.srow .ln > span:not(.ev) { flex-shrink: 0; white-space: nowrap; }
 .srow .ln .ev { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .srow .al { grid-column: 1 / -1; font-size: 12px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .srow .pj { grid-column: 1 / -1; font-size: 12px; color: var(--vwap); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -101,7 +109,7 @@ main { max-width: 760px; margin: 0 auto; padding-block: 12px 40px; padding-inlin
 .events li.major span:last-child { font-weight: 700; }
 .events li.major .dot { width: 10px; height: 10px; }
 
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 12px; scroll-margin-top: 60px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; scroll-margin-top: 60px; min-width: 0; }
 .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .head .id h2 { margin: 0; font-size: 18px; font-weight: 700; }
 .head .id span { color: var(--muted); font-size: 12px; }
@@ -164,6 +172,10 @@ td.chg { font-weight: 700; }
 .warn { color: var(--vwap); font-size: 12px; }
 
 @media (max-width: 420px) {
+  table { font-size: 11px; }
+  th, td { padding: 4px 3px; white-space: normal; }
+  thead th { font-size: 11px; }
+  .tag { font-size: 10px; padding: 0 4px; margin-left: 2px; }
   .chips { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .head .q .p { font-size: 22px; }
 }
@@ -173,6 +185,8 @@ td.chg { font-weight: 700; }
   .srow.alert-down.fresh { animation: none; box-shadow: inset 4px 0 0 var(--down), inset 0 0 0 2px var(--down); }
 }
 </style>
+</head>
+<body>
 
 <header class="bar">
   <h1>盤中看盤板</h1>
@@ -185,7 +199,7 @@ td.chg { font-weight: 700; }
     <input id="cfg-input" name="code" type="text" inputmode="numeric" autocapitalize="characters" maxlength="7" placeholder="輸入代碼，例如 2317" aria-label="股票代碼">
     <button type="submit" id="cfg-add">新增</button>
   </form>
-  <p id="cfg-msg" class="cfg-msg">最多 8 檔。改動會在下一次更新（約 6 分鐘內）套用。</p>
+  <p id="cfg-msg" class="cfg-msg">最多 8 檔。改動會在資料更新後套用。</p>
 </section>
 <div class="note" id="note" hidden></div>
 <main>
@@ -193,7 +207,7 @@ td.chg { font-weight: 700; }
 </main>
 
 <script>
-const D = /*__DATA__*/null;
+let D = /*__DATA__*/null;
 
 const fmt = (v, n = 2) => (v === null || v === undefined || Number.isNaN(v)) ? "--" : Number(v).toLocaleString("zh-TW", { minimumFractionDigits: n, maximumFractionDigits: n });
 const fmtP = (v) => {
@@ -341,6 +355,21 @@ function book(s) {
   <div class="ratio-l"><span class="up">買 ${br}%</span><span>${esc(bk.label)}</span><span class="down">賣 ${ar}%</span></div>`;
 }
 
+function marginTbl(s) {
+  const m = s.margin || [];
+  if (!m.length) return '<p class="empty">沒有資券資料</p>';
+  const chg = (v) => v === null || v === undefined ? "--" : (v > 0 ? "+" : "") + fmt(v, 0);
+  const rows = m.slice().reverse().map((x) => `<tr><td>${x.d}</td><td class="num">${chg(x.mchg)}</td><td class="num">${chg(x.schg)}</td></tr>`).join("");
+  return `<div class="tbl-wrap"><table><thead><tr><th>日期</th><th>融資（張）</th><th>融券（張）</th></tr></thead><tbody>${rows}</tbody></table></div><p class="empty">融資／融券餘額較前一交易日的增減；當日資料約 21:30 後公布。</p>`;
+}
+
+function marginSum(s) {
+  const m = (s.margin || []).slice(-1)[0];
+  if (!m || m.mchg === null) return "";
+  const c = (v) => (v > 0 ? "+" : "") + fmt(v, 0);
+  return `<span style="font-weight:400;margin-left:6px;color:var(--muted)">${m.d} 融資 ${c(m.mchg)}、融券 ${c(m.schg)}</span>`;
+}
+
 function events(list, limit) {
   const arr = list.slice().reverse().slice(0, limit ?? list.length);
   if (!arr.length) return '<p class="empty">目前沒有事件</p>';
@@ -348,6 +377,19 @@ function events(list, limit) {
 }
 
 function card(s) {
+  if (!s.series && s.quote && s.price != null) {
+    const q = s.quote, ch = q.change ?? 0;
+    return `<section class="card" id="s-${s.symbol}">
+    <div class="head">
+      <div class="id"><h2>${esc(s.name)}<button type="button" class="top-btn" data-top>↑ 回總覽</button></h2><span class="num">${s.symbol}　${esc(q.date || "")} ${esc(q.time || "")}</span></div>
+      <div class="q"><div class="p num ${cls(ch)}">${fmtP(s.price)}</div><div class="c num ${cls(ch)}">${sgn(ch, s.price >= 1000 ? 0 : 2)}　${sgn(q.pct)}%</div></div>
+    </div>
+    <div class="ohlc num"><span>開 <b>${fmtP(q.open)}</b></span><span>高 <b>${fmtP(q.high)}</b></span><span>低 <b>${fmtP(q.low)}</b></span><span>昨收 <b>${fmtP(q.prev)}</b></span><span>量 <b>${fmt(s.vol_lots, 0)}</b> 張</span></div>
+    <div>${book(s)}</div>
+    <div>${marginTbl(s)}</div>
+    ${(s.warnings || []).map((w) => `<p class="warn">${esc(w)}</p>`).join("")}
+  </section>`;
+  }
   if (!s.series) {
     return `<section class="card" id="s-${s.symbol}"><div class="head"><div class="id"><h2>${esc(s.name)}</h2><span>${s.symbol}</span></div></div>${(s.warnings || []).map((w) => `<p class="warn">${esc(w)}</p>`).join("")}</section>`;
   }
@@ -377,6 +419,7 @@ function card(s) {
     ${det("lv", "關鍵價位", ladder(s))}
     ${det("pj", "若照現價收盤：日線指標" + ((s.proj_changes || []).length ? `<span class="up" style="font-weight:400;margin-left:6px">${esc(s.proj_changes.join("、"))}</span>` : ""), projection(s))}
     ${det("bk", "五檔與買賣力道", book(s))}
+    ${det("mg", "資券（近 3 日）" + marginSum(s), marginTbl(s))}
     ${det("ev", `全部事件（${s.events.length}）`, events(s.events))}
     ${(s.warnings || []).map((w) => `<p class="warn">${esc(w)}</p>`).join("")}
   </section>`;
@@ -387,6 +430,9 @@ function summaryRow(s) {
   const last = (s.events || [])[s.events ? s.events.length - 1 : 0];
   const [vr] = volState(s.vol_ratio);
   const al = s.alert;
+  // red = bullish, green = bearish (TW convention); volume surge takes the colour of the price move
+  const vrCls = s.vol_ratio >= 1.5 ? cls(q.change) : "";
+  const rsiCls = s.rsi5 >= 55 ? "up" : s.rsi5 <= 45 ? "down" : "";
   const alCls = al ? ` alert-${al.kind}${al.fresh ? " fresh" : ""}` : "";
   const alLine = al ? `<span class="al ${al.kind}">★ ${esc(al.t + " " + al.text)}</span>` : "";
   const pjLine = (s.proj_changes || []).length ? `<span class="pj">收盤推算：${esc(s.proj_changes.join("、"))}</span>` : "";
@@ -395,16 +441,16 @@ function summaryRow(s) {
     <span class="px num ${cls(q.change)}">${fmtP(s.price)}</span>
     <span class="pc num ${cls(q.change)}">${sgn(q.pct)}%</span>
     ${alLine}
-    <span class="ln"><span class="${cls(s.vwap_diff)}">VWAP ${s.vwap_diff >= 0 ? "上" : "下"}</span><span>量比 ${vr}</span><span class="ev">${last ? "最新 " + esc(last.t + " " + last.text) : ""}</span></span>
+    <span class="ln">${s.vwap_diff == null ? "<span>僅即時報價</span>" : `<span class="${cls(s.vwap_diff)}">VWAP ${s.vwap_diff >= 0 ? "上" : "下"}</span>`}<span class="${vrCls}">量比 ${vr}</span>${s.rsi5 == null ? "" : `<span class="${rsiCls}${s.rsi5 >= 70 || s.rsi5 <= 30 ? " strong" : ""}">RSI ${fmt(s.rsi5, 0)}${s.rsi5 >= 70 ? " 超買" : s.rsi5 <= 30 ? " 超賣" : ""}</span>`}<span class="ev">${last ? "最新 " + esc(last.t + " " + last.text) : ""}</span></span>
     ${pjLine}
   </a>`;
 }
 
-/* ── watchlist (shared db doc config/watchlist; the updater reads it before each build) ── */
+/* ── watchlist (local server /api/watchlist; without the API the page is read-only) ── */
 const MAX_WATCH = 8;
 const CODE_RE = /^\d{4,6}[A-Z]?$/;
-let watch = null;        // symbols from db; null = not loaded, fall back to the built list
-let dbRef = null;
+let watch = null;        // symbols from the API; null = not loaded, fall back to the built list
+let apiOK = false;
 let writing = Promise.resolve();
 
 function stockList() {
@@ -416,7 +462,7 @@ function pendingRow(s) {
   return `<a class="srow" href="#s-${s.symbol}"><span class="nm">${esc(s.symbol)}</span><span class="px num flat">--</span><span class="pc num flat"></span><span class="ln">等待下次更新</span></a>`;
 }
 function pendingCard(s) {
-  return `<section class="card" id="s-${s.symbol}"><div class="head"><div class="id"><h2>${esc(s.symbol)}<button type="button" class="top-btn" data-top>↑ 回總覽</button></h2><span>剛加入追蹤</span></div></div><p class="empty">下一次更新（約 6 分鐘內）會抓這檔的資料。</p></section>`;
+  return `<section class="card" id="s-${s.symbol}"><div class="head"><div class="id"><h2>${esc(s.symbol)}<button type="button" class="top-btn" data-top>↑ 回總覽</button></h2><span>剛加入追蹤</span></div></div><p class="empty">資料更新後（約 1–2 分鐘）會出現這檔的資料。</p></section>`;
 }
 
 function renderCfg() {
@@ -427,9 +473,9 @@ function renderCfg() {
     `<li><span class="num">${esc(sym)}</span>${names[sym] && names[sym] !== sym ? `<small>${esc(names[sym])}</small>` : ""}<button type="button" data-rm="${esc(sym)}" aria-label="移除 ${esc(sym)}">✕</button></li>`
   ).join("");
   const full = list.length >= MAX_WATCH;
-  document.getElementById("cfg-input").disabled = !dbRef || full;
-  document.getElementById("cfg-add").disabled = !dbRef || full;
-  document.querySelectorAll("[data-rm]").forEach((b) => { b.disabled = !dbRef; });
+  document.getElementById("cfg-input").disabled = !apiOK || full;
+  document.getElementById("cfg-add").disabled = !apiOK || full;
+  document.querySelectorAll("[data-rm]").forEach((b) => { b.disabled = !apiOK; });
 }
 
 function cfgMsg(text, err) {
@@ -442,12 +488,14 @@ function saveWatch(next) {
   const prevList = watch;
   watch = next;
   render();
-  writing = writing.then(() => dbRef.set({ symbols: next, updated_at: new Date().toISOString() }))
-    .then(() => cfgMsg("已儲存。下一次更新（約 6 分鐘內）會套用。"))
+  writing = writing.then(() => fetch("/api/watchlist", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbols: next }),
+  }).then(async (r) => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status); }))
+    .then(() => { cfgMsg("已儲存，資料更新後套用。"); setTimeout(poll, 20000); })
     .catch((e) => {
       watch = prevList;
       render();
-      cfgMsg(e && e.code === "invalid_argument" ? "你沒有修改這份清單的權限。" : "儲存失敗，請稍後再試。", true);
+      cfgMsg("儲存失敗：" + (e && e.message ? e.message : "請稍後再試。"), true);
     });
 }
 
@@ -457,17 +505,17 @@ function initCfg() {
   btn.addEventListener("click", () => {
     panel.hidden = !panel.hidden;
     btn.setAttribute("aria-expanded", String(!panel.hidden));
-    if (!panel.hidden && dbRef) document.getElementById("cfg-input").focus();
+    if (!panel.hidden && apiOK) document.getElementById("cfg-input").focus();
   });
   document.getElementById("cfg-list").addEventListener("click", (e) => {
     const b = e.target.closest("[data-rm]");
-    if (!b || !dbRef) return;
+    if (!b || !apiOK) return;
     const list = watch || D.stocks.map((s) => s.symbol);
     saveWatch(list.filter((x) => x !== b.dataset.rm));
   });
   document.getElementById("cfg-form").addEventListener("submit", (e) => {
     e.preventDefault();
-    if (!dbRef) return;
+    if (!apiOK) return;
     const input = document.getElementById("cfg-input");
     const code = input.value.trim().toUpperCase();
     const list = watch || D.stocks.map((s) => s.symbol);
@@ -479,23 +527,28 @@ function initCfg() {
   });
   renderCfg();
   cfgMsg("連線中…");
-  window.claude?.use?.("db").then((db) => {
-    if (!db) { cfgMsg("這個畫面無法修改追蹤清單，只能檢視。", true); return; }
-    dbRef = db.doc("config/watchlist");
-    renderCfg();
-    cfgMsg(`最多 ${MAX_WATCH} 檔。改動會在下一次更新（約 6 分鐘內）套用。`);
-    dbRef.onSnapshot((snap) => {
-      const syms = snap.exists ? snap.data().symbols : null;
-      watch = Array.isArray(syms) ? syms.filter((x) => typeof x === "string" && CODE_RE.test(x)).slice(0, MAX_WATCH) : null;
-      render();
-    }, () => cfgMsg("追蹤清單連線中斷，重新整理頁面即可恢復。", true));
+  fetch("/api/watchlist", { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error(); return r.json(); }).then((j) => {
+    apiOK = true;
+    watch = Array.isArray(j.symbols) ? j.symbols.filter((x) => typeof x === "string" && CODE_RE.test(x)).slice(0, MAX_WATCH) : null;
+    cfgMsg(`最多 ${MAX_WATCH} 檔。改動會在資料更新後（約 1–2 分鐘）套用。`);
+    render();
   }).catch(() => cfgMsg("這個畫面無法修改追蹤清單，只能檢視。", true));
+}
+
+/* ── live refresh: re-fetch /data.json every 60 s, no page reload ── */
+function poll() {
+  fetch("/data.json", { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error(); return r.json(); }).then((d) => {
+    if (!d || !Array.isArray(d.stocks) || d.generated === D.generated) return;
+    D = d;
+    render();
+  }).catch(() => {});
 }
 
 function render() {
   if (!D) return;
   document.getElementById("meta").textContent = `更新 ${D.generated}`;
-  if (D.note) { const n = document.getElementById("note"); n.textContent = D.note; n.hidden = false; }
+  const n = document.getElementById("note"); n.textContent = D.note || ""; n.hidden = !D.note;
+  const sy = window.scrollY;
   const list = stockList();
   document.getElementById("summary").innerHTML = list.map((s) => s.pending ? pendingRow(s) : summaryRow(s)).join("");
   const main = document.querySelector("main");
@@ -512,7 +565,11 @@ function render() {
     o[d.dataset.k] = d.open;
     store("open-" + sym, o);
   }));
+  window.scrollTo(0, sy);
 }
 render();
 initCfg();
+setInterval(poll, 60000);
 </script>
+</body>
+</html>

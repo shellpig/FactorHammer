@@ -111,6 +111,63 @@ def daily_indicators(df: pd.DataFrame) -> dict:
     }
 
 
+# ── margin / short (FinMind, cached per day; today's figures land ~21:30) ─
+def margin_context(symbol: str, now: datetime) -> list[dict]:
+    """Last 3 trading days of margin/short data (lots), newest last."""
+    from src.data.fetcher import FinMindFetcher
+
+    CACHE.mkdir(exist_ok=True)
+    today = now.strftime("%Y-%m-%d")
+    path = CACHE / f"margin_{symbol}_{today}.csv"
+    refresh_at = now.replace(hour=21, minute=30, second=0, microsecond=0)
+    df = None
+    if path.exists():
+        df = pd.read_csv(path)
+        stale = (now >= refresh_at and datetime.fromtimestamp(path.stat().st_mtime, TZ) < refresh_at
+                 and (df.empty or str(df["date"].iloc[-1])[:10] < today))
+        if stale:
+            df = None
+    if df is None:
+        start = (now - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
+        df = FinMindFetcher().fetch_margin(symbol, start)
+        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+        df.to_csv(path, index=False)
+    if df.empty:
+        return []
+    df = df.tail(4).reset_index(drop=True)
+    rows = []
+    for i in range(1, len(df)) if len(df) > 3 else range(len(df)):
+        cur = df.iloc[i]
+        prev = df.iloc[i - 1] if i > 0 else None
+        rows.append({
+            "d": str(cur["date"])[5:10],
+            "mb": int(cur["margin_buy"]), "ms": int(cur["margin_sell"]), "mbal": int(cur["margin_balance"]),
+            "mchg": int(cur["margin_balance"] - prev["margin_balance"]) if prev is not None else None,
+            "sb": int(cur["short_buy"]), "ss": int(cur["short_sell"]), "sbal": int(cur["short_balance"]),
+            "schg": int(cur["short_balance"] - prev["short_balance"]) if prev is not None else None,
+            "ratio": r(cur["short_balance"] / cur["margin_balance"] * 100, 1) if cur["margin_balance"] else None,
+        })
+    return rows
+
+
+def attach_margin(out: dict) -> None:
+    try:
+        out["margin"] = margin_context(out["symbol"], datetime.now(TZ))
+    except Exception as exc:  # noqa: BLE001
+        out["margin"] = []
+        out["warnings"].append(f"資券資料失敗：{exc}")
+
+
+def find_unadjusted_split(df: pd.DataFrame) -> str | None:
+    """Latest day gapping beyond +-11% on >2x the prior 20-day average volume (daily limit is 10%)."""
+    gap = df["close"].pct_change().abs()
+    avg20 = df["volume"].rolling(20).mean().shift(1)
+    hit = (gap > 0.11) & (df["volume"] > 2 * avg20)
+    if not hit.any():
+        return None
+    return pd.Timestamp(df.loc[hit[hit].index[-1], "date"]).strftime("%Y-%m-%d")
+
+
 # ── per symbol ───────────────────────────────────────────────────────────
 def build_symbol(symbol: str, rt: RealtimeFetcher) -> dict:
     out: dict = {"symbol": symbol, "warnings": []}
@@ -141,6 +198,24 @@ def build_symbol(symbol: str, rt: RealtimeFetcher) -> dict:
     mkt = rt._market_map.get(symbol, "tse")
     yf_sym = f"{symbol}.TWO" if mkt == "otc" else f"{symbol}.TW"
     m1 = yf.Ticker(yf_sym).history(period="7d", interval="1m", prepost=False)
+    q = out.get("quote") or {}
+    m1_days = set(m1.index.tz_convert(TZ).strftime("%Y-%m-%d")) if not m1.empty else set()
+    # yfinance 1m lags the open; show the realtime quote alone until today's bars arrive
+    if q.get("date") and q.get("price") and q["date"] not in m1_days:
+        out["warnings"].append("yfinance 分K 尚無今日資料，暫時只顯示即時報價")
+        price = q["price"]
+        bids = (out.get("book") or {}).get("bid") or []
+        # MIS snapshot without a last trade falls back to prev close; best bid is closer
+        if q["estimated"] and bids and bids[0][0]:
+            price = bids[0][0]
+            q["change"] = r(price - q["prev"])
+            q["pct"] = r((price / q["prev"] - 1) * 100)
+            out["warnings"].append("此刻快照無成交價，現價以最佳買價估計")
+        out.update({"trade_date": q["date"], "price": r(price), "vol_lots": q["vol"]})
+        if not out.get("name"):
+            out["name"] = symbol
+        attach_margin(out)
+        return out
     if m1.empty:
         out["warnings"].append("yfinance 分K 無資料")
         return out
@@ -161,9 +236,19 @@ def build_symbol(symbol: str, rt: RealtimeFetcher) -> dict:
     prev_close = float(out["quote"]["prev"]) if out.get("quote") and out["quote"]["prev"] else float(prev["close"])
     base = daily_indicators(daily)
     up, dn = limit_prices(prev_close, is_etf)
+    split_day = find_unadjusted_split(daily)
+    if split_day:
+        out["warnings"].append(f"日線可能有分割／減資未還原（日期 {split_day}），均線與關鍵價位可能失真")
 
     # current values
     price = out["quote"]["price"] if out.get("quote") and not out["quote"]["estimated"] else r(t["close"].iloc[-1])
+    if out.get("quote") and out["quote"]["estimated"]:
+        # yfinance 1m lags ~20 min; best bid is fresher than the last bar
+        bids = (out.get("book") or {}).get("bid") or []
+        if bids and bids[0][0]:
+            price = bids[0][0]
+        out["quote"]["change"] = r(price - prev_close)
+        out["quote"]["pct"] = r((price / prev_close - 1) * 100)
     day_hi = max(t["high"].max(), out["quote"]["high"] if out.get("quote") else 0)
     day_lo = min(t["low"].min(), out["quote"]["low"] if out.get("quote") else 1e9)
     cum_vol_shares = (out["quote"]["vol"] * 1000) if out.get("quote") else t["volume"].sum()
@@ -326,6 +411,7 @@ def build_symbol(symbol: str, rt: RealtimeFetcher) -> dict:
         },
         "last_bar": now_hm,
     })
+    attach_margin(out)
     return out
 
 
@@ -430,6 +516,48 @@ def detect_events(t, past, or_hi, or_lo, levels, up, dn, prev_close, avg20_share
     return ev
 
 
+_RT: RealtimeFetcher | None = None
+_RT_DAY = ""
+
+
+def _fetcher() -> RealtimeFetcher:
+    """Shared fetcher; the FinMind market map is reloaded once per day."""
+    global _RT, _RT_DAY
+    day = datetime.now(TZ).strftime("%Y-%m-%d")
+    if _RT is None or _RT_DAY != day:
+        rt = RealtimeFetcher(cache_ttl=0, request_timeout=8)
+        rt.load_market_map()
+        _RT, _RT_DAY = rt, day
+    return _RT
+
+
+def build(symbols: list[str], note: str = "") -> dict:
+    rt = _fetcher()
+    stocks = []
+    for s in symbols:
+        try:
+            stocks.append(build_symbol(s, rt))
+        except Exception as exc:  # noqa: BLE001
+            stocks.append({"symbol": s, "name": s, "warnings": [f"建置失敗：{exc!r}"]})
+    return {
+        "generated": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "note": note,
+        "stocks": stocks,
+    }
+
+
+def render_html(data: dict) -> str:
+    tpl = (HERE / "watch_template.html").read_text(encoding="utf-8")
+    payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    return tpl.replace("/*__DATA__*/null", payload)
+
+
+def write_outputs(data: dict, out: Path | None = None) -> None:
+    if out is not None:
+        Path(out).write_text(render_html(data), encoding="utf-8")
+    (HERE / "last_data.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 def main() -> None:
     global FRESH_MIN
     ap = argparse.ArgumentParser()
@@ -439,23 +567,9 @@ def main() -> None:
     ap.add_argument("--fresh-min", type=int, default=FRESH_MIN)
     args = ap.parse_args()
     FRESH_MIN = args.fresh_min
-    rt = RealtimeFetcher(cache_ttl=0, request_timeout=8)
-    rt.load_market_map()
-    stocks = []
-    for s in [x.strip() for x in args.symbols.split(",") if x.strip()]:
-        try:
-            stocks.append(build_symbol(s, rt))
-        except Exception as exc:  # noqa: BLE001
-            stocks.append({"symbol": s, "name": s, "warnings": [f"建置失敗：{exc!r}"]})
-    data = {
-        "generated": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S"),
-        "note": args.note,
-        "stocks": stocks,
-    }
-    tpl = (HERE / "watch_template.html").read_text(encoding="utf-8")
-    html = tpl.replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False))
-    Path(args.out).write_text(html, encoding="utf-8")
-    (HERE / "last_data.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    data = build([x.strip() for x in args.symbols.split(",") if x.strip()], args.note)
+    write_outputs(data, Path(args.out))
+    stocks = data["stocks"]
     dates = sorted({x.get("trade_date") for x in stocks if x.get("trade_date")})
     print("ok", data["generated"], "trade_date=" + ",".join(dates),
           [(x["symbol"], x.get("price"), len(x.get("events", []))) for x in stocks])
