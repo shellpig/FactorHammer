@@ -18,6 +18,7 @@
 | `watch.html` | CLI 產出的靜態網頁（伺服器模式不使用） |
 | `last_data.json` | 最近一次重建的完整資料（盤中回答問題時可直接讀；伺服器重啟時也先用它當初始畫面） |
 | `cache/daily_<代碼>_<日期>.csv` | 每檔「昨天以前」的日線快取；每天第一次執行才建立（會用到 FinMind 額度） |
+| `signals.py` / `起漲訊號.md` | 盤後「起漲前 1 天／起漲當天」條件評分 CLI 與條件定義 |
 
 ## 啟動（伺服器）
 
@@ -106,6 +107,7 @@ C:\_work\AI_Work\Projects\QuantTraderV2\.venv\Scripts\python.exe build_watch.py 
 
 1. 讀 `last_data.json`（最新一次產出）或重跑腳本取最新資料
 2. 以技術面解讀狀況與風險；**不給買賣建議**（不是持牌投資顧問）
+3. 篩選「起漲前 1 天／起漲當天」與排序方法見 [`起漲訊號.md`](起漲訊號.md)
 
 ## 已知限制
 
