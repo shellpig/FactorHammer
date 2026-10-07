@@ -199,7 +199,7 @@ td.chg { font-weight: 700; }
     <input id="cfg-input" name="code" type="text" inputmode="numeric" autocapitalize="characters" maxlength="7" placeholder="輸入代碼，例如 2317" aria-label="股票代碼">
     <button type="submit" id="cfg-add">新增</button>
   </form>
-  <p id="cfg-msg" class="cfg-msg">最多 12 檔。改動會在資料更新後套用。</p>
+  <p id="cfg-msg" class="cfg-msg">最多 16 檔。改動會在資料更新後套用。</p>
 </section>
 <div class="note" id="note" hidden></div>
 <main>
@@ -447,7 +447,7 @@ function summaryRow(s) {
 }
 
 /* ── watchlist (local server /api/watchlist; without the API the page is read-only) ── */
-const MAX_WATCH = 12;
+const MAX_WATCH = 16;
 const CODE_RE = /^\d{4,6}[A-Z]?$/;
 let watch = null;        // symbols from the API; null = not loaded, fall back to the built list
 let apiOK = false;

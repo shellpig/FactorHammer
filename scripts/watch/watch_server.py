@@ -6,7 +6,7 @@ Usage:
 GET /               page (template + latest data)
 GET /data.json      latest data
 GET /api/watchlist  {"symbols": [...]}
-POST /api/watchlist {"symbols": [...]}  max 12, each ^\\d{4,6}[A-Z]?$
+POST /api/watchlist {"symbols": [...]}  max 16, each ^\\d{4,6}[A-Z]?$
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ HERE = Path(__file__).resolve().parent
 WATCHLIST = HERE / "watchlist.json"
 NOTE = HERE / "premarket_note.txt"
 DEFAULT_SYMBOLS = ["6182", "2489", "1476", "2492", "3264", "3324", "6669"]
-MAX_WATCH = 12
+MAX_WATCH = 16
 CODE_RE = re.compile(r"^\d{4,6}[A-Z]?$")
 INTERVAL = 120          # seconds between builds during market hours
 OPEN_HM, FINAL_HM = "09:00", "13:35"

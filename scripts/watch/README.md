@@ -42,7 +42,7 @@ C:\_work\AI_Work\Projects\QuantTraderV2\scripts\watchun_watch.bat
 | `GET /` | 頁面（模板 + 最新資料） |
 | `GET /data.json` | 最新 data |
 | `GET /api/watchlist` | `{"symbols": [...]}` |
-| `POST /api/watchlist` | body `{"symbols": [...]}`；最多 8 檔，每檔 `^\d{4,6}[A-Z]?$`；不合法回 400 |
+| `POST /api/watchlist` | body `{"symbols": [...]}`；最多 16 檔，每檔 `^\d{4,6}[A-Z]?$`；不合法回 400 |
 
 網頁沒有 API 時（例如直接開 `watch.html`）仍可顯示資料，「追蹤設定」變唯讀。
 
@@ -53,7 +53,7 @@ cd C:\_work\AI_Work\Projects\QuantTraderV2\scripts\watch
 C:\_work\AI_Work\Projects\QuantTraderV2\.venv\Scripts\python.exe build_watch.py --symbols 6182,2489,1476 --out watch.html
 ```
 
-參數：`--symbols`（逗號分隔，最多 8 檔）、`--out`、`--note`、`--fresh-min`（重大事件閃爍分鐘數，預設 15）。
+參數：`--symbols`（逗號分隔）、`--out`、`--note`、`--fresh-min`（重大事件閃爍分鐘數，預設 15）。
 輸出最後一行形如：`ok 2026-10-01 10:12:03 trade_date=2026-10-01 [('6182', 133.0, 11), ...]`。每日第一次執行約 1–2 分鐘（建日線快取），之後每次約 20–40 秒。
 
 ### 資料行為（2026-10-01 修改）
@@ -100,7 +100,7 @@ C:\_work\AI_Work\Projects\QuantTraderV2\.venv\Scripts\python.exe build_watch.py 
 
 ## 追蹤清單
 
-- 存在 `watchlist.json`，由網頁「追蹤設定」透過 `POST /api/watchlist` 修改（最多 8 檔），也可直接改檔後重啟
+- 存在 `watchlist.json`，由網頁「追蹤設定」透過 `POST /api/watchlist` 修改（最多 16 檔），也可直接改檔後重啟
 - 刪除立即從畫面消失；新增的顯示「等待下次更新」直到重建完成
 
 ## 盤中回答使用者問題
