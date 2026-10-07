@@ -6,7 +6,7 @@ Usage:
 GET /               page (template + latest data)
 GET /data.json      latest data
 GET /api/watchlist  {"symbols": [...]}
-POST /api/watchlist {"symbols": [...]}  max 8, each ^\\d{4,6}[A-Z]?$
+POST /api/watchlist {"symbols": [...]}  max 12, each ^\\d{4,6}[A-Z]?$
 """
 from __future__ import annotations
 
@@ -21,12 +21,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import build_watch as bw
+import premarket as pm
 
 HERE = Path(__file__).resolve().parent
 WATCHLIST = HERE / "watchlist.json"
 NOTE = HERE / "premarket_note.txt"
 DEFAULT_SYMBOLS = ["6182", "2489", "1476", "2492", "3264", "3324", "6669"]
-MAX_WATCH = 8
+MAX_WATCH = 12
 CODE_RE = re.compile(r"^\d{4,6}[A-Z]?$")
 INTERVAL = 120          # seconds between builds during market hours
 OPEN_HM, FINAL_HM = "09:00", "13:35"
@@ -85,8 +86,14 @@ def do_build() -> dict | None:
     """Build once; on failure keep the previous data. Returns the new data or None."""
     global _data
     with _build_lock:
+        symbols = load_watchlist()
         try:
-            data = bw.build(load_watchlist(), read_note())
+            if pm.update_note_file(symbols, log=log):
+                log("premarket note updated")
+        except Exception:  # noqa: BLE001  a stale note must not block the board
+            log("premarket note failed, keeping file:\n" + traceback.format_exc())
+        try:
+            data = bw.build(symbols, read_note())
             bw.write_outputs(data)
         except Exception:  # noqa: BLE001
             log("build failed, keeping previous data:\n" + traceback.format_exc())
