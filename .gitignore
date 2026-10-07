@@ -42,3 +42,5 @@ web/playwright-report/
 scripts/watch/watch.html
 scripts/watch/last_data.json
 scripts/watch/cache/
+scripts/watch/watchlist.json
+scripts/watch/premarket_note.txt
