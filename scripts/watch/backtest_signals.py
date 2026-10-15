@@ -5,7 +5,7 @@ Usage (any cwd):
   ...\\.venv\\Scripts\\python.exe backtest_signals.py fetch --random 40 --seed 1  # + random liquid uncached stocks
   ...\\.venv\\Scripts\\python.exe backtest_signals.py foreign               # per-day foreign net -> cache/bt/foreign/ (~40 min, resumable)
   ...\\.venv\\Scripts\\python.exe backtest_signals.py run                   # score every cached stock-day and report
-  ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only refine|bd [--since YYYY-MM-DD]
+  ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only refine|bd|breadth [--since YYYY-MM-DD]
 
 Phase 1: technical items only (A8 / B8 foreign items excluded) -> A out of 8, B out of 7.
 Phase 2 (when cache/bt/foreign/ has data): adds A8 / B8 and reports on the covered days.
@@ -228,7 +228,7 @@ def features(d: pd.DataFrame, ix: pd.Series, fx: pd.DataFrame | None = None, cod
     f["量50日前10%"] = v > v.shift().rolling(50).quantile(0.9)
     f["max20"] = chg.rolling(20).max()
     f["前20日漲停"] = (chg >= 9.5).shift().rolling(20).sum()
-    f["r5"], f["r20"] = (c / c.shift(5) - 1) * 100, (c / c.shift(20) - 1) * 100
+    f["r3"], f["r5"], f["r20"] = (c / c.shift(3) - 1) * 100, (c / c.shift(5) - 1) * 100, (c / c.shift(20) - 1) * 100
     ma20, ma60 = ma.iloc[:, 2], c.rolling(60).mean()
     f["均線多頭"] = (c > ma20) & (c > ma60) & (ma20 > ma20.shift(5)) & (ma60 > ma60.shift(5))
     f["前日均線多頭"] = f["均線多頭"].shift(fill_value=False)
@@ -677,6 +677,81 @@ def group_reversal_report(df: pd.DataFrame) -> None:
         print(_year_table(df, evs[bk]), "\n")
 
 
+def add_breadth(df: pd.DataFrame, min_size: int = 5) -> pd.DataFrame:
+    """Per date x industry (same peer pool / exclusions as add_group): count and share of peers (excluding the stock
+    itself) whose Y-day return (r3 / r5, %) is > Z%, Y in {3, 5}, Z in {10, 15}. Industries < min_size -> NaN."""
+    key = [df.date, df.產業]
+    size = df.code.groupby(key).transform("size")
+    ok = size >= min_size
+    for y in (3, 5):
+        for z in (10, 15):
+            hit = (df[f"r{y}"] > z).astype(float)
+            n = hit.groupby(key).transform("sum") - hit
+            df[f"同業{y}日漲{z}數"], df[f"同業{y}日漲{z}比"] = n.where(ok), (n / (size - 1)).where(ok)
+    return df
+
+
+def breadth_report(df: pd.DataFrame) -> None:
+    """B2 族群漲幅廣度: >= X peers in the same industry rose > Z% over the last Y trading days. 12 cells (Y 3/5 x Z 10/15
+    x X 數>=2 / 數>=3 / 比>=20%) fixed in advance, overlaid on (a) all stock-days and (b) 創52週新高 or 現行組合."""
+    add_breadth(df)
+    brk = df["B4放量"] & df["B5收過箱頂"] & df["B1收紅"]
+    combo = brk & (df.near52 >= 0.95) & df["前日均線多頭"] & df["大盤多頭"]
+    avail = df["同業新高數"].notna()
+    bases = {"(a)": pd.Series(True, index=df.index), "(b)": df["創52週新高"] | combo}
+    print("== B2 族群漲幅廣度：同產業(排除自己)近 Y 個交易日漲幅 > Z% 的檔數 / 占比；同業池與 <5檔排除同 B 族群動能 ==")
+    print("(a)=全部股日；(b)=創52週新高 或 現行組合(放量突破+收紅 & near52≥0.95 & 前日均線多頭 & 大盤多頭)；已去重；報酬已扣成本 %")
+    print(f"股日 {len(df)}，同業可用 {avail.sum()}（{avail.mean() * 100:.0f}%）；(b) 股日 {bases['(b)'].sum()}"
+          f"（同業可用 {(bases['(b)'] & avail).sum()}）\n")
+    cells = {}
+    for y in (3, 5):
+        for z in (10, 15):
+            n, r = df[f"同業{y}日漲{z}數"], df[f"同業{y}日漲{z}比"]
+            for xn, m in (("數≥2", n >= 2), ("數≥3", n >= 3), ("比≥20%", r >= 0.2)):
+                cells[f"{y}日漲{z}% {xn}"] = m
+    n5 = df["同業5日漲10數"]
+    evs = {}
+    for bn, bm in bases.items():
+        evs[f"{bn}基準 [同業可用]"] = dedup(df, bm & avail)
+        evs.update({f"{bn} {k}": dedup(df, bm & m) for k, m in ({"同業新高數≥2": df["同業新高數"] >= 2} | cells).items()})
+    evs["(b) & 同業5日漲10數=0"] = dedup(df, bases["(b)"] & (n5 == 0))
+    lag = "落後補漲：自己5日漲<10% & 同業5日漲10數≥2"
+    explore = {lag: dedup(df, (df.r5 < 10) & (n5 >= 2))}
+    ref = {"基準(全部股日)": df}
+    for bn in bases:
+        tag = f"{bn}基準 [同業可用]"
+        print(f"-- 基底 {bn}")
+        print(_ex_table({k: v for k, v in evs.items() if k.startswith(bn)}, ref, df), "\n")
+    print("-- 【探索】落後補漲（僅 (a)，Y=5 Z=10）")
+    print(_ex_table(explore, ref, df), "\n")
+
+    # lead check on base (a): is the stock already at / about to make its own 52w high when breadth fires?
+    d2 = df.sort_values(["code", "date"])
+    nh = d2["創52週新高"].astype(float)
+    nxt = pd.concat([nh.groupby(d2.code).shift(-i) for i in range(1, 6)], axis=1).max(axis=1).reindex(df.index)
+    sets = {k: v for k, v in evs.items() if k.startswith("(a)")} | explore
+    rows = {}
+    for k, ev in sets.items():
+        today = ev["創52週新高"]
+        rows[k] = {"n": len(ev), "當日已創新高%": today.mean() * 100, "當日near52≥0.95%": (ev.near52 >= 0.95).mean() * 100,
+                   "未創新高者5日內創新高%": nxt.loc[ev.index][~today].mean() * 100, "自己5日漲幅均%": ev.r5.mean()}
+    print("-- 領先性（base (a)，已去重；「5日內」以同檔後 5 筆資料列近似）")
+    print(table(rows), "\n")
+
+    score = {}
+    for k, ev in evs.items():
+        if k[4:] in cells:
+            a, b = ev[ev["期間"] == "樣本內"], ev[ev["期間"] == "樣本外"]
+            if len(a) >= 100 and len(b) >= 100:
+                score[k] = min(robust(df, a)["同日超額中位"], robust(df, b)["同日超額中位"])
+    if score:
+        bk = max(score, key=score.get)
+        print(f"-- B2 最佳格（規則：樣本內/外 n≥100 且 min(兩期同日超額中位) 最大；僅 12 格×2 基底，不含對照列）：{bk}")
+        print(_year_table(df, evs[bk]), "\n")
+    else:
+        print("-- B2 最佳格：無任何格在兩期 n≥100\n")
+
+
 def run(since: str = "", only: str = "") -> None:
     ix = pd.read_parquet(BT / "_TWII.parquet").Close
     fx, tx = load_inst("foreign"), load_inst("trust")
@@ -701,6 +776,9 @@ def run(since: str = "", only: str = "") -> None:
         return
     if only == "bd":
         group_reversal_report(df)
+        return
+    if only == "breadth":
+        breadth_report(df)
         return
     ev_a, ev_b = dedup(df, df.A >= A_MIN), dedup(df, df.B >= B_MIN)
 
@@ -756,6 +834,7 @@ def run(since: str = "", only: str = "") -> None:
     ideas_report(df)
     refine_report(df)
     group_reversal_report(df)
+    breadth_report(df)
 
     cols = ["date", "code", "期間", "A", "B", "hit", "stop_first", "max15", "ret15", "vol60"]
     ev = pd.concat([ev_a.assign(訊號="A"), ev_b.assign(訊號="B")])[["訊號"] + cols].sort_values(["訊號", "date"])
@@ -774,7 +853,8 @@ def main() -> None:
     fp.add_argument("--all-stocks", action="store_true", help="--random draws from all common stocks, not only liquid")
     rp = sub.add_parser("run")
     rp.add_argument("--since", default="", help="only evaluate signal days >= YYYY-MM-DD")
-    rp.add_argument("--only", default="", choices=["", "refine", "bd"], help="refine = only refine_report; bd = only group_reversal_report")
+    rp.add_argument("--only", default="", choices=["", "refine", "bd", "breadth"],
+                    help="refine = only refine_report; bd = only group_reversal_report; breadth = only breadth_report")
     sub.add_parser("foreign")
     sub.add_parser("trust")
     args = ap.parse_args()
