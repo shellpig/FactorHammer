@@ -5,7 +5,7 @@ Usage (any cwd):
   ...\\.venv\\Scripts\\python.exe backtest_signals.py fetch --random 40 --seed 1  # + random liquid uncached stocks
   ...\\.venv\\Scripts\\python.exe backtest_signals.py foreign               # per-day foreign net -> cache/bt/foreign/ (~40 min, resumable)
   ...\\.venv\\Scripts\\python.exe backtest_signals.py run                   # score every cached stock-day and report
-  ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only refine|bd|breadth [--since YYYY-MM-DD]
+  ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only refine|bd|breadth|pullback [--since YYYY-MM-DD]
 
 Phase 1: technical items only (A8 / B8 foreign items excluded) -> A out of 8, B out of 7.
 Phase 2 (when cache/bt/foreign/ has data): adds A8 / B8 and reports on the covered days.
@@ -254,7 +254,33 @@ def features(d: pd.DataFrame, ix: pd.Series, fx: pd.DataFrame | None = None, cod
     f["大盤漲跌"] = (ix.pct_change() * 100).reindex(d.index)
     f["vol60"] = c.pct_change().rolling(60).std() * 100
     f["pos"] = np.arange(len(d))
-    ok = (c.shift(-HOLD).notna() & (o.shift(-1) > 0) & (v.rolling(20).mean() >= MIN_VOL) & (c >= MIN_PX)
+
+    # Martin Luk 回調買入法 (daily proxy; the minute-bar trigger cannot be tested)
+    e9, e21, e50 = (ta.ema(c, length=n) for n in (9, 21, 50))
+    f["r21"], f["r63"], f["r126"] = ((c / c.shift(n) - 1) * 100 for n in (21, 63, 126))
+    f["收在EMA21上"] = c > e21
+    f["近3日觸EMA21"] = ((l <= e21 * 1.02) & (l >= e21 * 0.97)).rolling(3).max().astype(bool)
+    f["EMA9_21上彎"] = (e9 >= e9.shift(3)) & (e21 >= e21.shift(5))
+    f["EMA多頭排列"] = (e9 > e21) & (e21 > e50)
+    f["低點墊高"] = l.rolling(10).min() > l.shift(10).rolling(10).min()
+    f["波動收斂"] = rng.rolling(5).mean() < rng.rolling(20).mean()
+    f["離前高"] = (c / h.shift().rolling(20).max() - 1) * 100
+    f["突破前K高"] = c > h.shift()
+    # R exit: stop = signal-day low, target = +3R, otherwise close of bar HOLD; gap through a level fills at the open
+    stop_r = (l.to_numpy() / entry - 1)[:, None]                 # negative when entry > low
+    f["停損距離%"] = -stop_r[:, 0] * 100
+    tgt_r = -3 * stop_r
+    dn_r, up_r = lo <= stop_r, hi >= tgt_r
+    sd_r = np.where(dn_r.any(axis=1), dn_r.argmax(axis=1), HOLD)
+    td_r = np.where(up_r.any(axis=1), up_r.argmax(axis=1), HOLD)
+    s_px = np.minimum(np.take_along_axis(op, np.minimum(sd_r, HOLD - 1)[:, None], 1)[:, 0], stop_r[:, 0])
+    t_px = np.maximum(np.take_along_axis(op, np.minimum(td_r, HOLD - 1)[:, None], 1)[:, 0], tgt_r[:, 0])
+    first = (sd_r < HOLD) & (sd_r <= td_r)
+    ret_r = np.where(first, s_px, np.where(td_r < HOLD, t_px, cl))
+    valid = stop_r[:, 0] < 0
+    f["exR停損3R"] = np.where(valid, (ret_r - COST) * 100, np.nan)
+    f["exR_R倍"] = np.where(valid, ret_r / -stop_r[:, 0], np.nan)
+    ok =(c.shift(-HOLD).notna() & (o.shift(-1) > 0) & (v.rolling(20).mean() >= MIN_VOL) & (c >= MIN_PX)
           & (d.index >= FIRST))
     return f[ok.to_numpy()]
 
@@ -752,6 +778,49 @@ def breadth_report(df: pd.DataFrame) -> None:
         print("-- B2 最佳格：無任何格在兩期 n≥100\n")
 
 
+def pullback_report(df: pd.DataFrame) -> None:
+    """Martin Luk 回調買入法, daily proxy; sets fixed in advance (2026-10-17, before looking). 強勢 = r21 / r63 / r126 any
+    ≥ 30% and in that day's top 30% (rank over the cached liquid stock-days). Trigger = close > previous high after
+    touching EMA21 (the minute-bar trigger is replaced by the daily bar). Extra exit: stop = signal-day low, +3R target."""
+    rk = {n: df.groupby("date")[n].rank(pct=True) for n in ("r21", "r63", "r126")}
+    strong = pd.Series(False, index=df.index)
+    for n in rk:
+        strong |= (df[n] >= 30) & (rk[n] >= 0.7)
+    sup = df["近3日觸EMA21"] & df["收在EMA21上"] & df["EMA9_21上彎"]
+    base = df["低點墊高"] & df["波動收斂"]
+    trig = df["突破前K高"]
+    s3 = strong & sup
+    s4 = s3 & base
+    s5 = s4 & trig
+    sets = _named([("強勢", strong), ("強勢&回到EMA21", s3), ("  &低點墊高&波動收斂", s4),
+                   ("  &低點墊高&波動收斂&突破前K高", s5),
+                   ("  &...&突破前K高&停損距離≤3%", s5 & (df["停損距離%"] <= 3)),
+                   ("  &...&突破前K高&同業新高數≥2", s5 & (df.同業新高數 >= 2)),
+                   ("  &...&突破前K高&大盤多頭", s5 & df["大盤多頭"]),
+                   ("  &...&突破前K高&EMA多頭排列", s5 & df["EMA多頭排列"]),
+                   ("非強勢&同樣回檔型態(對照)", ~strong & sup & base & trig)])
+    evs = {k: dedup(df, m) for k, m in sets.items()}
+    print("== Martin Luk 回調買入法（日線代理；分鐘線觸發無法回測；已去重；報酬已扣成本 %）==")
+    print("強勢=近1/3/6月漲幅任一≥30%且當日排名前30%；回到EMA21=近3日低點在EMA21的-3%~+2%且收在EMA21上、EMA9/21上彎；")
+    print("低點墊高=近10日最低>前10日最低；波動收斂=近5日平均振幅<近20日；觸發=收盤>前一日高\n")
+    print(_ex_table(evs, {"基準(全部股日)": df}, df), "\n")
+
+    rows = {}
+    for per in ("全部", "樣本內", "樣本外"):
+        for k, ev in evs.items():
+            g = ev if per == "全部" else ev[ev["期間"] == per]
+            x = g["exR停損3R"].dropna()
+            rows[f"{per} {k}"] = {"n": len(x), "停損距離%中位": g["停損距離%"].median(), "均%": x.mean(), "中位%": x.median(),
+                                 "勝率": (x > 0).mean() * 100, "平均R": g["exR_R倍"].mean(),
+                                 "達3R%": (g["exR_R倍"] >= 2.99).mean() * 100}
+    print("-- 出場：停損=訊號日低點、停利=+3R、否則第15日收盤（R=進場價-訊號日低）")
+    print(table(rows), "\n")
+    bk = _best(df, evs, exclude=("強勢", "非強勢&同樣回檔型態(對照)"))
+    if bk:
+        print(f"-- 最佳組（規則同 B：樣本內/外 n≥50 且 min(兩期同日超額均) 最大，不含強勢/對照列）：{bk}")
+        print(_year_table(df, evs[bk]), "\n")
+
+
 def run(since: str = "", only: str = "") -> None:
     ix = pd.read_parquet(BT / "_TWII.parquet").Close
     fx, tx = load_inst("foreign"), load_inst("trust")
@@ -779,6 +848,9 @@ def run(since: str = "", only: str = "") -> None:
         return
     if only == "breadth":
         breadth_report(df)
+        return
+    if only == "pullback":
+        pullback_report(df)
         return
     ev_a, ev_b = dedup(df, df.A >= A_MIN), dedup(df, df.B >= B_MIN)
 
@@ -835,6 +907,7 @@ def run(since: str = "", only: str = "") -> None:
     refine_report(df)
     group_reversal_report(df)
     breadth_report(df)
+    pullback_report(df)
 
     cols = ["date", "code", "期間", "A", "B", "hit", "stop_first", "max15", "ret15", "vol60"]
     ev = pd.concat([ev_a.assign(訊號="A"), ev_b.assign(訊號="B")])[["訊號"] + cols].sort_values(["訊號", "date"])
@@ -853,8 +926,9 @@ def main() -> None:
     fp.add_argument("--all-stocks", action="store_true", help="--random draws from all common stocks, not only liquid")
     rp = sub.add_parser("run")
     rp.add_argument("--since", default="", help="only evaluate signal days >= YYYY-MM-DD")
-    rp.add_argument("--only", default="", choices=["", "refine", "bd", "breadth"],
-                    help="refine = only refine_report; bd = only group_reversal_report; breadth = only breadth_report")
+    rp.add_argument("--only", default="", choices=["", "refine", "bd", "breadth", "pullback"],
+                    help="refine = only refine_report; bd = only group_reversal_report; breadth = only breadth_report; "
+                         "pullback = only pullback_report")
     sub.add_parser("foreign")
     sub.add_parser("trust")
     args = ap.parse_args()
