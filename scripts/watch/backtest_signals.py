@@ -6,7 +6,7 @@ Usage (any cwd):
   ...\\.venv\\Scripts\\python.exe backtest_signals.py foreign               # per-day foreign net -> cache/bt/foreign/ (~40 min, resumable)
   ...\\.venv\\Scripts\\python.exe backtest_signals.py revenue               # MOPS monthly revenue -> cache/bt/revenue.parquet (~5 min)
   ...\\.venv\\Scripts\\python.exe backtest_signals.py run                   # score every cached stock-day and report
-  ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only refine|bd|breadth|pullback|revenue [--since YYYY-MM-DD]
+  ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only refine|bd|breadth|pullback|revenue|portfolio [--since YYYY-MM-DD]
 
 Phase 1: technical items only (A8 / B8 foreign items excluded) -> A out of 8, B out of 7.
 Phase 2 (when cache/bt/foreign/ has data): adds A8 / B8 and reports on the covered days.
@@ -883,6 +883,145 @@ def revenue_report(df: pd.DataFrame) -> None:
         print(_year_table(df, evs[bk]), "\n")
 
 
+def tier(df: pd.DataFrame) -> pd.Series:
+    """起漲訊號.md §3 動能分層 (1 best .. 4 = not bought)."""
+    brk = df["B4放量"] & df["B5收過箱頂"] & df["B1收紅"]
+    combo = brk & (df.near52 >= 0.95) & df["前日均線多頭"] & df["大盤多頭"]
+    peers = df.同業新高數.fillna(0)
+    t = pd.Series(4, index=df.index)
+    # §3: 同業新高 = 0 drops to tier 4; no industry peer data (NaN) stays in tier 3
+    t[(combo | ((df.near52 >= 0.95) & df["均線多頭"])) & ~df.同業新高數.eq(0)] = 3
+    t[df["創52週新高"] & (peers >= 2)] = 2
+    t[combo & (peers >= 2)] = 1
+    return t
+
+
+def simulate(df: pd.DataFrame, px: dict, pick: pd.Series, n: int, cost: float, rank: pd.DataFrame | None = None,
+             seed: int | None = None) -> dict:
+    """Fixed-capital portfolio (design from the 2026-10-18 Codex review). Signal day t (close) -> buy at open t+1 the
+    top `n` of `pick` rows by `rank` (columns, all descending) or `n` random ones (seed), skipping stocks already held
+    and opens >= +9.5% vs the previous close (limit-up, assumed unfillable). Each day's tranche = NAV/HOLD, split into
+    `n` equal slots (fewer picks -> rest stays cash). Sell at the close of the HOLD-th bar (same as ret15).
+    `cost` = round trip, half charged on buy and half on sell. Marked to market daily at close."""
+    rng = np.random.default_rng(seed)
+    days = pd.DatetimeIndex(sorted(df.date.unique()))
+    cand = df.loc[pick, ["date", "code"]]
+    if rank is not None:
+        keys = list(rank.columns)
+        cand = cand.join(rank.loc[pick]).sort_values(["date", *keys], ascending=[True] + [False] * len(keys), kind="mergesort")
+    by_day = {d: g for d, g in cand.groupby("date")}
+    cash, nav, pos, rows = 1.0, 1.0, [], []
+    trades = []
+    half = cost / 2
+    for i, d in enumerate(days[:-1]):
+        nd = days[i + 1]
+        g = by_day.get(d)
+        held = {p["code"] for p in pos}
+        if g is not None:
+            g = g[~g.code.isin(held)]
+            if rank is None:
+                g = g.iloc[rng.permutation(len(g))]
+            slot = nav / HOLD / n
+            bought = 0
+            for _, r in g.iterrows():
+                if bought >= n:
+                    break
+                p = px[r.code]
+                if nd not in p.index:
+                    continue
+                k = p.index.get_loc(nd)
+                o, prev = p.Open.iat[k], p.Close.iat[k - 1] if k else np.nan
+                if not o > 0 or (prev > 0 and o >= prev * 1.095) or k + HOLD - 1 >= len(p):
+                    continue
+                amt = min(slot, cash)
+                if amt <= 0:
+                    break
+                cash -= amt
+                pos.append({"code": r.code, "sh": amt * (1 - half) / o, "exit": p.index[k + HOLD - 1], "cost": amt})
+                bought += 1
+        # close of day nd: sell expired, mark to market
+        keep, val = [], 0.0
+        for p in pos:
+            s = px[p["code"]].Close
+            c = s.asof(nd)
+            if p["exit"] <= nd:
+                proceeds = p["sh"] * c * (1 - half)
+                cash += proceeds
+                trades.append(proceeds / p["cost"] - 1)
+            else:
+                keep.append(p)
+                val += p["sh"] * c
+        pos = keep
+        nav = cash + val
+        rows.append((nd, nav, val / nav if nav else 0, len(pos)))
+    eq = pd.DataFrame(rows, columns=["date", "nav", "曝險", "持股數"]).set_index("date")
+    return {"eq": eq, "trades": np.array(trades)}
+
+
+def _perf(eq: pd.DataFrame, trades: np.ndarray | None = None) -> dict:
+    nav = eq.nav
+    yrs = (nav.index[-1] - nav.index[0]).days / 365.25
+    dd = nav / nav.cummax() - 1
+    r = {"總報酬%": (nav.iat[-1] / nav.iat[0] - 1) * 100, "年化%": ((nav.iat[-1] / nav.iat[0]) ** (1 / yrs) - 1) * 100,
+         "最大回撤%": dd.min() * 100, "年化波動%": nav.pct_change().std() * np.sqrt(250) * 100}
+    r["報酬/回撤"] = r["年化%"] / -r["最大回撤%"] if r["最大回撤%"] < 0 else np.nan
+    if "曝險" in eq:
+        r |= {"平均曝險%": eq["曝險"].mean() * 100, "平均持股數": eq["持股數"].mean()}
+    if trades is not None and len(trades):
+        r |= {"交易數": len(trades), "單筆均%": trades.mean() * 100, "單筆勝率%": (trades > 0).mean() * 100}
+    return r
+
+
+def portfolio_report(df: pd.DataFrame) -> None:
+    """Fixed-capital portfolio of the §3 ranking; settings fixed before running (2026-10-18)."""
+    px = {}
+    for p in sorted(BT.glob("[0-9]*.parquet")):
+        d = cut_unadjusted(pd.read_parquet(p).dropna(subset=["Open", "High", "Low", "Close"]))
+        if len(d) >= 80:
+            px[p.stem] = d[["Open", "Close"]]
+    add_revenue(df)
+    t = tier(df)
+    rank = pd.DataFrame({"層": -t, "同業": df.同業新高數.fillna(0), "投信": df.get("投信5日%", pd.Series(0, index=df.index))
+                         .fillna(-1e9), "near": df.near52.fillna(0)})
+    elig = t <= 3
+    no_neg = elig & ~(df["營收yoy"] < 0)
+    allstock = pd.Series(True, index=df.index)
+    ix = pd.read_parquet(BT / "_TWII.parquet").Close
+    print("== 固定資金投組模擬：§3 動能分層，每日取前 N（訊號日收盤 → 隔日開盤，持有 15 日，每日投入 NAV/15，開盤漲停不買）==")
+    print("排序：層 → 同業新高數 → 投信5日% → near52；只買 1–3 層。基準=同一機制、每日從全部流動股隨機挑 N 檔（20 次平均）。\n")
+    res, eqs = {}, {}
+    for name, pk, rk, n, cost in [("§3 前5 成本0.6%", elig, rank, 5, COST), ("§3 前3", elig, rank, 3, COST),
+                                  ("§3 前10", elig, rank, 10, COST), ("§3 前5 成本1%", elig, rank, 5, 0.01),
+                                  ("§3 前5 排除營收YoY<0", no_neg, rank, 5, COST)]:
+        out = simulate(df, px, pk, n, cost, rank=rk)
+        res[name], eqs[name] = _perf(out["eq"], out["trades"]), out["eq"]
+        print(f"done {name}", flush=True)
+    for name, pk in (("1–3層內隨機5", elig), ("全部流動股隨機5(基準)", allstock)):
+        runs = [simulate(df, px, pk, 5, COST, seed=s) for s in range(20)]
+        perf = pd.DataFrame([_perf(o["eq"], o["trades"]) for o in runs])
+        res[name] = perf.mean().to_dict() | {"總報酬% 範圍": f"{perf['總報酬%'].min():.0f}～{perf['總報酬%'].max():.0f}"}
+        eqs[name] = pd.concat([o["eq"].nav for o in runs], axis=1).mean(axis=1).to_frame("nav")
+        print(f"done {name}", flush=True)
+    a = ix.reindex(eqs["§3 前5 成本0.6%"].index).ffill()
+    res["加權指數(價格,不含息)"] = _perf(a.to_frame("nav"))
+    print(pd.DataFrame(res).T.round(2).to_string(), "\n")
+
+    print("-- 分期報酬 %（樣本內 ~2025-10-07／樣本外 2025-10-08~；年度）")
+    out = {}
+    for name, eq in eqs.items():
+        nav = eq.nav
+        seg = {"樣本內": nav[nav.index < OOS], "樣本外": nav[nav.index >= OOS]}
+        row = {k: (v.iat[-1] / v.iat[0] - 1) * 100 for k, v in seg.items() if len(v) > 1}
+        row |= {str(y): (g.iat[-1] / g.iat[0] - 1) * 100 for y, g in nav.groupby(nav.index.year) if len(g) > 1}
+        out[name] = row
+    seg_ix = {"樣本內": a[a.index < OOS], "樣本外": a[a.index >= OOS]}
+    out["加權指數"] = {k: (v.iat[-1] / v.iat[0] - 1) * 100 for k, v in seg_ix.items()} | \
+        {str(y): (g.iat[-1] / g.iat[0] - 1) * 100 for y, g in a.groupby(a.index.year) if len(g) > 1}
+    print(pd.DataFrame(out).T.round(1).to_string(), "\n")
+    pd.concat({k: v.nav for k, v in eqs.items()}, axis=1).to_csv(BT / "portfolio_nav.csv", encoding="utf-8-sig")
+    print(f"每日淨值 -> {BT / 'portfolio_nav.csv'}")
+
+
 def pullback_report(df: pd.DataFrame) -> None:
     """Martin Luk 回調買入法, daily proxy; sets fixed in advance (2026-10-17, before looking). 強勢 = r21 / r63 / r126 any
     ≥ 30% and in that day's top 30% (rank over the cached liquid stock-days). Trigger = close > previous high after
@@ -960,6 +1099,9 @@ def run(since: str = "", only: str = "") -> None:
     if only == "revenue":
         revenue_report(df)
         return
+    if only == "portfolio":
+        portfolio_report(df)
+        return
     ev_a, ev_b = dedup(df, df.A >= A_MIN), dedup(df, df.B >= B_MIN)
 
     rows = {}
@@ -1036,9 +1178,9 @@ def main() -> None:
     fp.add_argument("--all-stocks", action="store_true", help="--random draws from all common stocks, not only liquid")
     rp = sub.add_parser("run")
     rp.add_argument("--since", default="", help="only evaluate signal days >= YYYY-MM-DD")
-    rp.add_argument("--only", default="", choices=["", "refine", "bd", "breadth", "pullback", "revenue"],
+    rp.add_argument("--only", default="", choices=["", "refine", "bd", "breadth", "pullback", "revenue", "portfolio"],
                     help="refine = only refine_report; bd = only group_reversal_report; breadth = only breadth_report; "
-                         "pullback = only pullback_report; revenue = only revenue_report")
+                         "pullback = only pullback_report; revenue = only revenue_report; portfolio = only portfolio_report")
     sub.add_parser("foreign")
     sub.add_parser("trust")
     sub.add_parser("revenue")
