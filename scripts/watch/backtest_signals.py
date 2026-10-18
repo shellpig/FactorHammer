@@ -4,8 +4,9 @@ Usage (any cwd):
   ...\\.venv\\Scripts\\python.exe backtest_signals.py fetch 6234,5460,...   # yfinance ~3y daily -> cache/bt/ (skips cached)
   ...\\.venv\\Scripts\\python.exe backtest_signals.py fetch --random 40 --seed 1  # + random liquid uncached stocks
   ...\\.venv\\Scripts\\python.exe backtest_signals.py foreign               # per-day foreign net -> cache/bt/foreign/ (~40 min, resumable)
+  ...\\.venv\\Scripts\\python.exe backtest_signals.py revenue               # MOPS monthly revenue -> cache/bt/revenue.parquet (~5 min)
   ...\\.venv\\Scripts\\python.exe backtest_signals.py run                   # score every cached stock-day and report
-  ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only refine|bd|breadth|pullback [--since YYYY-MM-DD]
+  ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only refine|bd|breadth|pullback|revenue [--since YYYY-MM-DD]
 
 Phase 1: technical items only (A8 / B8 foreign items excluded) -> A out of 8, B out of 7.
 Phase 2 (when cache/bt/foreign/ has data): adds A8 / B8 and reports on the covered days.
@@ -778,6 +779,110 @@ def breadth_report(df: pd.DataFrame) -> None:
         print("-- B2 最佳格：無任何格在兩期 n≥100\n")
 
 
+REV = BT / "revenue.parquet"
+
+
+def revenue_fetch(first: str = "2022-01") -> None:
+    """Monthly revenue of all TWSE (sii) + TPEx (otc) companies from the MOPS summary pages -> cache/bt/revenue.parquet
+    (columns month, code, rev [NT$ thousand], yoy %). Resumable: months already in the file are skipped."""
+    import io
+    import requests
+    old = pd.read_parquet(REV) if REV.exists() else pd.DataFrame(columns=["month", "code", "rev", "yoy"])
+    have = set(old.month)
+    last = (pd.Timestamp.today() - pd.DateOffset(months=1)).to_period("M")
+    rows = []
+    for m in pd.period_range(first, last, freq="M"):
+        if str(m) in have:
+            continue
+        got = 0
+        for mk in ("sii", "otc"):
+            url = f"https://mopsov.twse.com.tw/nas/t21/{mk}/t21sc03_{m.year - 1911}_{m.month}_0.html"
+            for attempt in range(4):
+                try:
+                    r = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+                    r.encoding = "big5"
+                    tabs = [t for t in pd.read_html(io.StringIO(r.text)) if t.shape[1] == 11]
+                    break
+                except Exception as e:
+                    print(f"{m} {mk}: {e}, retry {attempt + 1}", flush=True)
+                    time.sleep(5)
+            else:
+                tabs = []
+            for t in tabs:
+                t = t.iloc[:, [0, 2, 6]].set_axis(["code", "rev", "yoy"], axis=1)
+                t = t[t.code.astype(str).str.fullmatch(r"[1-9]\d{3}")]
+                rows.append(t.assign(month=str(m), rev=pd.to_numeric(t.rev, errors="coerce"),
+                                     yoy=pd.to_numeric(t.yoy, errors="coerce")))
+                got += len(t)
+            time.sleep(2)
+        print(f"{m}: {got} companies", flush=True)
+    if rows:
+        new = pd.concat([old, *rows]).drop_duplicates(["month", "code"], keep="last")
+        new.astype({"code": str}).to_parquet(REV)
+        print(f"revenue: {new.month.nunique()} months, {len(new)} rows -> {REV}")
+
+
+def add_revenue(df: pd.DataFrame) -> pd.DataFrame:
+    """Revenue of month m is treated as known at the first trading day on/after the 11th of month m+1 (legal deadline
+    10th; earlier announcements are not dated in the MOPS summary, so reactions before that day are missed).
+    Adds per stock-day the latest known month's features and 營收公布日 (True on that first trading day)."""
+    rv = pd.read_parquet(REV).sort_values(["code", "month"])
+    rv["code"] = rv.code.astype(str)
+    g = rv.groupby("code").rev
+    rv["營收12月新高"] = rv.rev > g.transform(lambda x: x.shift().rolling(11, min_periods=11).max())
+    rv["yoy前1"], rv["yoy前2"] = rv.groupby("code").yoy.shift(), rv.groupby("code").yoy.shift(2)
+    rv["營收yoy連3月>20"] = (rv.yoy > 20) & (rv.yoy前1 > 20) & (rv.yoy前2 > 20)
+    rv["營收yoy加速"] = (rv.yoy > rv.yoy前1) & (rv.yoy前1 > rv.yoy前2) & (rv.yoy > 0)
+    days = pd.DatetimeIndex(sorted(df.date.unique()))
+    due = (pd.PeriodIndex(rv.month, freq="M") + 1).to_timestamp() + pd.Timedelta(days=10)
+    pos = days.searchsorted(due)
+    rv["avail"] = [days[p] if p < len(days) else pd.NaT for p in pos]
+    rv = rv.dropna(subset=["avail"])
+    cols = ["yoy", "營收12月新高", "營收yoy連3月>20", "營收yoy加速"]
+    out = pd.merge_asof(df[["date", "code"]].reset_index().sort_values("date"),
+                        rv[["avail", "code"] + cols].sort_values("avail"),
+                        left_on="date", right_on="avail", by="code", direction="backward").set_index("index")
+    out = out.reindex(df.index)
+    for k in cols:
+        df["營收" + k if k == "yoy" else k] = out[k]
+    df["營收公布日"] = out.avail.eq(df.date)
+    return df
+
+
+def revenue_report(df: pd.DataFrame) -> None:
+    """Sets fixed in advance (2026-10-17). Events are on the 營收公布日 (entry = next open), plus momentum overlays."""
+    add_revenue(df)
+    ann = df["營收公布日"] & df["營收yoy"].notna()
+    yoy, hi12 = df["營收yoy"], df["營收12月新高"].fillna(False).astype(bool)
+    rk = {n: df.groupby("date")[n].rank(pct=True) for n in ("r21", "r63", "r126")}
+    strong = pd.Series(False, index=df.index)
+    for n in rk:
+        strong |= (df[n] >= 30) & (rk[n] >= 0.7)
+    near = df.near52 >= 0.95
+    sets = _named([("公布日(全部)", ann),
+                   ("YoY≥30%", ann & (yoy >= 30)), ("YoY≥50%", ann & (yoy >= 50)),
+                   ("營收創12月新高", ann & hi12), ("  &YoY≥30%", ann & hi12 & (yoy >= 30)),
+                   ("YoY連3月>20%", ann & df["營收yoy連3月>20"].fillna(False).astype(bool)),
+                   ("YoY連續加速", ann & df["營收yoy加速"].fillna(False).astype(bool)),
+                   ("YoY≤-20%(對照)", ann & (yoy <= -20)),
+                   ("強勢 [公布日]", ann & strong), ("  &YoY≥30%", ann & strong & (yoy >= 30)),
+                   ("  &營收創12月新高", ann & strong & hi12), ("  &YoY<0", ann & strong & (yoy < 0)),
+                   ("near52≥0.95 [公布日]", ann & near), ("  &營收創12月新高&YoY≥30%", ann & near & hi12 & (yoy >= 30)),
+                   ("  &YoY<0", ann & near & (yoy < 0)),
+                   ("創52週新高&同業新高≥2(任意日)", df["創52週新高"] & (df.同業新高數 >= 2)),
+                   ("  &最近營收YoY≥30%", df["創52週新高"] & (df.同業新高數 >= 2) & (yoy >= 30)),
+                   ("  &最近營收YoY<0", df["創52週新高"] & (df.同業新高數 >= 2) & (yoy < 0))])
+    evs = {k: dedup(df, m) for k, m in sets.items()}
+    print("== 月營收（MOPS 彙總；公布日=次月 11 日起第一個交易日，提前公布者的反應會漏掉；已去重；報酬已扣成本 %）==")
+    print(f"有營收資料的股日 {df['營收yoy'].notna().sum()} / {len(df)}；公布日事件 {ann.sum()}\n")
+    print(_ex_table(evs, {"基準(全部股日)": df}, df), "\n")
+    bk = _best(df, evs, exclude=("公布日(全部)", "YoY≤-20%(對照)", "強勢 [公布日]", "near52≥0.95 [公布日]",
+                                 "創52週新高&同業新高≥2(任意日)"))
+    if bk:
+        print(f"-- 最佳組（規則同 B：樣本內/外 n≥50 且 min(兩期同日超額均) 最大，不含基底與對照列）：{bk}")
+        print(_year_table(df, evs[bk]), "\n")
+
+
 def pullback_report(df: pd.DataFrame) -> None:
     """Martin Luk 回調買入法, daily proxy; sets fixed in advance (2026-10-17, before looking). 強勢 = r21 / r63 / r126 any
     ≥ 30% and in that day's top 30% (rank over the cached liquid stock-days). Trigger = close > previous high after
@@ -852,6 +957,9 @@ def run(since: str = "", only: str = "") -> None:
     if only == "pullback":
         pullback_report(df)
         return
+    if only == "revenue":
+        revenue_report(df)
+        return
     ev_a, ev_b = dedup(df, df.A >= A_MIN), dedup(df, df.B >= B_MIN)
 
     rows = {}
@@ -908,6 +1016,8 @@ def run(since: str = "", only: str = "") -> None:
     group_reversal_report(df)
     breadth_report(df)
     pullback_report(df)
+    if REV.exists():
+        revenue_report(df)
 
     cols = ["date", "code", "期間", "A", "B", "hit", "stop_first", "max15", "ret15", "vol60"]
     ev = pd.concat([ev_a.assign(訊號="A"), ev_b.assign(訊號="B")])[["訊號"] + cols].sort_values(["訊號", "date"])
@@ -926,13 +1036,16 @@ def main() -> None:
     fp.add_argument("--all-stocks", action="store_true", help="--random draws from all common stocks, not only liquid")
     rp = sub.add_parser("run")
     rp.add_argument("--since", default="", help="only evaluate signal days >= YYYY-MM-DD")
-    rp.add_argument("--only", default="", choices=["", "refine", "bd", "breadth", "pullback"],
+    rp.add_argument("--only", default="", choices=["", "refine", "bd", "breadth", "pullback", "revenue"],
                     help="refine = only refine_report; bd = only group_reversal_report; breadth = only breadth_report; "
-                         "pullback = only pullback_report")
+                         "pullback = only pullback_report; revenue = only revenue_report")
     sub.add_parser("foreign")
     sub.add_parser("trust")
+    sub.add_parser("revenue")
     args = ap.parse_args()
-    if args.cmd in INST:
+    if args.cmd == "revenue":
+        revenue_fetch()
+    elif args.cmd in INST:
         inst_fetch(args.cmd)
     elif args.cmd == "fetch":
         codes = [x.strip() for x in args.symbols.split(",") if x.strip()]
