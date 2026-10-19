@@ -99,7 +99,10 @@ def backfill(codes: list[str]) -> None:
                 except Exception as e:
                     print(f"{code} {d}: {e}, retry {attempt + 1}", flush=True)
                     time.sleep(10 * (attempt + 1))
-                    q = Query()
+                    try:
+                        q = Query()
+                    except Exception as e2:
+                        print(f"re-open query page: {e2}", flush=True)
             else:
                 fails += 1
                 if fails >= 10:
