@@ -7,6 +7,7 @@ Usage (any cwd):
   ...\\.venv\\Scripts\\python.exe backtest_signals.py revenue               # MOPS monthly revenue -> cache/bt/revenue.parquet (~5 min)
   ...\\.venv\\Scripts\\python.exe backtest_signals.py run                   # score every cached stock-day and report
   ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only refine|bd|breadth|pullback|revenue|portfolio [--since YYYY-MM-DD]
+  ...\\.venv\\Scripts\\python.exe backtest_signals.py run --only bd|breadth --fine     # peers = TPEx 產業價值鏈 sub-segments
 
 Phase 1: technical items only (A8 / B8 foreign items excluded) -> A out of 8, B out of 7.
 Phase 2 (when cache/bt/foreign/ has data): adds A8 / B8 and reports on the covered days.
@@ -612,6 +613,63 @@ def load_industry() -> dict:
     return out
 
 
+IC_CHAINS = ("D000 C100 C200 C300 C400 A300 A200 A100 AB10 AB20 E000 AD10 5100 5200 5300 5400 5500 5600 5700 5800 "
+             "4100 6000 B000 L000 R300 J000 I000 K000 F000 G000 H000 1000 M000 N000 O000 P000 2000 Q000 3000 R000 "
+             "S000 T000 U000 V000 Y000 W000 X000").split()
+FINE = False                  # run --fine: peers = stocks sharing any TPEx 產業價值鏈 sub-segment (load_fine)
+
+
+def load_fine() -> dict:
+    """{code: [sub-segment id, ...]} from the TPEx 產業價值鏈資訊平台 (ic.tpex.org.tw, every chain page, every
+    companyList_<id> block; a stock can sit in many segments). Cached to cache/bt/ic_tpex.json with segment names.
+    Current membership applied to all history, like load_industry."""
+    p = BT / "ic_tpex.json"
+    if p.exists():
+        return json.loads(p.read_text(encoding="utf-8"))["members"]
+    import requests
+    members, names = {}, {}
+    for ic in IC_CHAINS:
+        html = requests.get(f"https://ic.tpex.org.tw/introduce.php?ic={ic}", timeout=30,
+                            headers={"User-Agent": "Mozilla/5.0"}).text
+        for blk in html.split('id="companyList_')[1:]:
+            seg, title = re.match(r'([A-Z0-9]+)"\s+title="([^"]*)"', blk).groups()
+            names[seg] = f"{ic}:{title}"
+            for c in set(re.findall(r"stk_code=([1-9]\d{3})\b", blk)):
+                members.setdefault(c, set()).add(seg)
+        time.sleep(1)
+    members = {c: sorted(s) for c, s in members.items()}
+    p.write_text(json.dumps({"members": members, "names": names}, ensure_ascii=False), encoding="utf-8")
+    print(f"ic.tpex: {len(members)} stocks, {len(names)} segments -> {p}")
+    return members
+
+
+def _fine_counts(df: pd.DataFrame, flags: dict, min_size: int = 5) -> dict:
+    """Per stock-day, over its peers present that day (union of its sub-segments, excluding itself): (count, share) of
+    peers with each boolean flag. Stocks without segments or < min_size peers that day -> NaN."""
+    mem = load_fine()
+    codes = sorted(df.code.unique())
+    segs = sorted({s for c in codes for s in mem.get(c, [])})
+    ci, si = {c: i for i, c in enumerate(codes)}, {s: i for i, s in enumerate(segs)}
+    m = np.zeros((len(codes), len(segs)), dtype=np.float32)
+    for c in codes:
+        for s in mem.get(c, []):
+            m[ci[c], si[s]] = 1
+    adj = (m @ m.T > 0).astype(np.float32)
+    np.fill_diagonal(adj, 0)
+    piv = lambda s: s.set_axis(pd.MultiIndex.from_arrays([df.date, df.code])).unstack().reindex(columns=codes)
+    present = piv(pd.Series(1.0, index=df.index)).fillna(0)
+    size = present.to_numpy() @ adj
+    rows, cols = df.date.map({d: i for i, d in enumerate(present.index)}).to_numpy(), df.code.map(ci).to_numpy()
+    sz = size[rows, cols]
+    ok = sz >= min_size
+    out = {}
+    for k, f in flags.items():
+        n = (piv(f.astype(float)).fillna(0).to_numpy() @ adj)[rows, cols]
+        out[k] = (pd.Series(np.where(ok, n, np.nan), index=df.index),
+                  pd.Series(np.where(ok, n / np.maximum(sz, 1), np.nan), index=df.index))
+    return out
+
+
 def add_group(df: pd.DataFrame, min_size: int = 5) -> pd.DataFrame:
     """Per date x industry, over the stocks present in `df` that day: peers (excluding the stock itself) at a 52w
     high / near52>=0.95 / with 5-day trust net buying. Industries with < min_size stocks that day -> NaN."""
@@ -630,6 +688,10 @@ def add_group(df: pd.DataFrame, min_size: int = 5) -> pd.DataFrame:
         buy = ((df["投信5日%"] > 0) & df["投信有資料"]).astype(float)
         cnt, nb = has.groupby(key).transform("sum") - has, buy.groupby(key).transform("sum") - buy
         df["同業投信買比"] = (nb / cnt).where(ok & (cnt > 0))
+    if FINE:
+        fc = _fine_counts(df, {"new": df["創52週新高"], "near": df.near52 >= 0.95}, min_size)
+        df["同業新高數"], df["同業新高比"] = fc["new"]
+        df["同業近高比"] = fc["near"][1]
     return df
 
 
@@ -707,6 +769,11 @@ def group_reversal_report(df: pd.DataFrame) -> None:
 def add_breadth(df: pd.DataFrame, min_size: int = 5) -> pd.DataFrame:
     """Per date x industry (same peer pool / exclusions as add_group): count and share of peers (excluding the stock
     itself) whose Y-day return (r3 / r5, %) is > Z%, Y in {3, 5}, Z in {10, 15}. Industries < min_size -> NaN."""
+    if FINE:
+        fc = _fine_counts(df, {(y, z): df[f"r{y}"] > z for y in (3, 5) for z in (10, 15)}, min_size)
+        for (y, z), (n, r) in fc.items():
+            df[f"同業{y}日漲{z}數"], df[f"同業{y}日漲{z}比"] = n, r
+        return df
     key = [df.date, df.產業]
     size = df.code.groupby(key).transform("size")
     ok = size >= min_size
@@ -1065,7 +1132,9 @@ def pullback_report(df: pd.DataFrame) -> None:
         print(_year_table(df, evs[bk]), "\n")
 
 
-def run(since: str = "", only: str = "") -> None:
+def run(since: str = "", only: str = "", fine: bool = False) -> None:
+    global FINE
+    FINE = fine
     ix = pd.read_parquet(BT / "_TWII.parquet").Close
     fx, tx = load_inst("foreign"), load_inst("trust")
     parts = []
@@ -1178,6 +1247,7 @@ def main() -> None:
     fp.add_argument("--all-stocks", action="store_true", help="--random draws from all common stocks, not only liquid")
     rp = sub.add_parser("run")
     rp.add_argument("--since", default="", help="only evaluate signal days >= YYYY-MM-DD")
+    rp.add_argument("--fine", action="store_true", help="industry peers = TPEx 產業價值鏈 sub-segments (load_fine)")
     rp.add_argument("--only", default="", choices=["", "refine", "bd", "breadth", "pullback", "revenue", "portfolio"],
                     help="refine = only refine_report; bd = only group_reversal_report; breadth = only breadth_report; "
                          "pullback = only pullback_report; revenue = only revenue_report; portfolio = only portfolio_report")
@@ -1199,7 +1269,7 @@ def main() -> None:
     else:
         pd.set_option("display.width", 250)
         pd.set_option("display.max_columns", 30)
-        run(args.since, args.only)
+        run(args.since, args.only, args.fine)
 
 
 if __name__ == "__main__":
